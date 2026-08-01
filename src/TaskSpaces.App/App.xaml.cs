@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.IO;
 using System.Windows;
+using CSharpFunctionalExtensions;
 using H.NotifyIcon;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Persistence;
@@ -42,6 +43,7 @@ public partial class App : Application
         };
 
         var stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces");
+        var statePath = Path.Combine(stateDir, "state.json");
         var desktops = new VirtualDesktopService();
         monitor = new WindowMonitor();
         manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir));
@@ -49,10 +51,50 @@ public partial class App : Application
         // Spec §Error handling: if the COM API is unrecognized (post-Windows-Update),
         // degrade to listing workspaces with a banner — never crash, never move windows.
         compatibilityMode = desktops.Initialize().IsFailure;
-        if (!compatibilityMode)
+        if (compatibilityMode)
         {
-            manager.Start();      // reconcile desktops, seed snapshot, subscribe
-            monitor.Start();      // we're on the dispatcher thread — hooks pump here
+            // Finding 2 (reviewer, Important): compatibility mode still lists workspaces
+            // per spec ("switcher still lists workspaces but shows a compatibility
+            // banner") — it just can't reconcile desktops (there are none to reconcile
+            // onto) or start the window monitor (no desktop moves/renames will ever
+            // happen, so there's nothing for it to drive). LoadState() alone gives the
+            // tray menu and Manage window a read-only view of what's on disk.
+            manager.LoadState()
+                .TapError(err => MessageBox.Show(
+                    $"TaskSpaces could not load your saved workspaces:\n{err}\n\nStarting with an empty list.",
+                    "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
+        }
+        else
+        {
+            // Finding 1 (reviewer, Critical): manager.Start()'s Result used to be discarded.
+            // JsonPersistenceStore.Load() deliberately FAILS (rather than degrading to
+            // AppState.Empty) when state.json is corrupt, precisely so this call site can
+            // tell the difference and refuse to silently overwrite the user's data. If we
+            // ignored the failure here, State would stay empty and the very next action
+            // that persists (adding a workspace, a window appearing, ...) would happily
+            // write that empty state straight over the corrupt file — destroying whatever
+            // was recoverable in it. Instead: back the corrupt file up (rename, never
+            // delete), tell the user, and only THEN retry — the retry succeeds because
+            // Load() now sees a missing file, which is the normal "first run" case.
+            var started = manager.Start();
+            if (started.IsFailure)
+            {
+                var loadError = started.Error;
+                BackupCorruptState(statePath, loadError);
+                started = manager.Start();
+                if (started.IsFailure)
+                    MessageBox.Show(
+                        $"TaskSpaces failed to start even after backing up state.json:\n{started.Error}",
+                        "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+
+            // Finding 1(b): monitor.Start() was also unchecked. A failure here means
+            // WinEvent hooks never registered — the app would run silently believing it
+            // sees every window when it in fact sees none. Never fatal (v1 can limp along
+            // with manual "Refresh" in Manage), but never silent either.
+            monitor.Start().TapError(err => MessageBox.Show(
+                $"TaskSpaces: window monitoring is unavailable:\n{err}\n\nRules, auto-renaming and the window list will not update automatically.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
         }
 
         trayIcon = new TaskbarIcon
@@ -81,6 +123,37 @@ public partial class App : Application
             monitor.Dispose();
             manager.RestoreAllTitles();
         };
+    }
+
+    // Finding 1 (reviewer, Critical): renames (never deletes) a corrupt state.json so the
+    // user's data stays recoverable, and tells them about it. Called once, right before
+    // the retried manager.Start() — by the time this returns, nothing has had a chance to
+    // persist an empty state over the original file.
+    static void BackupCorruptState(string statePath, string loadError)
+    {
+        try
+        {
+            if (File.Exists(statePath))
+            {
+                var backupPath = statePath + ".bak";
+                // Don't clobber a previous backup's forensic value — an already-backed-up
+                // corruption episode gets its own timestamped name instead.
+                if (File.Exists(backupPath))
+                    backupPath = $"{statePath}.{DateTime.Now:yyyyMMddHHmmss}.bak";
+                File.Move(statePath, backupPath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best effort: even if the rename itself fails (e.g. file locked by another
+            // process), the MessageBox below still fires — the user is never left thinking
+            // everything is fine when it isn't.
+        }
+
+        MessageBox.Show(
+            $"TaskSpaces found a corrupted state file and could not load your saved workspaces:\n{loadError}\n\n" +
+            "The corrupted file was backed up (state.json.bak) rather than deleted. Starting fresh.",
+            "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     void OpenManage() => new ManageWindow(manager!, compatibilityMode).Show();

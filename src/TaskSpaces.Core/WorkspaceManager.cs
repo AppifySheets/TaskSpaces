@@ -39,14 +39,29 @@ public sealed class WorkspaceManager(
     public IReadOnlyList<WindowInfo> KnownWindows => knownWindows.Values.ToList();
 
     public Result Start() =>
-        store.Load()
-            .Tap(s => State = s)
-            .Bind(_ => Reconcile())
+        LoadState()
+            .Bind(Reconcile)
             .Tap(() =>
             {
                 monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
                 subscription = monitor.Events.Subscribe(OnWindowEvent);
             });
+
+    // Finding 1 (reviewer, Critical): split out of Start() so the composition root can
+    // load persisted state WITHOUT reconciling desktops or subscribing to the monitor —
+    // needed for compatibility mode (Finding 2: still list workspaces read-only, no
+    // desktop operations) and so a failed load can be distinguished from a failed
+    // reconcile/subscribe. Deliberately does NOT touch `State` on failure — a corrupt
+    // store must never quietly become "empty workspace list" in the field the UI reads;
+    // the caller (App) decides what to do (back up the corrupt file, inform the user,
+    // retry) before anything gets a chance to persist over it.
+    public Result LoadState() =>
+        store.Load().Bind(s =>
+        {
+            State = s;
+            stateChanged.OnNext(Unit.Default);
+            return Result.Success();
+        });
 
     // --- workspace <-> desktop reconciliation -------------------------------------
     // Desktops don't survive reboots and ids go stale across app restarts. For each
@@ -77,6 +92,7 @@ public sealed class WorkspaceManager(
         {
             case WindowEventKind.Appeared: OnAppeared(e.Window); break;
             case WindowEventKind.TitleChanged: OnTitleChanged(e.Window); break;
+            case WindowEventKind.Hidden: OnHidden(e.Window); break;
             case WindowEventKind.Disappeared: OnDisappeared(e.Window); break;
         }
     }
@@ -113,6 +129,23 @@ public sealed class WorkspaceManager(
             // Not renamed yet — but the new title may now match a rename rule.
             RulesEngine.MatchRename(window, State.RenameRules)
                 .Tap(shortName => { ApplyRename(window, shortName); });
+    }
+
+    // Finding 3 (reviewer, Important): a window that merely left the taskbar (e.g.
+    // Discord/Outlook minimizing to tray) still EXISTS — its hwnd stays valid and it may
+    // reappear later. Drop it from live-window bookkeeping exactly like Disappeared
+    // (it's not on any desktop's visible taskbar right now, so tracking it as "known" or
+    // "in inventory" would be misleading), but deliberately do NOT touch the rename
+    // ledger: if we forgot the original title here, a later re-show's rename-rule
+    // re-application would record our OWN short name as the "original", permanently
+    // breaking restore. Only a genuine Disappeared (the window is actually gone) forgets
+    // the ledger entry. RestoreAllTitles on app exit still finds and restores hidden
+    // windows because their ledger entry — and their hwnd — are both still valid.
+    void OnHidden(WindowInfo window)
+    {
+        knownWindows.Remove(window.Handle);
+        if (memberships.Remove(window.Handle, out var workspaceId))
+            PersistInventory(workspaceId);
     }
 
     void OnDisappeared(WindowInfo window)

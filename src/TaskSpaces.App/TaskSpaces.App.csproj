@@ -5,9 +5,12 @@
     <ProjectReference Include="..\TaskSpaces.Windows\TaskSpaces.Windows.csproj" />
   </ItemGroup>
 
+  <!-- Finding 7 (reviewer, promoted Minor): System.Drawing.Common removed — the
+       WindowsDesktop/UseWPF framework already provides System.Drawing.Common on Windows,
+       so the explicit PackageReference only produced an NU1510 "unnecessary reference"
+       warning. Verified SystemIcons.Application (App.xaml.cs) still resolves without it. -->
   <ItemGroup>
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
   </ItemGroup>
 
   <PropertyGroup>

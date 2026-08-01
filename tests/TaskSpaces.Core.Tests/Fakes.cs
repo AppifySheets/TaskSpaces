@@ -72,6 +72,11 @@ public sealed class FakeStore : IPersistenceStore
 {
     public AppState Stored { get; set; } = AppState.Empty;
     public int SaveCount { get; private set; }
-    public Result<AppState> Load() => Stored;
+
+    // Finding 1: lets tests simulate a corrupt state.json (JsonPersistenceStore.Load()
+    // returning failure) without touching the filesystem.
+    public bool FailLoad { get; set; }
+
+    public Result<AppState> Load() => FailLoad ? Result.Failure<AppState>("corrupt state.json (test)") : Stored;
     public Result Save(AppState state) { Stored = state; SaveCount++; return Result.Success(); }
 }

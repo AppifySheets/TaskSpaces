@@ -63,4 +63,33 @@ public sealed class JsonPersistenceStoreTests : IDisposable
         store.Save(SampleState());
         Assert.Single(Directory.GetFiles(dir));
     }
+
+    // Finding 5 (reviewer, Important): RuleMatchKind (and any future enum) must serialize
+    // as its name, not a bare int — unreadable on disk and a silent renumbering hazard.
+    [Fact]
+    public void Enum_fields_serialize_as_names_not_bare_ints()
+    {
+        var store = new JsonPersistenceStore(dir);
+        store.Save(SampleState());
+
+        var raw = File.ReadAllText(Path.Combine(dir, "state.json"));
+
+        Assert.Contains("\"TitleRegex\"", raw);   // RenameRule.Kind
+        Assert.Contains("\"ProcessName\"", raw);  // WorkspaceRule.Kind
+        Assert.DoesNotContain("\"Kind\": 0", raw);
+        Assert.DoesNotContain("\"Kind\": 1", raw);
+    }
+
+    [Fact]
+    public void Enum_fields_still_roundtrip_correctly_when_written_as_names()
+    {
+        var store = new JsonPersistenceStore(dir);
+        var state = SampleState();
+        store.Save(state);
+
+        var loaded = store.Load().Value;
+
+        Assert.Equal(RuleMatchKind.ProcessName, loaded.WorkspaceRules.Single().Kind);
+        Assert.Equal(RuleMatchKind.TitleRegex, loaded.RenameRules.Single().Kind);
+    }
 }

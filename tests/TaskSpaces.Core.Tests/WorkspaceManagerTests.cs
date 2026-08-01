@@ -290,4 +290,115 @@ public class WorkspaceManagerTests
 
         Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
     }
+
+    // --- Finding 1 (reviewer, Critical): corrupt state.json must never be silently
+    // overwritten. Start()/LoadState() must FAIL (not quietly fall back to empty state)
+    // when the store can't be read, so the composition root can detect it, back up the
+    // corrupt file, and only THEN retry with a guaranteed-empty state. -----------------
+
+    [Fact]
+    public void Start_fails_when_store_load_fails_and_does_not_touch_state()
+    {
+        store.FailLoad = true;
+        var manager = Manager();
+
+        var result = manager.Start();
+
+        Assert.True(result.IsFailure);
+        Assert.Empty(manager.State.Workspaces); // untouched default, not overwritten from a failed load
+        Assert.Equal(0, store.SaveCount);       // never persisted anything over the corrupt file
+    }
+
+    [Fact]
+    public void LoadState_on_missing_or_empty_store_succeeds_with_empty_state()
+    {
+        var manager = Manager();
+
+        var result = manager.LoadState();
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(manager.State.Workspaces);
+    }
+
+    [Fact]
+    public void LoadState_failure_leaves_previous_state_untouched()
+    {
+        store.Stored = AppState.Empty with { Workspaces = [new Workspace(Guid.NewGuid(), "Work", null)] };
+        var manager = Manager();
+        Assert.True(manager.Start().IsSuccess); // seed State with the good load first
+
+        store.FailLoad = true;
+        var result = manager.LoadState();
+
+        Assert.True(result.IsFailure);
+        Assert.Single(manager.State.Workspaces); // still the good state from before
+    }
+
+    [Fact]
+    public void Start_retried_after_a_failed_load_succeeds_once_the_store_recovers()
+    {
+        // Mirrors the composition root's actual recovery path: Start() fails on a corrupt
+        // file, the caller backs it up (out of scope for Core), then retries Start() —
+        // which must now succeed because the store no longer reports a failure.
+        store.FailLoad = true;
+        var manager = Manager();
+        Assert.True(manager.Start().IsFailure);
+
+        store.FailLoad = false;
+        var retried = manager.Start();
+
+        Assert.True(retried.IsSuccess);
+        Assert.Empty(manager.State.Workspaces);
+    }
+
+    // --- Finding 3 (reviewer, Important): Hidden vs Disappeared ---------------------
+    // Hide-to-tray apps (Discord, Outlook, ...) still exist when they leave the taskbar.
+    // Hidden must drop live-window bookkeeping like Disappeared does, but KEEP the ledger
+    // entry, so a later re-show + RestoreTitle still returns the window's TRUE original
+    // title rather than the short name we applied ourselves.
+
+    [Fact]
+    public void Hide_then_reshow_then_restore_returns_the_true_original_title()
+    {
+        var (manager, _) = StartedWithWorkWorkspace(new RenameRule(RuleMatchKind.ProcessName, "chrome", "Amy related"));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome())); // renamed "Some Page - Chrome" -> "Amy related"
+        Assert.Equal("Amy related", titles.Titles[new WindowHandle(0x10)]);
+
+        // Hide-to-tray: the window still exists and still wears our short name (nothing
+        // restored it in between) — the monitor reports Hidden, not Disappeared.
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome(title: "Amy related")));
+        // Re-shown later (e.g. user opens it from the tray again).
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome(title: "Amy related")));
+
+        Assert.True(manager.RestoreTitle(new WindowHandle(0x10)).IsSuccess);
+        Assert.Equal("Some Page - Chrome", titles.Titles[new WindowHandle(0x10)]); // TRUE original, not "Amy related"
+    }
+
+    [Fact]
+    public void Hide_then_destroy_still_drops_the_ledger_entry()
+    {
+        var (manager, _) = StartedWithWorkWorkspace(new RenameRule(RuleMatchKind.ProcessName, "chrome", "Amy related"));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome(title: "Amy related")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome(title: "Amy related")));
+
+        // Ledger entry is gone — nothing left to restore (this is the pre-existing,
+        // still-correct behavior for a window that's truly gone).
+        Assert.True(manager.RestoreTitle(new WindowHandle(0x10)).IsFailure);
+    }
+
+    [Fact]
+    public void Hidden_window_leaves_inventory_and_known_windows_like_disappeared()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome()));
+
+        Assert.Empty(store.Stored.Inventory[work.Id]);                       // dropped from inventory
+        Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == new WindowHandle(0x10)); // dropped from known windows
+    }
 }

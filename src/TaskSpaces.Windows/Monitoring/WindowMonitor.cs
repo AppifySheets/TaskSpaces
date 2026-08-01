@@ -15,6 +15,13 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     // Known windows: needed to (a) suppress duplicate SHOW events and (b) emit a full
     // WindowInfo on DESTROY, when the hwnd can no longer be queried.
     readonly Dictionary<nint, WindowInfo> known = new();
+    // Finding 3 (reviewer, Important): hwnds currently HIDden but not yet destroyed
+    // (e.g. Discord/Outlook minimized to tray — the window still exists, it just left
+    // the taskbar). Tracked separately from `known` so a later DESTROY of a hidden
+    // window still emits Disappeared (using the last-known WindowInfo still sitting in
+    // `known`), and so a later re-SHOW of a hidden window is recognised as "came back"
+    // rather than silently deduplicated away.
+    readonly HashSet<nint> hidden = [];
     // CRITICAL: the delegate must be kept alive in a field. If the GC collects it,
     // the hook silently dies — the classic SetWinEventHook bug.
     readonly WinEventProc callback;
@@ -62,9 +69,26 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                     TryAppear(hwnd);
                     break;
 
+                // Finding 3 (reviewer, Important): HIDE on a window we still track — and
+                // haven't already flagged hidden — does NOT mean the window is gone. Apps
+                // that minimize to the tray (Discord, Outlook, ...) fire HIDE while the
+                // window (and its hwnd) keep existing; only DESTROY means "gone for real",
+                // handled separately below. Emitting Disappeared here (as this code used to)
+                // made WorkspaceManager forget the rename ledger's original-title entry, so a
+                // later re-show would permanently mistake our own short name for the
+                // original. `known` deliberately keeps the entry — DESTROY still needs it.
                 // Note: moving a window to another virtual desktop CLOAKS it (DWM), it does
-                // not fire HIDE — so our own desktop moves never produce false Disappeared.
-                case EVENT_OBJECT_DESTROY or EVENT_OBJECT_HIDE when known.Remove(hwnd, out var gone):
+                // not fire HIDE — so our own desktop moves never produce a false Hidden either.
+                case EVENT_OBJECT_HIDE when known.TryGetValue(hwnd, out var w) && hidden.Add(hwnd):
+                    events.OnNext(new WindowEvent(WindowEventKind.Hidden, w));
+                    break;
+
+                // DESTROY always means gone for real, whether or not HIDE preceded it (some
+                // apps close directly without hiding first). Remove from both trackers and
+                // emit Disappeared with the last-known WindowInfo — the hwnd can no longer
+                // be queried at this point.
+                case EVENT_OBJECT_DESTROY when known.Remove(hwnd, out var gone):
+                    hidden.Remove(hwnd);
                     events.OnNext(new WindowEvent(WindowEventKind.Disappeared, gone));
                     break;
 
@@ -89,9 +113,25 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         }
     }
 
-    // Appeared, deduplicated: SHOW fires repeatedly for the same hwnd.
+    // Appeared, deduplicated: SHOW fires repeatedly for the same hwnd. A hwnd we'd
+    // previously flagged Hidden is the one exception to "known == ignore this SHOW": it
+    // came back, so clear the hidden flag and re-announce it as Appeared (Finding 3).
     void TryAppear(nint hwnd)
     {
+        if (hidden.Remove(hwnd))
+        {
+            // Re-query first (title/process may have changed while hidden); fall back to
+            // the last-known snapshot if the hwnd is suddenly unqueryable, and give up
+            // silently only if we have neither — it's gone again already.
+            WindowInfoFactory.FromHwnd(hwnd)
+                .Or(() => known.TryGetValue(hwnd, out var last) ? Maybe<WindowInfo>.From(last) : Maybe<WindowInfo>.None)
+                .Tap(info =>
+                {
+                    known[hwnd] = info;
+                    events.OnNext(new WindowEvent(WindowEventKind.Appeared, info));
+                });
+            return;
+        }
         if (known.ContainsKey(hwnd) || !TopLevelWindows.IsTaskbarCandidate(hwnd)) return;
         WindowInfoFactory.FromHwnd(hwnd).Tap(info =>
         {
