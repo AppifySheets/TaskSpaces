@@ -28,7 +28,17 @@ public static class Rehydrator
             manager.RegisterPendingLaunch(process.Id, entry.ProcessPath, workspaceId);
             return true;
         }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or FileNotFoundException)
+        // Fix round 1 (reviewer, Important): Process.Start can throw more than the three
+        // exception types originally listed here (e.g. UnauthorizedAccessException for a
+        // permissions-denied exe, ArgumentException for a malformed path) — those were
+        // propagating out of the entries.Count(...) LINQ in Launch(), aborting the rest of
+        // that workspace's batch and surfacing unhandled on the UI thread from
+        // RehydratePrompt.OnRestore. Relaunching remembered apps is best-effort: one bad
+        // entry (moved/uninstalled/permission-denied exe) must never abort the batch or
+        // crash the app, so catch broadly here — this is the one place in the app where a
+        // blanket catch is correct, because the failure mode really is "this one relaunch
+        // didn't happen," never "something is structurally wrong."
+        catch (Exception)
         {
             return false;
         }

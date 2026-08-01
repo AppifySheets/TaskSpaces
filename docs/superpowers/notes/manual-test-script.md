@@ -42,17 +42,25 @@ step 1's non-crash half and none of the others:
   path without throwing.
 - The process was stopped cleanly (`Stop-Process`) with no crash dialog.
 
-Task 9 (rehydration) smoke check, added in this session, same non-visual proxy: on
-this build/machine `%APPDATA%\TaskSpaces\state.json` was absent both before and after
-the run (unlike the note above from the earlier session — this worktree's environment
-apparently exercises `VirtualDesktopService.Initialize()` failing / compatibility mode,
-so `manager.Start()`/persistence never ran; not a Task 9 regression, just a different
-runtime environment). Either way, `RehydratePrompt.HasAnythingToRestore` is guarded by
-`!compatibilityMode` and by an empty `Inventory`, so no prompt should appear here, and
-none did: the process's `MainWindowTitle` stayed empty (a shown `RehydratePrompt` would
-carry the title "TaskSpaces — Restore workspaces?") throughout the 15+ second
-observation window, and there was no crash. This does NOT exercise the Restore/Skip
-button paths or an actual relaunch — that needs the human steps in item 14 above.
+Task 9 (rehydration) smoke check, added in this session, same non-visual proxy, re-run
+with a corrected observation method (fix round 1 — the first pass here mis-checked
+`%APPDATA%\TaskSpaces\state.json` through a Bash-tool `powershell -Command "...$env:APPDATA..."`
+invocation, where the surrounding POSIX shell pre-expands `$env` to empty before
+`powershell` ever sees the string, silently mangling the path to `:APPDATA\...` and making
+every check against it report "absent" regardless of the real file. Re-checked properly
+via the PowerShell tool directly, with an explicit `$p = Join-Path $env:APPDATA ...`):
+on this build/machine, both at Task 8 and at HEAD (Task 9), the app starts normally —
+NOT in compatibility mode — and `%APPDATA%\TaskSpaces\state.json`'s `LastWriteTime` bumps
+on every run (confirmed: `19:56:15` before this round's run, `20:00:30` after, with
+content `{"Workspaces":[],"WorkspaceRules":[],"RenameRules":[],"Inventory":{}}`), i.e.
+`VirtualDesktopService.Initialize()` succeeds and `WorkspaceManager.Start()` completes its
+reconcile-and-persist path normally. `RehydratePrompt.HasAnythingToRestore` is guarded by
+`!compatibilityMode` and by an empty `Inventory`; with the inventory empty here, no prompt
+should appear, and none did: the process's `MainWindowTitle` stayed empty (a shown
+`RehydratePrompt` would carry the title "TaskSpaces — Restore workspaces?") throughout the
+15+ second observation window, and there was no crash. This does NOT exercise the
+Restore/Skip button paths or an actual relaunch — that needs the human steps in item 14
+above.
 
 | # | Check | Result |
 |---|-------|--------|
