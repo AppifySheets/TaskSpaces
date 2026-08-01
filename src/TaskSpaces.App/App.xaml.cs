@@ -103,6 +103,13 @@ public partial class App : Application
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
             ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp),
         };
+        // H.NotifyIcon 2.x creates the shell icon lazily: with no window/XAML tree, a
+        // code-built TaskbarIcon never registers with the tray until ForceCreate() is
+        // called (see the library's own Wpf.Windowless sample — found the hard way when
+        // the app ran headless with no icon at all). Efficiency mode stays OFF: it puts
+        // the process under EcoQoS throttling, and we need WinEvent callbacks handled
+        // promptly to re-apply renames and route new windows without visible lag.
+        trayIcon.ForceCreate(enablesEfficiencyMode: false);
         // Rebuild the menu whenever workspaces change so names/counts stay honest.
         manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
             trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp)));
