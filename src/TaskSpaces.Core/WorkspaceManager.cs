@@ -88,11 +88,16 @@ public sealed class WorkspaceManager(
         // Rehydrated launches win over rules: we KNOW where that app belongs.
         var (remaining, placement) = pending.Match(window, now());
         pending = remaining;
+        // Fire-and-forget: the event pipeline has no caller waiting on a Result, and a
+        // failed auto-placement (e.g. stale workspace, desktop move rejected) has
+        // nowhere to surface here — it's silently skipped, unlike the UI-facing
+        // AssignWindow, which must propagate the same failure to the caller.
         placement.Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules))
-            .Tap(workspaceId => Place(window, workspaceId));
+            .Tap(workspaceId => { Place(window, workspaceId); });
 
+        // Fire-and-forget for the same reason as above.
         RulesEngine.MatchRename(window, State.RenameRules)
-            .Tap(shortName => ApplyRename(window, shortName));
+            .Tap(shortName => { ApplyRename(window, shortName); });
     }
 
     void OnTitleChanged(WindowInfo window)
@@ -101,12 +106,13 @@ public sealed class WorkspaceManager(
         knownWindows[window.Handle] = window;
         if (previouslyUnknown) { OnAppeared(window); return; } // became taskbar-worthy late
 
+        // Fire-and-forget: same rationale as OnAppeared — no caller awaits this path.
         if (ledger.NeedsReapply(window.Handle, window.Title))
-            ledger.AppliedName(window.Handle).Tap(name => titles.Set(window.Handle, name));
+            ledger.AppliedName(window.Handle).Tap(name => { titles.Set(window.Handle, name); });
         else if (ledger.AppliedName(window.Handle).HasNoValue)
             // Not renamed yet — but the new title may now match a rename rule.
             RulesEngine.MatchRename(window, State.RenameRules)
-                .Tap(shortName => ApplyRename(window, shortName));
+                .Tap(shortName => { ApplyRename(window, shortName); });
     }
 
     void OnDisappeared(WindowInfo window)
@@ -117,7 +123,10 @@ public sealed class WorkspaceManager(
             PersistInventory(workspaceId);
     }
 
-    void Place(WindowInfo window, Guid workspaceId) =>
+    // Returns Result: workspace-lookup and desktop-move failures must reach the caller
+    // (Task 8's UI shows these). OnAppeared discards this deliberately (see comment
+    // there); AssignWindow propagates it.
+    Result Place(WindowInfo window, Guid workspaceId) =>
         Workspace(workspaceId)
             .Bind(w => w.DesktopId is { } desktopId
                 ? desktops.MoveWindow(window.Handle, desktopId)
@@ -128,12 +137,14 @@ public sealed class WorkspaceManager(
                 PersistInventory(workspaceId);
             });
 
-    void ApplyRename(WindowInfo window, string shortName)
-    {
-        // Ledger first (captures the original title), then the actual write.
-        ledger = ledger.Apply(window.Handle, window.Title, shortName);
-        titles.Set(window.Handle, shortName);
-    }
+    // Returns Result: a failed WM_SETTEXT (hung/closed window) must not leave a ledger
+    // entry claiming the rename succeeded — order matters here. We attempt the actual
+    // write FIRST, and only update the ledger (which captures the original title) once
+    // that succeeds; RenameWindow propagates the failure, OnAppeared/OnTitleChanged
+    // discard it deliberately (see comments there).
+    Result ApplyRename(WindowInfo window, string shortName) =>
+        titles.Set(window.Handle, shortName)
+            .Tap(() => ledger = ledger.Apply(window.Handle, window.Title, shortName));
 
     // --- UI-facing operations ---------------------------------------------------
 
@@ -177,12 +188,12 @@ public sealed class WorkspaceManager(
 
     public Result AssignWindow(WindowHandle window, Guid workspaceId) =>
         knownWindows.TryGetValue(window, out var info)
-            ? Result.Success().Tap(() => Place(info, workspaceId))
+            ? Place(info, workspaceId)
             : Result.Failure("Window no longer exists.");
 
     public Result RenameWindow(WindowHandle window, string shortName) =>
         knownWindows.TryGetValue(window, out var info)
-            ? Result.Success().Tap(() => ApplyRename(info, shortName))
+            ? ApplyRename(info, shortName)
             : Result.Failure("Window no longer exists.");
 
     public Result RestoreTitle(WindowHandle window) =>

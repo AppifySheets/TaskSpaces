@@ -169,4 +169,46 @@ public class WorkspaceManagerTests
 
         Assert.Equal("Some Page - Chrome", titles.Titles[new WindowHandle(0x10)]);
     }
+
+    // --- Fix round 1: Result-based error propagation on the UI-facing surface ------
+
+    [Fact]
+    public void Assign_to_missing_workspace_returns_failure_and_moves_nothing()
+    {
+        var (manager, _) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        var result = manager.AssignWindow(new WindowHandle(0x10), Guid.NewGuid());
+
+        Assert.True(result.IsFailure);
+        Assert.Empty(desktops.WindowPlacements);
+    }
+
+    [Fact]
+    public void Rename_window_failure_from_titles_does_not_create_ledger_entry()
+    {
+        var (manager, _) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        titles.RejectSetFor.Add(new WindowHandle(0x10));
+
+        var result = manager.RenameWindow(new WindowHandle(0x10), "RDP");
+
+        Assert.True(result.IsFailure);
+        // No ledger entry was created for the failed rename, so restore has nothing to undo.
+        Assert.True(manager.RestoreTitle(new WindowHandle(0x10)).IsFailure);
+    }
+
+    [Fact]
+    public void Assign_window_move_failure_returns_failure()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        desktops.RejectMoveFor.Add(new WindowHandle(0x10));
+
+        var result = manager.AssignWindow(new WindowHandle(0x10), work.Id);
+
+        Assert.True(result.IsFailure);
+        Assert.False(desktops.WindowPlacements.ContainsKey(new WindowHandle(0x10)));
+        Assert.False(store.Stored.Inventory.ContainsKey(work.Id));
+    }
 }
