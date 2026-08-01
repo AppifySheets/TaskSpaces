@@ -1,0 +1,172 @@
+using TaskSpaces.Core.Domain;
+using TaskSpaces.Core.Persistence;
+using TaskSpaces.Core.Rules;
+
+namespace TaskSpaces.Core.Tests;
+
+public class WorkspaceManagerTests
+{
+    readonly FakeDesktops desktops = new();
+    readonly FakeMonitor monitor = new();
+    readonly FakeTitles titles = new();
+    readonly FakeStore store = new();
+
+    WorkspaceManager Manager() => new(desktops, monitor, titles, store);
+
+    static WindowInfo Chrome(nint hwnd = 0x10, string title = "Some Page - Chrome") =>
+        new(new WindowHandle(hwnd), 100, "chrome", @"C:\chrome.exe", title, "chrome.exe --profile-directory=Default");
+
+    (WorkspaceManager manager, Workspace work) StartedWithWorkWorkspace(params object[] rules)
+    {
+        var work = new Workspace(Guid.NewGuid(), "Work", null);
+        store.Stored = AppState.Empty with
+        {
+            Workspaces = [work],
+            WorkspaceRules = rules.OfType<WorkspaceRule>().ToList(),
+            RenameRules = rules.OfType<RenameRule>().ToList(),
+        };
+        var manager = Manager();
+        Assert.True(manager.Start().IsSuccess);
+        return (manager, manager.State.Workspaces.Single());
+    }
+
+    [Fact]
+    public void Start_creates_a_desktop_for_a_workspace_that_has_none()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        Assert.NotNull(work.DesktopId);
+        Assert.Contains(desktops.Desktops, d => d.Id == work.DesktopId && d.Name == "Work");
+        Assert.Equal(work.DesktopId, store.Stored.Workspaces.Single().DesktopId); // persisted
+    }
+
+    [Fact]
+    public void Start_rebinds_to_existing_desktop_by_name_instead_of_duplicating()
+    {
+        var existing = desktops.Create("Work").Value;
+        var (_, work) = StartedWithWorkWorkspace();
+        Assert.Equal(existing.Id, work.DesktopId);
+        Assert.Single(desktops.Desktops);
+    }
+
+    [Fact]
+    public void Appeared_window_matching_rule_is_moved_and_inventoried()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+    }
+
+    [Fact]
+    public void Appeared_window_without_matching_rule_is_left_alone()
+    {
+        var (manager, _) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        Assert.Empty(desktops.WindowPlacements);
+    }
+
+    [Fact]
+    public void Rename_rule_applies_short_name_on_appearance()
+    {
+        var (manager, _) = StartedWithWorkWorkspace(new RenameRule(RuleMatchKind.ProcessName, "chrome", "Amy related"));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        Assert.Equal("Amy related", titles.Titles[new WindowHandle(0x10)]);
+    }
+
+    [Fact]
+    public void Short_name_is_reapplied_when_app_rewrites_its_title()
+    {
+        var (manager, _) = StartedWithWorkWorkspace(new RenameRule(RuleMatchKind.ProcessName, "chrome", "Amy related"));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        titles.Titles.Clear(); // forget the first application so we can observe the re-apply
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, Chrome(title: "Other Page - Chrome")));
+
+        Assert.Equal("Amy related", titles.Titles[new WindowHandle(0x10)]);
+    }
+
+    [Fact]
+    public void Own_echo_titlechange_is_not_reapplied()
+    {
+        var (manager, _) = StartedWithWorkWorkspace(new RenameRule(RuleMatchKind.ProcessName, "chrome", "Amy related"));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        titles.Titles.Clear();
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, Chrome(title: "Amy related")));
+
+        Assert.Empty(titles.Titles); // no write happened — loop is broken
+    }
+
+    [Fact]
+    public void Manual_rename_and_restore_roundtrip()
+    {
+        var (manager, _) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        Assert.True(manager.RenameWindow(new WindowHandle(0x10), "RDP").IsSuccess);
+        Assert.Equal("RDP", titles.Titles[new WindowHandle(0x10)]);
+
+        Assert.True(manager.RestoreTitle(new WindowHandle(0x10)).IsSuccess);
+        Assert.Equal("Some Page - Chrome", titles.Titles[new WindowHandle(0x10)]);
+    }
+
+    [Fact]
+    public void Manual_assignment_moves_window_and_wins_over_rules()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        Assert.True(manager.AssignWindow(new WindowHandle(0x10), work.Id).IsSuccess);
+        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
+    }
+
+    [Fact]
+    public void Switch_delegates_to_desktop_service()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        Assert.True(manager.Switch(work.Id).IsSuccess);
+        Assert.Equal(new[] { work.DesktopId!.Value }, desktops.Switches);
+    }
+
+    [Fact]
+    public void Disappeared_window_leaves_inventory()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome()));
+        Assert.Empty(store.Stored.Inventory[work.Id]);
+    }
+
+    [Fact]
+    public void Workspace_crud_persists()
+    {
+        var manager = Manager();
+        Assert.True(manager.Start().IsSuccess);
+
+        var added = manager.AddWorkspace("YouTube");
+        Assert.True(added.IsSuccess);
+        Assert.Contains(store.Stored.Workspaces, w => w.Name == "YouTube");
+
+        Assert.True(manager.RenameWorkspace(added.Value.Id, "Video").IsSuccess);
+        Assert.Contains(store.Stored.Workspaces, w => w.Name == "Video");
+        Assert.Contains(desktops.Desktops, d => d.Name == "Video"); // desktop renamed too
+
+        Assert.True(manager.RemoveWorkspace(added.Value.Id).IsSuccess);
+        Assert.Empty(store.Stored.Workspaces);
+    }
+
+    [Fact]
+    public void RestoreAllTitles_restores_every_renamed_window()
+    {
+        var (manager, _) = StartedWithWorkWorkspace(new RenameRule(RuleMatchKind.ProcessName, "chrome", "Amy related"));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        manager.RestoreAllTitles();
+
+        Assert.Equal("Some Page - Chrome", titles.Titles[new WindowHandle(0x10)]);
+    }
+}
