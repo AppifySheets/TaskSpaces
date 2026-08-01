@@ -23,6 +23,24 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Reviewer (fix round 1, Critical, last-ditch backstop): an unhandled exception on
+        // the dispatcher thread — e.g. the ArgumentException a duplicate-name dictionary
+        // build used to throw — otherwise takes the whole process down immediately, with
+        // every window still wearing its renamed title. WPF's default behavior for an
+        // unhandled dispatcher exception is to terminate the process once this handler
+        // returns with e.Handled left false, so this is NOT a crash suppressor: it is the
+        // last opportunity to run RestoreAllTitles() — "leave every window as we found
+        // it" — before that termination happens, plus a MessageBox so the failure isn't
+        // silent. e.Handled is deliberately left false: we still want the crash (and its
+        // real stack trace/telemetry), just not a window stuck with the wrong title.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            manager?.RestoreAllTitles();
+            MessageBox.Show($"TaskSpaces hit an unexpected error and must close:\n{args.Exception.Message}",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Error);
+            args.Handled = false; // let it die — titles are already restored
+        };
+
         var stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces");
         var desktops = new VirtualDesktopService();
         monitor = new WindowMonitor();

@@ -211,4 +211,68 @@ public class WorkspaceManagerTests
         Assert.False(desktops.WindowPlacements.ContainsKey(new WindowHandle(0x10)));
         Assert.False(store.Stored.Inventory.ContainsKey(work.Id));
     }
+
+    // --- Fix round 1: duplicate workspace-name guard (reviewer: Critical) ----------
+    // Without this guard, two workspaces can share a name; ManageWindow.OnSaveRules'
+    // `ToDictionary(w => w.Name, ...)` then throws ArgumentException on save, taking the
+    // whole process down (no unhandled-exception handler existed before this round either).
+
+    [Fact]
+    public void Add_duplicate_workspace_name_fails()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+
+        var result = manager.AddWorkspace("Work"); // exact case match against existing "Work"
+
+        Assert.True(result.IsFailure);
+        Assert.Single(store.Stored.Workspaces); // nothing new persisted
+    }
+
+    [Fact]
+    public void Add_duplicate_workspace_name_fails_case_insensitively_and_trimmed()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+
+        var result = manager.AddWorkspace("  WORK  ");
+
+        Assert.True(result.IsFailure);
+        Assert.Single(store.Stored.Workspaces);
+    }
+
+    [Fact]
+    public void Rename_workspace_to_existing_name_fails()
+    {
+        var manager = Manager();
+        Assert.True(manager.Start().IsSuccess);
+        var work = manager.AddWorkspace("Work").Value;
+        var personal = manager.AddWorkspace("Personal").Value;
+
+        var result = manager.RenameWorkspace(personal.Id, "Work");
+
+        Assert.True(result.IsFailure);
+        Assert.Contains(store.Stored.Workspaces, w => w.Id == personal.Id && w.Name == "Personal"); // unchanged
+    }
+
+    [Fact]
+    public void Rename_workspace_to_its_own_name_succeeds()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+
+        // Same name, different case/whitespace — renaming a workspace to (a variant of)
+        // its own current name must not be rejected as a "duplicate" of itself.
+        var result = manager.RenameWorkspace(work.Id, "Work");
+
+        Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
+    public void Rename_workspace_to_blank_name_fails()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+
+        var result = manager.RenameWorkspace(work.Id, "   ");
+
+        Assert.True(result.IsFailure);
+        Assert.Contains(store.Stored.Workspaces, w => w.Id == work.Id && w.Name == "Work"); // unchanged
+    }
 }

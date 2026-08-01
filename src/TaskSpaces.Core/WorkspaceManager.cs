@@ -155,17 +155,33 @@ public sealed class WorkspaceManager(
 
     public Result<Workspace> AddWorkspace(string name) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
+            .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
             .Bind(() => desktops.Create(name))
             .Map(d => new Workspace(Guid.NewGuid(), name, d.Id))
             .Tap(w => Persist(State with { Workspaces = [.. State.Workspaces, w] }));
 
+    // Reviewer (fix round 1, Critical): duplicate names used to be unchecked, so two
+    // workspaces could share a name; ManageWindow.OnSaveRules' `ToDictionary(w => w.Name)`
+    // then threw ArgumentException with no handler, killing the process before renamed
+    // titles could be restored. Guarded here (case-insensitive, trimmed) — the ROOT CAUSE
+    // fix — with a defense-in-depth duplicate-safe dictionary added in ManageWindow too,
+    // and a last-ditch DispatcherUnhandledException handler in App as a backstop.
     public Result RenameWorkspace(Guid id, string name) =>
-        Workspace(id)
+        Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
+            .Bind(() => Workspace(id))
+            .Bind(w => Result.FailureIf(NameTaken(name, excluding: id), $"A workspace named '{name.Trim()}' already exists.")
+                .Map(() => w))
             .Tap(w => { if (w.DesktopId is { } d) desktops.Rename(d, name); })
             .Tap(w => Persist(State with
             {
                 Workspaces = State.Workspaces.Select(x => x.Id == id ? x with { Name = name } : x).ToList(),
             }));
+
+    // Case-insensitive, trim-tolerant name collision check. `excluding` lets
+    // RenameWorkspace allow renaming a workspace to (a variant of) its own current name —
+    // it must only reject collisions with *other* workspaces.
+    bool NameTaken(string name, Guid? excluding) =>
+        State.Workspaces.Any(w => w.Id != excluding && w.Name.Trim().Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
 
     // Removing a workspace never removes its desktop implicitly — windows live there.
     // The desktop merge behavior (Windows moves its windows to the previous desktop)

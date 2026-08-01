@@ -31,8 +31,18 @@ public partial class ManageWindow : Window
         Reload();
     }
 
+    // Reviewer (fix round 1, Important): reassigning ItemsSource wholesale drops the
+    // current selection, so every button click ("Rename", "Send to workspace", ...)
+    // silently deselects the very row the user just acted on — annoying for the common
+    // case of doing several operations on the same workspace/window in a row. Capture the
+    // selected *identity* (Id / Handle — never the object reference, since Reload() always
+    // rebuilds fresh instances) before rebinding, and re-select the matching item after.
     void Reload()
     {
+        var selectedWorkspaceId = (WorkspaceList.SelectedItem as Workspace)?.Id;
+        var selectedAssignTargetId = (AssignTarget.SelectedItem as Workspace)?.Id;
+        var selectedWindowHandle = (WindowList.SelectedItem as WindowInfo)?.Handle;
+
         WorkspaceList.ItemsSource = manager.State.Workspaces;
         AssignTarget.ItemsSource = manager.State.Workspaces;
         WindowList.ItemsSource = manager.KnownWindows;
@@ -45,6 +55,13 @@ public partial class ManageWindow : Window
         }));
         renameRules.Clear();
         manager.State.RenameRules.ToList().ForEach(r => renameRules.Add(new RenameRuleRow { Kind = r.Kind, Pattern = r.Pattern, ShortName = r.ShortName }));
+
+        if (selectedWorkspaceId is { } wsId)
+            WorkspaceList.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == wsId);
+        if (selectedAssignTargetId is { } atId)
+            AssignTarget.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == atId);
+        if (selectedWindowHandle is { } handle)
+            WindowList.SelectedItem = manager.KnownWindows.FirstOrDefault(w => w.Handle == handle);
     }
 
     void OnAddWorkspace(object s, RoutedEventArgs e) => Report(manager.AddWorkspace(NewWorkspaceName.Text).Map(_ => true)).Tap(Reload);
@@ -70,7 +87,16 @@ public partial class ManageWindow : Window
             .ToList();
         if (invalid.Count > 0) { MessageBox.Show($"Invalid regex pattern(s):\n{string.Join("\n", invalid)}"); return; }
 
-        var byName = manager.State.Workspaces.ToDictionary(w => w.Name, w => w.Id, StringComparer.OrdinalIgnoreCase);
+        // Reviewer (fix round 1, Critical, defense in depth): WorkspaceManager now rejects
+        // duplicate names going forward, but state.json written before that guard existed
+        // may still contain duplicates on disk. A plain `ToDictionary(w => w.Name, ...)`
+        // throws ArgumentException on any duplicate key and — with no unhandled-exception
+        // handler at the time this bug was found — took the whole process down mid-save.
+        // GroupBy never throws on duplicates; first-match-wins here is an accepted, silent
+        // tie-break (the root-cause fix means new duplicates can no longer be created).
+        var byName = manager.State.Workspaces
+            .GroupBy(w => w.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
         var unknown = workspaceRules.Where(r => !byName.ContainsKey(r.Workspace)).Select(r => r.Workspace).ToList();
         if (unknown.Count > 0) { MessageBox.Show($"Unknown workspace(s):\n{string.Join("\n", unknown)}"); return; }
 
