@@ -56,11 +56,16 @@ TaskSpaces replaces:
      workspace's apps back into their group ("rehydrate").
 6. User-friendly above all: no config files required, no keyboard-first workflow,
    GUI for everything. Hotkeys are optional accelerators, not the primary interface.
+7. Window renaming *(added 2026-08-01, supersedes the original non-goal)*: assign a
+   short display name to any window so the taskbar shows "RDP" or "Amy related"
+   instead of a long auto-generated title — the TaskBarRenamer feature, integrated.
+   Manual rename per window plus automatic rename rules; names re-applied when the
+   app rewrites its own title (browsers/editors do this constantly); original title
+   restored when the rename is removed or TaskSpaces exits.
 
 ### Non-goals (YAGNI)
 
 - Window tiling/layout management (PowerToys FancyZones exists).
-- Renaming window titles (TaskBarRenamer exists).
 - Restoring browser tab sets (browser's own session restore handles this).
 - Cross-machine sync.
 
@@ -89,6 +94,10 @@ C# / .NET (latest LTS), WinUI 3 (or WPF if WinUI friction is too high) tray appl
 6. **Rehydrator** — after reboot, recreates desktops for each workspace and optionally
    relaunches its recorded apps into it (per-workspace opt-in, like a browser's
    "restore session?" prompt).
+7. **WindowRenamer** — sets short display names on windows (WM_SETTEXT), keeps a
+   ledger of original titles for restore, and re-applies the short name when the
+   owning app rewrites its title (EVENT_OBJECT_NAMECHANGE via WindowMonitor).
+   Rename rules live in the RulesEngine alongside workspace rules.
 
 ### Data flow
 
@@ -101,6 +110,10 @@ WindowAppeared (WindowMonitor, RX)
 User clicks workspace in Switcher UI
   → VirtualDesktopService.Switch(workspace.DesktopId)
   → taskbar updates natively
+
+WindowAppeared / TitleChanged (WindowMonitor, RX)
+  → RulesEngine.MatchRename(window, renameRules) : Maybe<shortName>
+  → WindowRenamer.Apply(hwnd, shortName)   // re-applied on NAMECHANGE; original kept for restore
 ```
 
 ### Error handling
