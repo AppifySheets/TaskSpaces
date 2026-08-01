@@ -24,12 +24,27 @@ public class VirtualDesktopServiceTests(ITestOutputHelper output)
             output.WriteLine($"created: {created.Value.Id}");
             Assert.True(created.IsSuccess);
 
-            Assert.True(service.Rename(created.Value.Id, "TaskSpaces IT2").IsSuccess);
-            Assert.Contains(service.GetDesktops().Value, d => d.Name == "TaskSpaces IT2");
+            // FIX (code review, round 1): everything after a successful Create() now runs
+            // inside try/finally — same cleanup discipline the Task 1 spike used — so a
+            // failed Assert partway through the lifecycle can't leave a stray desktop
+            // behind on the real machine. `removed` tracks whether the happy-path Remove()
+            // already ran so the finally block doesn't attempt a redundant (and noisy)
+            // second removal.
+            var removed = false;
+            try
+            {
+                Assert.True(service.Rename(created.Value.Id, "TaskSpaces IT2").IsSuccess);
+                Assert.Contains(service.GetDesktops().Value, d => d.Name == "TaskSpaces IT2");
 
-            Assert.True(service.Switch(created.Value.Id).IsSuccess);
-            Thread.Sleep(1000);                                     // let the shell animate
-            Assert.True(service.Remove(created.Value.Id).IsSuccess); // removing current hops back
+                Assert.True(service.Switch(created.Value.Id).IsSuccess);
+                Thread.Sleep(1000);                                     // let the shell animate
+                Assert.True(service.Remove(created.Value.Id).IsSuccess); // removing current hops back
+                removed = true;
+            }
+            finally
+            {
+                if (!removed) service.Remove(created.Value.Id);
+            }
         });
 
     [Fact]

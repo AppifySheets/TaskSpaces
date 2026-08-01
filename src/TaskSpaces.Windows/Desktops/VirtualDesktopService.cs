@@ -47,12 +47,26 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
             return new DesktopInfo(desktop.Id, name);
         }, e => $"Could not create desktop '{name}': {e.Message}");
 
+    // FIX (code review, round 1): these three used a bare .Tap(...), which does not catch
+    // exceptions. A desktop can vanish between Find() succeeding and the native call
+    // running (the whole point of the interface's Result-everywhere contract: "desktops
+    // vanish... all expected, none fatal"). Matching MoveWindow's style below, the native
+    // call is now wrapped in Result.Try inside Bind so that race turns into a contextualized
+    // Result.Failure instead of an unhandled exception escaping the service.
     public Result Rename(Guid desktopId, string name) =>
-        Find(desktopId).Tap(d => d.Name = name);
+        Find(desktopId).Bind(d => Result.Try(
+            () => d.Name = name,
+            e => $"Could not rename desktop {desktopId} to '{name}': {e.Message}"));
 
-    public Result Switch(Guid desktopId) => Find(desktopId).Tap(d => d.Switch());
+    public Result Switch(Guid desktopId) =>
+        Find(desktopId).Bind(d => Result.Try(
+            d.Switch,
+            e => $"Could not switch to desktop {desktopId}: {e.Message}"));
 
-    public Result Remove(Guid desktopId) => Find(desktopId).Tap(d => d.Remove());
+    public Result Remove(Guid desktopId) =>
+        Find(desktopId).Bind(d => Result.Try(
+            d.Remove,
+            e => $"Could not remove desktop {desktopId}: {e.Message}"));
 
     public Result MoveWindow(WindowHandle window, Guid desktopId) =>
         Find(desktopId).Bind(d => Result.Try(
