@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using CSharpFunctionalExtensions;
@@ -48,31 +49,43 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     {
         if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF || hwnd == 0) return;
 
-        switch (@event)
+        // INVARIANT: no managed exception may ever escape a native callback. OnWinEvent is
+        // invoked directly by user32 via the SetWinEventHook out-of-context callback — an
+        // unhandled exception here unwinds through native stack frames and takes down the
+        // whole process, not just this monitor. Swallow anything unexpected and log it;
+        // losing one event is far better than crashing the app that's hosting the monitor.
+        try
         {
-            case EVENT_OBJECT_SHOW:
-                TryAppear(hwnd);
-                break;
+            switch (@event)
+            {
+                case EVENT_OBJECT_SHOW:
+                    TryAppear(hwnd);
+                    break;
 
-            // Note: moving a window to another virtual desktop CLOAKS it (DWM), it does
-            // not fire HIDE — so our own desktop moves never produce false Disappeared.
-            case EVENT_OBJECT_DESTROY or EVENT_OBJECT_HIDE when known.Remove(hwnd, out var gone):
-                events.OnNext(new WindowEvent(WindowEventKind.Disappeared, gone));
-                break;
+                // Note: moving a window to another virtual desktop CLOAKS it (DWM), it does
+                // not fire HIDE — so our own desktop moves never produce false Disappeared.
+                case EVENT_OBJECT_DESTROY or EVENT_OBJECT_HIDE when known.Remove(hwnd, out var gone):
+                    events.OnNext(new WindowEvent(WindowEventKind.Disappeared, gone));
+                    break;
 
-            // Title changed on a window we track -> updated snapshot. WindowRenamer's own
-            // WM_SETTEXT also lands here; WorkspaceManager breaks the loop by comparing titles.
-            case EVENT_OBJECT_NAMECHANGE when known.TryGetValue(hwnd, out var tracked):
-                var updated = tracked with { Title = WindowInfoFactory.TitleOf(hwnd) };
-                if (updated.Title == tracked.Title) break; // spurious NAMECHANGE, ignore
-                known[hwnd] = updated;
-                events.OnNext(new WindowEvent(WindowEventKind.TitleChanged, updated));
-                break;
+                // Title changed on a window we track -> updated snapshot. WindowRenamer's own
+                // WM_SETTEXT also lands here; WorkspaceManager breaks the loop by comparing titles.
+                case EVENT_OBJECT_NAMECHANGE when known.TryGetValue(hwnd, out var tracked):
+                    var updated = tracked with { Title = WindowInfoFactory.TitleOf(hwnd) };
+                    if (updated.Title == tracked.Title) break; // spurious NAMECHANGE, ignore
+                    known[hwnd] = updated;
+                    events.OnNext(new WindowEvent(WindowEventKind.TitleChanged, updated));
+                    break;
 
-            // A window can become taskbar-worthy late (title set only after SHOW).
-            case EVENT_OBJECT_NAMECHANGE:
-                TryAppear(hwnd);
-                break;
+                // A window can become taskbar-worthy late (title set only after SHOW).
+                case EVENT_OBJECT_NAMECHANGE:
+                    TryAppear(hwnd);
+                    break;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine($"WindowMonitor.OnWinEvent swallowed an exception for hwnd={hwnd}, event=0x{@event:X}: {e}");
         }
     }
 

@@ -55,6 +55,9 @@ public static class WindowInfoFactory
             using var searcher = new ManagementObjectSearcher($"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
             return searcher.Get().Cast<ManagementBaseObject>().FirstOrDefault()?["CommandLine"] as string;
         }
-        catch (ManagementException) { return null; }
+        // Command line is best-effort metadata for BrowserProfile rules only — never worth
+        // crashing over. WMI can throw more than ManagementException (UnauthorizedAccessException,
+        // raw COM exceptions from the WMI service hiccuping, etc.), so swallow broadly.
+        catch (Exception) { return null; }
     }
 }
