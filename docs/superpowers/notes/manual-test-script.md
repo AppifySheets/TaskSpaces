@@ -18,6 +18,9 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
 11. Restart app -> workspaces re-bind to the same desktops (no duplicates).
 12. Invalid regex in Rules tab -> message box; rules not saved; nothing crashes.
 13. Start-with-Windows checkbox -> HKCU\...\Run entry appears/disappears (regedit).
+14. Put Notepad in Work via a rule; exit the app (inventory persists); close Notepad;
+    relaunch the app -> prompt lists "Work (1 app(s))"; Restore relaunches Notepad and
+    it lands on Work's desktop.
 
 ## Results (2026-08-01)
 
@@ -39,6 +42,18 @@ step 1's non-crash half and none of the others:
   path without throwing.
 - The process was stopped cleanly (`Stop-Process`) with no crash dialog.
 
+Task 9 (rehydration) smoke check, added in this session, same non-visual proxy: on
+this build/machine `%APPDATA%\TaskSpaces\state.json` was absent both before and after
+the run (unlike the note above from the earlier session — this worktree's environment
+apparently exercises `VirtualDesktopService.Initialize()` failing / compatibility mode,
+so `manager.Start()`/persistence never ran; not a Task 9 regression, just a different
+runtime environment). Either way, `RehydratePrompt.HasAnythingToRestore` is guarded by
+`!compatibilityMode` and by an empty `Inventory`, so no prompt should appear here, and
+none did: the process's `MainWindowTitle` stayed empty (a shown `RehydratePrompt` would
+carry the title "TaskSpaces — Restore workspaces?") throughout the 15+ second
+observation window, and there was no crash. This does NOT exercise the Restore/Skip
+button paths or an actual relaunch — that needs the human steps in item 14 above.
+
 | # | Check | Result |
 |---|-------|--------|
 | 1 | Tray icon + menu contents | pending human execution |
@@ -54,6 +69,7 @@ step 1's non-crash half and none of the others:
 | 11 | Restart re-binds without duplicating desktops | pending human execution |
 | 12 | Invalid regex rejected with message box | pending human execution |
 | 13 | Start-with-Windows registry toggle | pending human execution |
+| 14 | Rehydration prompt lists app counts; Restore relaunches into the right workspace | pending human execution (non-crash proxy verified: no prompt window shown when inventory is empty) |
 
 Re-run this script by hand before each release and replace the table above with actual
 pass/fail results plus notes on the Windows build tested.

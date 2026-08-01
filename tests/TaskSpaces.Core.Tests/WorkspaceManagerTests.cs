@@ -275,4 +275,19 @@ public class WorkspaceManagerTests
         Assert.True(result.IsFailure);
         Assert.Contains(store.Stored.Workspaces, w => w.Id == work.Id && w.Name == "Work"); // unchanged
     }
+
+    // --- Task 9: rehydration — pending launch placement beats rule matching --------
+
+    [Fact]
+    public void Pending_launch_placement_beats_rules()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        var other = manager.AddWorkspace("Other").Value;
+        manager.SetRules([new WorkspaceRule(other.Id, RuleMatchKind.ProcessName, "chrome")], []);
+
+        manager.RegisterPendingLaunch(100, @"C:\chrome.exe", work.Id);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
+    }
 }

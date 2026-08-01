@@ -65,6 +65,14 @@ public partial class App : Application
         manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
             trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp)));
 
+        // Task 9: post-reboot rehydration. state.json's inventory survives a reboot even
+        // though the desktops/windows it describes don't — offer to relaunch each
+        // workspace's remembered apps. Compatibility mode has no desktops to place
+        // windows onto, so skip it there; HasAnythingToRestore also skips the prompt
+        // entirely on a clean start with an empty inventory (nothing to offer).
+        if (!compatibilityMode && RehydratePrompt.HasAnythingToRestore(manager))
+            new RehydratePrompt(manager).Show();
+
         // OS shutdown/logoff: every window is about to close, and each close would fire
         // Disappeared and ERASE the inventory that rehydration needs. Unhook the monitor
         // FIRST so state.json keeps its last-known contents, then put titles back.

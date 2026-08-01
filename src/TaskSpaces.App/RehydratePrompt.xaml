@@ -1,0 +1,15 @@
+<Window x:Class="TaskSpaces.App.RehydratePrompt"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TaskSpaces — Restore workspaces?" Width="420" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" Topmost="True">
+    <DockPanel Margin="12">
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="These workspaces had apps in them before the last shutdown. Relaunch them into their workspaces?"/>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Restore selected" Padding="12,4" Click="OnRestore"/>
+            <Button Content="Skip" Padding="12,4" Margin="8,0,0,0" Click="OnSkip"/>
+        </StackPanel>
+        <ItemsControl x:Name="WorkspaceChecklist"/>
+    </DockPanel>
+</Window>
