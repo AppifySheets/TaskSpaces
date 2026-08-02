@@ -166,6 +166,16 @@ public partial class SwitcherPanel : Window
     // Task 9: clicking inside a peeked panel "graduates" it to a normal, focused panel —
     // spec: "Clicking inside the peeked panel activates it, after which normal
     // focus/dismiss behavior applies." From here on OnDeactivated's Hide() governs again.
+    //
+    // Fix wave (reviewer, minor): this matters for drag-and-drop too, though nothing here
+    // was changed for it. WPF's tunneling (Preview*) routed events fire root-to-leaf, so
+    // THIS window-level PreviewMouseDown always runs — and stops the proximity timer,
+    // taking the panel out of peek mode — before the row Button's own
+    // PreviewMouseLeftButtonDown (WindowGroupsView.SetupDragSource) ever sees the same
+    // press and records its drag-start point. That ordering guarantee is what makes it
+    // safe for a drag to unfold entirely with peekMode already false: the proximity timer
+    // that governs peek's hide-on-leave is already stopped by the time a drag could be
+    // underway, so it can never hide the panel out from under a drag in progress.
     void OnPreviewMouseDown(object s, MouseButtonEventArgs e)
     {
         if (!peekMode) return;

@@ -408,4 +408,44 @@ public class WorkspaceManagerTests
         Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe"); // roster entry stays
         Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == new WindowHandle(0x10)); // dropped from known windows
     }
+
+    // --- Fix wave (reviewer, Important): open/close must pulse StateChanged --------
+    // v1's inventory-persisting Appeared/Disappeared path used to pulse StateChanged as
+    // a side effect of Persist(). The roster rewrite added paths that don't necessarily
+    // call Persist (e.g. Appeared with no rule match at all, Hidden, Disappeared with no
+    // matching workspace rule) — an open panel/Windows tab then goes stale: dead rows for
+    // windows that closed, missing rows for windows that opened, stale running-counts in
+    // workspace headers. Every lifecycle event must pulse regardless of whether it also
+    // happened to mutate persisted state.
+
+    [Fact]
+    public void Appeared_pulses_state_changed_even_with_no_rule_match()
+    {
+        // No rules registered: Chrome() is neither placed nor renamed, so nothing calls
+        // Persist() for this event. The live UI (panel/Windows tab) still needs to learn
+        // a new window showed up so it can add a row for it.
+        var (manager, _) = StartedWithWorkWorkspace();
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        Assert.True(pulses > 0);
+    }
+
+    [Fact]
+    public void Hidden_and_disappeared_pulse_state_changed()
+    {
+        var (manager, _) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome()));
+        Assert.True(pulses > 0);
+
+        var afterHidden = pulses;
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome()));
+        Assert.True(pulses > afterHidden);
+    }
 }

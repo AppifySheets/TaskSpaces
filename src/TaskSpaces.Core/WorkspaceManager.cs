@@ -121,6 +121,14 @@ public sealed class WorkspaceManager(
         // Fire-and-forget for the same reason as above.
         RulesEngine.MatchRename(window, State.RenameRules)
             .Tap(shortName => { ApplyRename(window, shortName); });
+
+        // Fix wave (reviewer, Important): pulse unconditionally, even when neither branch
+        // above ran (no placement rule, no rename rule). Persist() above already pulses
+        // when it fires, so this can double-pulse — harmless, a tray-menu/panel rebuild
+        // triggered by StateChanged is a cheap, idempotent re-read of current state. What
+        // it fixes: an open panel/Windows tab must learn a new window appeared even when
+        // nothing about it was auto-placed or renamed, or its row never shows up.
+        stateChanged.OnNext(Unit.Default);
     }
 
     void OnTitleChanged(WindowInfo window)
@@ -172,6 +180,11 @@ public sealed class WorkspaceManager(
     {
         knownWindows.Remove(window.Handle);
         memberships.Remove(window.Handle); // roster entry stays — that's the point (spec)
+
+        // Fix wave (reviewer, Important): the live panel/Windows tab must lose this row
+        // (it's no longer a live window) — nothing else in this path calls Persist(), so
+        // without this pulse the UI would keep showing a window that's gone to tray.
+        stateChanged.OnNext(Unit.Default);
     }
 
     void OnDisappeared(WindowInfo window)
@@ -179,6 +192,12 @@ public sealed class WorkspaceManager(
         knownWindows.Remove(window.Handle);
         ledger = ledger.Remove(window.Handle);
         memberships.Remove(window.Handle); // roster entry stays — ▶ Start relaunches it
+
+        // Fix wave (reviewer, Important): same rationale as OnHidden above — a closed
+        // window's running-row must disappear from any open panel/Windows tab, and a
+        // workspace header's running-count must drop, even though this path doesn't
+        // otherwise call Persist().
+        stateChanged.OnNext(Unit.Default);
     }
 
     // Returns Result: workspace-lookup and desktop-move failures must reach the caller

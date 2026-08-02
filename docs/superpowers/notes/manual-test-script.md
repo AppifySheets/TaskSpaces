@@ -64,6 +64,19 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
     Ctrl+Alt+Left/Right to a display-rotate shortcut), TaskSpaces shows exactly ONE
     warning message box at startup listing the chord(s) it could not register, and
     every other hotkey it DID register still works normally.
+30. Panel/Windows tab: drag a window row onto another workspace's group -> it moves
+    there (and is unpinned first if it was pinned); drag a row onto the 📌 Pinned
+    group -> it pins (follows every workspace) instead of moving.
+31. Manage window's Windows tab shows the exact same grouped view as the panel (same
+    groups, same running/roster rows); drag-and-drop works identically there; each
+    row's right-click menu covers rename, restore title, pin/unpin, and send to
+    workspace.
+32. Windows on an unbound/default OS desktop appear grouped under a sensibly-derived
+    name for that desktop (e.g. "Desktop 1"), including whichever such desktop is
+    currently active; any oddball shell/system windows that don't belong to a real
+    desktop grouping appear under an "Unplaced" catch-all group.
+33. The old ＋ button is gone from the workspace header; adding an app to a workspace
+    is done via "Add app…" in the workspace header's right-click context menu.
 
 ## Results (2026-08-01)
 
@@ -121,7 +134,7 @@ above.
 | 12 | Invalid regex rejected with message box | pending human execution |
 | 13 | Start-with-Windows registry toggle | pending human execution |
 | 14 | Rehydration prompt lists app counts; Restore relaunches into the right workspace | pending human execution (non-crash proxy verified: no prompt window shown when inventory is empty) |
-| 15 | Left-click tray -> switcher panel opens, grouped, current workspace bold | pending human execution |
+| 15 | Superseded by Task 9 (see items 25-26): re-verify panel appearance/grouping via item 25's hover instead of left-click | n/a — superseded, see item 25 |
 | 16 | Panel: click a window row -> jumps workspace + focuses, panel closes | pending human execution |
 | 17 | Panel: pin/unpin via context menu; pinned group; send-to unpins | pending human execution |
 | 18 | Panel: non-workspace desktop windows grouped under desktop name | pending human execution |
@@ -136,6 +149,10 @@ above.
 | 27 | Ctrl+Alt+Right/Left cycles workspaces in defined order, wrapping, skipping non-workspace desktops | pending human execution |
 | 28 | Ctrl+Alt+2 (etc.) jumps directly to that workspace by defined order | pending human execution |
 | 29 | A chord already owned by another app produces exactly one startup warning; other hotkeys keep working | pending human execution |
+| 30 | Drag a window row onto another workspace's group -> moves (unpins if pinned); onto 📌 Pinned -> pins | pending human execution |
+| 31 | Windows tab shows the same grouped view; drag works identically; right-click menu covers rename/restore/pin/send | pending human execution |
+| 32 | Windows on unbound/default desktops group under a sensibly-named group (e.g. "Desktop 1"), including the current desktop; oddball shell windows appear under "Unplaced" | pending human execution |
+| 33 | ＋ button is gone; Add app… lives in the workspace header's right-click menu | pending human execution |
 
 Re-run this script by hand before each release and replace the table above with actual
 pass/fail results plus notes on the Windows build tested.

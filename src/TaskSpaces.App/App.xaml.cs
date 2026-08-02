@@ -128,6 +128,23 @@ public partial class App : Application
         // move restarts the timer, and it only ever fires once the cursor stops moving
         // off the icon for 400ms. The panel itself (SwitcherPanel.Peek) owns hide-on-leave
         // via its own proximity poll, so this timer's only job is the initial summon.
+        //
+        // Fix wave (reviewer, Important): TrayMouseMove fires only while the cursor is
+        // actually over the icon, but nothing previously cancelled the timer on leave —
+        // it just kept counting down. Drive-by scenario: cursor crosses the tray icon
+        // (restarts the timer) and keeps moving on toward, say, the middle of the screen;
+        // 400ms later the Tick fires regardless, GetCursorPos() reads THAT current
+        // (mid-screen) position, and Peek() opens/positions the panel there — nowhere
+        // near the tray. Worse, Peek() then latches that far-away point as the summon
+        // point (summonScreenX/Y), so the proximity keep-alive treats standing at that
+        // unrelated spot as "still hovering" and the panel sticks open mid-screen.
+        // Fix: remember where the cursor was on each TrayMouseMove (lastTrayMoveX/Y —
+        // guaranteed to be ON/near the icon, since that event only fires there), and at
+        // Tick time re-read the cursor and bail out if it wandered more than ~32px from
+        // that last over-icon reading — the cursor didn't linger over the icon, it was
+        // just passing through.
+        const double HoverDriftRadiusPx = 32;
+        double lastTrayMoveX = 0, lastTrayMoveY = 0;
         var hoverTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         hoverTimer.Tick += (_, _) =>
         {
@@ -137,11 +154,24 @@ public partial class App : Application
             // idempotency layers mean this timer can never re-summon a panel that's
             // already showing, even if something upstream ever changes.
             if (switcherPanel is { IsVisible: true }) return;
-            switcherPanel ??= new SwitcherPanel(manager);
             TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
+            // Fix wave: skip the peek entirely if the cursor has drifted away from the
+            // tray icon since the timer was (re)started — see comment above.
+            var dx = cursor.X - lastTrayMoveX;
+            var dy = cursor.Y - lastTrayMoveY;
+            if (dx * dx + dy * dy > HoverDriftRadiusPx * HoverDriftRadiusPx) return;
+            switcherPanel ??= new SwitcherPanel(manager);
             switcherPanel.Peek(cursor.X, cursor.Y);
         };
-        trayIcon.TrayMouseMove += (_, _) => hoverTimer.Start();
+        trayIcon.TrayMouseMove += (_, _) =>
+        {
+            // Record the cursor position on every over-icon move so the Tick above has an
+            // "on the icon" reference point to compare its later reading against.
+            TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
+            lastTrayMoveX = cursor.X;
+            lastTrayMoveY = cursor.Y;
+            hoverTimer.Start();
+        };
 
         // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
         // Gated on !compatibilityMode: CycleWorkspace/SwitchToIndex both call
