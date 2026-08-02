@@ -2128,8 +2128,25 @@ Spec section "Drag-and-drop window management". Three parts, one task (they shar
 - [ ] **Step 5 — manual script items** (pending human execution): 30. drag a window row onto another workspace in the panel → it moves (and unpins if it was pinned); onto 📌 Pinned → pins. 31. Windows tab shows the same grouped view; drag works there identically; right-click menu covers rename/restore/pin/send. 32. windows on unbound/default desktops appear under a sensibly-named group (e.g. "Desktop 1"), including the current desktop. 33. ＋ is gone; Add app… lives in the workspace header right-click menu.
 - [ ] **Step 6 — verify + smoke:** build 0 warnings; suite green (102 + bug-fix tests); stop app, rebuild Release, relaunch, alive, LEAVE RUNNING. Commit (`feat: drag-and-drop window management + shared grouped view` + trailer).
 
+### Task 11: Floating icon bar (added 2026-08-02, third testing round)
+
+Spec section "Floating icon bar". Icon-only, translucent, always-on-top, click-to-jump.
+
+**Files:**
+- Create: `src/TaskSpaces.App/FloatingBar.xaml(.cs)`
+- Modify: `src/TaskSpaces.Core/Persistence/AppState.cs` (+`FloatingBarState? FloatingBar` init property — record `FloatingBarState(double Left, double Top, bool Visible)`; null in old files = hidden at default position), `src/TaskSpaces.Core/WorkspaceManager.cs` (+`Result SaveFloatingBar(FloatingBarState state)` → Persist), `src/TaskSpaces.App/TrayMenu.cs` (checkable "Show floating bar" item), `src/TaskSpaces.App/App.xaml.cs` (create/show per persisted state; toggle wiring)
+- Test: `tests/TaskSpaces.Core.Tests/JsonPersistenceStoreTests.cs` (FloatingBarState roundtrip + old-file-null), `WorkspaceManagerTests.cs` (SaveFloatingBar persists + pulses)
+
+**Interfaces:** Consumes Overview/IconCache/JumpTo/WindowActivator/StateChanged. Produces the bar itself + `AppState.FloatingBar`.
+
+- [ ] **Step 1 (TDD):** persistence tests first (roundtrip a FloatingBarState; old-shape file loads null; SaveFloatingBar persists and pulses StateChanged) → FAIL → implement record + property + manager method → PASS. Commit.
+- [ ] **Step 2 — FloatingBar window:** `WindowStyle=None, AllowsTransparency=True, Background=Transparent, Topmost=True, ShowInTaskbar=False, SizeToContent=WidthAndHeight`; root Border (CornerRadius 8, Background #99202020, Padding 6) containing a vertical StackPanel: one horizontal StackPanel per group — 📌 Pinned first when non-empty, then workspaces in order (skip empty workspaces? NO — show an empty row's workspace as a 4px placeholder? Simpler: skip workspaces with zero running windows; comment why: an icon bar with nothing to click is noise). Icons: Image 20×20, Margin 2, wrapped in a transparent Button (padding 2) — Click → `Report(manager.JumpTo(handle, activator))` (no hide — the bar stays); ToolTip "WorkspaceName · WindowTitle". Rebuild from `manager.WindowsByWorkspace()` on show + StateChanged (Dispatcher). Border MouseLeftButtonDown → `DragMove()`, then persist position via `manager.SaveFloatingBar(new(Left, Top, true))` on LocationChanged-debounce OR simply after DragMove returns (it blocks until release — persist right after; comment). Bar ContextMenu: "Hide floating bar" → hide + persist Visible=false. Restore position from state on creation (clamp into the nearest monitor work area via the existing MonitorFromPoint helpers — reuse, comment; default position: bottom-right work-area corner minus bar size).
+- [ ] **Step 3 — wiring:** TrayMenu gains `MenuItem { IsCheckable = true, IsChecked = <state> } "Show floating bar"` → App callback toggling: show (create lazily) or hide + `SaveFloatingBar`. App.OnStartup: after tray creation, if `State.FloatingBar is { Visible: true }` create+show (not in compatibilityMode — JumpTo needs desktops; comment). TrayMenu.Build signature gains the toggle callback + current checked state (adjust both Build call sites).
+- [ ] **Step 4 — manual script items** (pending human execution): 34. floating bar shows icon rows per workspace, translucent, always on top; click icon → lands on that window. 35. drag bar → position survives app restart; tray toggle hides/shows it, state survives restart. 36. windows opening/closing update the bar live.
+- [ ] **Step 5 — verify + smoke:** build 0 warnings; suite green (106 + new); stop app, rebuild Release, relaunch, alive, LEAVE RUNNING. Commit (`feat: floating icon bar` + trailer).
+
 ## After this plan
 
-- Petre executes manual-test-script items 15–33 (plus any remaining 1–14).
+- Petre executes manual-test-script items 15–36 (plus any remaining 1–14).
 - PR remains ON HOLD until Petre says otherwise.
 - Future (spec'd, not planned): UIA rule kind (browser URL / document path) — spike first.

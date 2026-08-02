@@ -203,10 +203,23 @@ non-workspace section — root-cause first (suspects: unnamed default desktops r
 "" from the API making the group header unrecognizable; silent per-window omission
 when the desktop query fails), then fix with evidence.
 
+## Floating icon bar *(added 2026-08-02, third testing round — supersedes the
+"always-on-top persistent bar" non-goal below; Petre asked for it explicitly)*
+
+A small always-on-top, borderless, translucent window showing **only app icons**,
+grouped one compact row per workspace (📌 pinned row on top when non-empty; unbound
+desktops excluded — it is a workspace bar). Clicking an icon **jumps to that window**
+(switch workspace if needed + focus — existing JumpTo). Hover tooltip:
+"Workspace · window title". Dragging the bar's background moves it; its position and
+visibility persist in state.json (`FloatingBar` init-property on AppState — older
+files load with it hidden/default, no migration). Toggled from the tray menu
+("Show floating bar", checkable). Right-click on the bar → small menu (Hide bar).
+Live-refreshes via StateChanged like the other surfaces. No text, no roster entries,
+no drag-and-drop on the bar in v1 — it is a glanceable jump surface, not a manager.
+
 ## Non-goals
 
-- Always-on-top persistent bar (revisit only if the on-demand panel proves
-  insufficient in daily use).
+- ~~Always-on-top persistent bar~~ (superseded above, 2026-08-02).
 - DWM thumbnail previews; global hotkeys (still optional accelerators, later).
 - Re-pinning pinned windows after reboot; UIA matchers (future, spiked separately);
   per-app integrations (browser extensions, IDE plugins).
