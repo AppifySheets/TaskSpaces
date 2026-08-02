@@ -94,6 +94,35 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
                     h => VirtualDesktop.CurrentChanged -= h)
                 .Select(e => e.EventArgs.NewDesktop.Id));
 
+    // CORRECTION (against the package's real surface, not the spike doc's "not exercised"
+    // guess): VirtualDesktop.PinWindow/UnpinWindow return bool, not void — per the package's
+    // shipped XML doc, false means "target window not found or not ready", which is an
+    // expected, everyday failure (window closed mid-call), not exceptional. Result.Try alone
+    // would yield Result<bool> (a compile mismatch against this interface's `Result` return),
+    // and would also report a false return as IsSuccess — wrong. Bind + Result.SuccessIf
+    // folds both the exceptional path (Result.Try) and the expected-false path into one
+    // Result, matching Win32WindowTitles.Set's SuccessIf style for the same "bool means
+    // expected outcome" shape.
+    public Result Pin(WindowHandle window) =>
+        Result.Try(() => VirtualDesktop.PinWindow(window.Value),
+                e => $"Could not pin window {window.Value} (it may have closed): {e.Message}")
+            .Bind(ok => Result.SuccessIf(ok, $"Could not pin window {window.Value} (it may have closed or is not ready)."));
+
+    public Result Unpin(WindowHandle window) =>
+        Result.Try(() => VirtualDesktop.UnpinWindow(window.Value),
+                e => $"Could not unpin window {window.Value}: {e.Message}")
+            .Bind(ok => Result.SuccessIf(ok, $"Could not unpin window {window.Value} (it may have closed or is not ready)."));
+
+    // IsPinnedWindow's bool IS the answer (pinned or not) rather than a success/failure
+    // indicator, so unlike Pin/Unpin above it passes straight through as Result<bool>.
+    public Result<bool> IsPinned(WindowHandle window) =>
+        Result.Try(() => VirtualDesktop.IsPinnedWindow(window.Value),
+            e => $"Could not query pin state of window {window.Value}: {e.Message}");
+
+    public Result<Guid> CurrentDesktop() =>
+        Result.Try(() => VirtualDesktop.Current.Id,
+            e => $"Could not determine the current desktop: {e.Message}");
+
     // Shared lookup: every mutating operation needs the live VirtualDesktop instance for
     // a Guid, and "desktop no longer exists" is an expected, everyday Result failure —
     // not an exception — since desktops can vanish between UI render and user click.

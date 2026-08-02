@@ -20,6 +20,17 @@ public interface IVirtualDesktopService
     Result MoveWindow(WindowHandle window, Guid desktopId);
     Result<Guid> DesktopOf(WindowHandle window);
 
+    // Pin = "this window exists on ALL desktops" (Windows-native). Per-window and
+    // user-decided (spec: RDP manager always pinned; Beeper "when I say"). Pin state
+    // lives in the OS only — nothing persisted, nothing to reconcile after reboot.
+    Result Pin(WindowHandle window);
+    Result Unpin(WindowHandle window);
+    Result<bool> IsPinned(WindowHandle window);
+
+    // The desktop the user is looking at right now — the overview needs it to mark
+    // the current workspace and to skip a no-op Switch when jumping.
+    Result<Guid> CurrentDesktop();
+
     // Fires with the new desktop's id whenever the user switches by ANY means
     // (our UI, Win+Ctrl+arrows, Task View) — keeps the tray menu checkmark honest.
     IObservable<Guid> CurrentChanged { get; }

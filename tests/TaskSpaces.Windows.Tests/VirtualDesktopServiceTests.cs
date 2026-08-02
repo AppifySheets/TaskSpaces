@@ -56,4 +56,35 @@ public class VirtualDesktopServiceTests(ITestOutputHelper output)
             Assert.True(service.Switch(Guid.NewGuid()).IsFailure);
             Assert.True(service.Remove(Guid.NewGuid()).IsFailure);
         });
+
+    // CORRECTION vs. the task brief's draft: the brief's snippet for this test omitted the
+    // StaThread.Run(...) wrapper that every other test in this class uses. Per the spike
+    // doc's threading note (see file header above), VirtualDesktopService.Initialize() calls
+    // VirtualDesktop.Configure(), which requires an STA thread; xunit's default test-runner
+    // thread is MTA. Without this wrapper, Initialize() would return a Result failure (not
+    // throw) and the very first assert below would fail on this machine's xunit runner.
+    [Fact]
+    public void Pin_roundtrip_on_a_real_window() =>
+        StaThread.Run(() =>
+        {
+            var service = new VirtualDesktopService();
+            Assert.True(service.Initialize().IsSuccess);
+
+            var winver = System.Diagnostics.Process.Start("winver.exe");
+            try
+            {
+                while (winver.MainWindowHandle == 0) { Thread.Sleep(100); winver.Refresh(); }
+                var handle = new TaskSpaces.Core.Domain.WindowHandle(winver.MainWindowHandle);
+
+                Assert.False(service.IsPinned(handle).Value);
+                Assert.True(service.Pin(handle).IsSuccess);
+                Assert.True(service.IsPinned(handle).Value);
+                output.WriteLine("pinned OK — check visually: winver should now follow desktop switches");
+                Assert.True(service.Unpin(handle).IsSuccess);
+                Assert.False(service.IsPinned(handle).Value);
+
+                Assert.True(service.CurrentDesktop().IsSuccess);
+            }
+            finally { if (!winver.HasExited) winver.Kill(); }
+        });
 }

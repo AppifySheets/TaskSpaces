@@ -40,6 +40,14 @@ public sealed class FakeDesktops : IVirtualDesktopService
     public Result<Guid> DesktopOf(WindowHandle w) =>
         WindowPlacements.TryGetValue(w, out var id) ? id : Result.Failure<Guid>("not placed");
     public IObservable<Guid> CurrentChanged => CurrentChangedSubject.AsObservable();
+
+    public HashSet<WindowHandle> PinnedWindows { get; } = [];
+    public Guid CurrentDesktopId { get; set; } = Guid.NewGuid();
+
+    public Result Pin(WindowHandle w) { PinnedWindows.Add(w); return Result.Success(); }
+    public Result Unpin(WindowHandle w) { PinnedWindows.Remove(w); return Result.Success(); }
+    public Result<bool> IsPinned(WindowHandle w) => PinnedWindows.Contains(w);
+    public Result<Guid> CurrentDesktop() => CurrentDesktopId;
 }
 
 public sealed class FakeMonitor : IWindowMonitor
