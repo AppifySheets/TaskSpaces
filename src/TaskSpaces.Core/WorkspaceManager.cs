@@ -308,6 +308,17 @@ public sealed class WorkspaceManager(
         return Result.Success();
     }
 
+    // Task 11 (floating icon bar): called after every drag (position) and every
+    // tray-menu toggle (visibility) — same fire-and-persist shape as SetRules above.
+    // Persist() already pulses StateChanged, which nothing here needs to react to
+    // (the bar's own drag/toggle handlers already know their own new state), but any
+    // future surface that reads FloatingBar gets live updates for free.
+    public Result SaveFloatingBar(FloatingBarState state)
+    {
+        Persist(State with { FloatingBar = state });
+        return Result.Success();
+    }
+
     public Result AssignWindow(WindowHandle window, Guid workspaceId) =>
         knownWindows.TryGetValue(window, out var info)
             // Explicitly moving a pinned window to ONE workspace is a statement that it

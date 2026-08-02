@@ -448,4 +448,21 @@ public class WorkspaceManagerTests
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome()));
         Assert.True(pulses > afterHidden);
     }
+
+    // --- Task 11: floating icon bar — position/visibility persistence --------------
+
+    [Fact]
+    public void SaveFloatingBar_persists_state_and_pulses_StateChanged()
+    {
+        var manager = Manager();
+        Assert.True(manager.Start().IsSuccess);
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        var result = manager.SaveFloatingBar(new FloatingBarState(50, 75, true));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(new FloatingBarState(50, 75, true), store.Stored.FloatingBar);
+        Assert.True(pulses > 0);
+    }
 }

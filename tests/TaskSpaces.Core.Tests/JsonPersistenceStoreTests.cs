@@ -24,6 +24,7 @@ public sealed class JsonPersistenceStoreTests : IDisposable
             })
         {
             PersistedRenames = [new PersistedRename("chrome", "Home - Google Chrome", "Home")],
+            FloatingBar = new FloatingBarState(120.5, 40.25, true),
         };
     }
 
@@ -42,6 +43,7 @@ public sealed class JsonPersistenceStoreTests : IDisposable
         Assert.Equal(state.Inventory.Keys, loaded.Inventory.Keys);
         Assert.Equal(state.Inventory.Values.Single(), loaded.Inventory.Values.Single());
         Assert.Equal(state.PersistedRenames, loaded.PersistedRenames);
+        Assert.Equal(state.FloatingBar, loaded.FloatingBar);
     }
 
     [Fact]
@@ -81,6 +83,31 @@ public sealed class JsonPersistenceStoreTests : IDisposable
 
         Assert.True(loaded.IsSuccess);
         Assert.Empty(loaded.Value.PersistedRenames);
+    }
+
+    [Fact]
+    public void Old_state_file_without_FloatingBar_loads_as_null_ie_hidden_at_default_position()
+    {
+        // Same back-compat contract as PersistedRenames above: the floating bar is a
+        // brand-new (Task 11) feature, so every state.json written before this task has
+        // no such key at all. It must deserialize to null (hidden, default position),
+        // never throw and never fabricate a visible bar out of nowhere.
+        Directory.CreateDirectory(dir);
+        var oldState = new
+        {
+            workspaces = new object[0],
+            workspaceRules = new object[0],
+            renameRules = new object[0],
+            inventory = new object[0],
+            // Note: no FloatingBar key
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(oldState);
+        File.WriteAllText(Path.Combine(dir, "state.json"), json);
+
+        var loaded = new JsonPersistenceStore(dir).Load();
+
+        Assert.True(loaded.IsSuccess);
+        Assert.Null(loaded.Value.FloatingBar);
     }
 
     [Fact]
