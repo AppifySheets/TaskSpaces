@@ -43,11 +43,14 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
             Snapshot().ToList().ForEach(w => known[w.Handle.Value] = w); // seed before events flow
         }, e => $"Window monitoring unavailable: {e.Message}");
 
-    public IReadOnlyList<WindowInfo> Snapshot() =>
-        TopLevelWindows.Enumerate()
-            .Select(WindowInfoFactory.FromHwnd)
+    public IReadOnlyList<WindowInfo> Snapshot()
+    {
+        var commandLines = WindowInfoFactory.AllCommandLines(); // one WMI query, not one per window
+        return TopLevelWindows.Enumerate()
+            .Select(h => WindowInfoFactory.FromHwnd(h, commandLines))
             .Where(m => m.HasValue).Select(m => m.Value)
             .ToList();
+    }
 
     nint Hook(uint min, uint max) =>
         SetWinEventHook(min, max, 0, callback, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);

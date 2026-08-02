@@ -11,7 +11,7 @@ public sealed class PendingPlacements
 {
     public static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
 
-    sealed record Pending(int ProcessId, string ProcessPath, Guid WorkspaceId, DateTimeOffset LaunchedAt);
+    sealed record Pending(int ProcessId, string ProcessPath, Guid WorkspaceId, DateTimeOffset LaunchedAt, string? CommandLine);
 
     readonly ImmutableList<Pending> entries;
 
@@ -19,15 +19,18 @@ public sealed class PendingPlacements
 
     public static PendingPlacements Empty { get; } = new([]);
 
-    public PendingPlacements Add(int processId, string processPath, Guid workspaceId, DateTimeOffset now) =>
-        new(entries.Add(new Pending(processId, processPath, workspaceId, now)));
+    public PendingPlacements Add(int processId, string processPath, Guid workspaceId, DateTimeOffset now, string? commandLine = null) =>
+        new(entries.Add(new Pending(processId, processPath, workspaceId, now, commandLine)));
 
-    // Match by pid first (exact), then by process path (browsers hand off to an existing
-    // process, so the window's pid won't be the launched pid). Matched entry is consumed.
+    // Match priority: exact pid -> content identity (path+args — separates two launches
+    // of the same exe with different solutions) -> bare path (browsers hand the window
+    // to an existing process AND rewrite their args, so identity may not survive).
     public (PendingPlacements Remaining, Maybe<Guid> WorkspaceId) Match(WindowInfo window, DateTimeOffset now)
     {
         var alive = entries.RemoveAll(p => now - p.LaunchedAt > Ttl);
         var hit = alive.FirstOrDefault(p => p.ProcessId == window.ProcessId)
+                  ?? alive.FirstOrDefault(p => window.ProcessPath is not null
+                        && RosterIdentity.Of(p.ProcessPath, p.CommandLine) == RosterIdentity.Of(window.ProcessPath, window.CommandLine))
                   ?? alive.FirstOrDefault(p => p.ProcessPath.Equals(window.ProcessPath, StringComparison.OrdinalIgnoreCase));
         return hit is null
             ? (new PendingPlacements(alive), Maybe<Guid>.None)

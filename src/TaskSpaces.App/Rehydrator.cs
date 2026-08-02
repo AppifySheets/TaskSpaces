@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Persistence;
+using TaskSpaces.Core.Rehydration;
 
 namespace TaskSpaces.App;
 
@@ -21,11 +22,11 @@ public static class Rehydrator
             // exe part; what remains are the arguments to relaunch with.
             var process = Process.Start(new ProcessStartInfo(entry.ProcessPath)
             {
-                Arguments = StripExecutable(entry.CommandLine, entry.ProcessPath),
+                Arguments = CommandLines.ArgumentsOf(entry.CommandLine, entry.ProcessPath),
                 UseShellExecute = true,
             });
             if (process is null) return false;
-            manager.RegisterPendingLaunch(process.Id, entry.ProcessPath, workspaceId);
+            manager.RegisterPendingLaunch(process.Id, entry.ProcessPath, workspaceId, entry.CommandLine);
             return true;
         }
         // Fix round 1 (reviewer, Important): Process.Start can throw more than the three
@@ -42,20 +43,5 @@ public static class Rehydrator
         {
             return false;
         }
-    }
-
-    static string StripExecutable(string? commandLine, string processPath)
-    {
-        if (string.IsNullOrWhiteSpace(commandLine)) return "";
-        var trimmed = commandLine.TrimStart();
-        // Quoted form: "C:\path\app.exe" args   Unquoted form: C:\path\app.exe args
-        if (trimmed.StartsWith('"'))
-        {
-            var close = trimmed.IndexOf('"', 1);
-            return close < 0 ? "" : trimmed[(close + 1)..].TrimStart();
-        }
-        return trimmed.StartsWith(processPath, StringComparison.OrdinalIgnoreCase)
-            ? trimmed[processPath.Length..].TrimStart()
-            : ""; // command line doesn't start with the known exe — safer to relaunch bare
     }
 }

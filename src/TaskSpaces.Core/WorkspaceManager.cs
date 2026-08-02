@@ -254,9 +254,10 @@ public sealed class WorkspaceManager(
     // App exit / crash-avoidance: leave every window exactly as we found it.
     public void RestoreAllTitles() => ledger.Handles.ToList().ForEach(h => RestoreTitle(h));
 
-    // Rehydrator (Task 9) tells us "pid X / path Y belongs to workspace Z, expect it soon".
-    public void RegisterPendingLaunch(int processId, string processPath, Guid workspaceId) =>
-        pending = pending.Add(processId, processPath, workspaceId, now());
+    // Rehydrator/StartWorkspace tell us "pid X (path Y, args Z) belongs to workspace W,
+    // expect it soon". The command line lets two same-exe launches route separately.
+    public void RegisterPendingLaunch(int processId, string processPath, Guid workspaceId, string? commandLine = null) =>
+        pending = pending.Add(processId, processPath, workspaceId, now(), commandLine);
 
     // --- persistence helpers -----------------------------------------------------
 

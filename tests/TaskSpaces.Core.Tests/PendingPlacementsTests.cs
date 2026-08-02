@@ -41,4 +41,18 @@ public class PendingPlacementsTests
         var pending = PendingPlacements.Empty.Add(500, @"C:\app.exe", Work, T0);
         Assert.True(pending.Match(Window(pid: 999, path: @"C:\other.exe"), T0.AddSeconds(5)).WorkspaceId.HasNoValue);
     }
+
+    [Fact]
+    public void Two_pendings_same_exe_different_args_route_by_args()
+    {
+        var personal = Guid.NewGuid();
+        var pending = PendingPlacements.Empty
+            .Add(500, @"C:\rider\rider64.exe", Work, T0, "\"C:\\rider\\rider64.exe\" X.sln")
+            .Add(501, @"C:\rider\rider64.exe", personal, T0, "\"C:\\rider\\rider64.exe\" Y.sln");
+
+        // Window arrives with a pid we never launched (IDE splash handed off), but its
+        // command line identifies which pending launch it belongs to.
+        var window = new WindowInfo(new WindowHandle(0x10), 999, "rider64", @"C:\rider\rider64.exe", "Y", "\"C:\\rider\\rider64.exe\" Y.sln");
+        Assert.Equal(personal, pending.Match(window, T0.AddSeconds(5)).WorkspaceId.Value);
+    }
 }
