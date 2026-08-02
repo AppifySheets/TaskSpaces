@@ -5,7 +5,7 @@
          builds the grouped Pinned / workspace / other-desktop rows so the two surfaces
          cannot drift apart. Each host wraps this in whatever chrome it needs (SwitcherPanel:
          a bordered popup with a MaxHeight; ManageWindow: a plain tab page). -->
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="GroupsHost" MinWidth="300"/>
     </ScrollViewer>
 </UserControl>

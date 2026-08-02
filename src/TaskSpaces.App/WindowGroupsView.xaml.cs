@@ -57,6 +57,41 @@ public partial class WindowGroupsView : UserControl
         // for nothing. SwitcherPanel's single long-lived instance never unloads, so its
         // subscription lives for the app's lifetime exactly like it did before extraction.
         Unloaded += (_, _) => subscription?.Dispose();
+
+        // Auto-scroll while a drag is near the top/bottom edge (root-cause fix for
+        // Petre's "drag DOWN works, drag UP doesn't" report): WPF's DragDrop has no
+        // built-in auto-scroll, and SwitcherPanel caps this control's height at 640
+        // (see SwitcherPanel.xaml) — once the roster is tall enough to scroll, a group
+        // scrolled out of view is a group nothing can be dropped onto, full stop. The
+        // panel is anchored near the BOTTOM-right of the screen (SwitcherPanel.
+        // PositionNear), so scrolling is far more likely to push groups ABOVE the fold
+        // out of view than below it — a strong candidate for the reported asymmetry
+        // once enough windows are open to overflow the panel.
+        //
+        // Hooked on PreviewDragOver (tunneling: root-to-leaf) rather than DragOver
+        // (bubbling): AddGroup's own per-group DragOver handlers below set
+        // e.Handled = true, which would stop a bubbling handler here from ever seeing
+        // the event once some inner group panel handles it first. Tunneling fires
+        // before that bubble phase even starts, so this always sees every DragOver
+        // regardless of which group is currently under the cursor.
+        Scroller.PreviewDragOver += OnAutoScrollDragOver;
+    }
+
+    // DIP distance from the ScrollViewer's own top/bottom edge that counts as "near
+    // enough to auto-scroll", and how far each qualifying DragOver nudges the scroll
+    // offset. Small values keep the scroll feeling continuous (DragOver fires often)
+    // without overshooting past the group the user is trying to reach.
+    const double AutoScrollEdgeDip = 24;
+    const double AutoScrollStepDip = 16;
+
+    void OnAutoScrollDragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DragFormat)) return;
+        var y = e.GetPosition(Scroller).Y;
+        if (y < AutoScrollEdgeDip)
+            Scroller.ScrollToVerticalOffset(Scroller.VerticalOffset - AutoScrollStepDip);
+        else if (y > Scroller.ActualHeight - AutoScrollEdgeDip)
+            Scroller.ScrollToVerticalOffset(Scroller.VerticalOffset + AutoScrollStepDip);
     }
 
     // Called once by each host after construction. Rebuilds immediately, then keeps
@@ -126,16 +161,20 @@ public partial class WindowGroupsView : UserControl
 
         if (onDrop is not null)
         {
+            var key = groupKey ?? "(unknown)";
             panel.AllowDrop = true;
             panel.DragOver += (_, e) =>
             {
                 e.Effects = e.Data.GetDataPresent(DragFormat) ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
+                DnDTrace.LogTargetChange(key, e.Effects.ToString());
             };
             panel.Drop += (_, e) =>
             {
-                if (e.Data.GetData(DragFormat) is not DraggedWindow dragged) return;
-                if (dragged.SourceGroupKey == groupKey) return; // no-op: dropped onto its own group
+                DnDTrace.ResetTarget();
+                if (e.Data.GetData(DragFormat) is not DraggedWindow dragged) { DnDTrace.Log($"drop on '{key}': no drag payload present"); return; }
+                if (dragged.SourceGroupKey == groupKey) { DnDTrace.Log($"drop '{dragged.Handle}' on '{key}': no-op (own group)"); return; } // no-op: dropped onto its own group
+                DnDTrace.Log($"drop '{dragged.Handle}': '{dragged.SourceGroupKey}' -> '{key}'");
                 onDrop(dragged.Handle);
             };
         }
@@ -183,7 +222,7 @@ public partial class WindowGroupsView : UserControl
         var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(16, 2, 4, 2), ToolTip = row.Window.Title };
         button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator)).Tap(() => afterAction?.Invoke());
         button.ContextMenu = RunningMenu(row, pinned);
-        SetupDragSource(button, row.Window.Handle, groupKey);
+        SetupDragSource(button, row.Window.Handle, groupKey, row.Window.Title);
         return button;
     }
 
@@ -192,16 +231,43 @@ public partial class WindowGroupsView : UserControl
     // current group. Hooked on the PREVIEW (tunneling) events rather than the bubbling
     // MouseMove/MouseLeftButtonDown: ButtonBase does its own internal press-tracking on
     // the bubbling route, so tunneling guarantees this handler still sees every move.
+    // (Confirms pitfall #3 from the debugging brief: this reliance on tunneling — not on
+    // ButtonBase's own capture — is exactly why the threshold check below keeps
+    // receiving moves right up to the point DoDragDrop takes over, even for a fast
+    // flick that would otherwise carry the cursor clean off a ~24px-tall row before any
+    // MouseMove fired on the bubbling route.)
     //
     // A drag never also fires this row's Click: once DoDragDrop hands the mouse to its
     // own modal OLE drag loop, the Button never observes the MouseLeftButtonUp it needs
     // in order to raise Click for the same press — documented WPF behavior, verified by
     // reasoning about ButtonBase's capture model (no UI test exists to click-and-drag in
-    // this codebase; per the task brief, none was added — "no UI unit tests").
-    static void SetupDragSource(Button button, WindowHandle handle, string groupKey)
+    // this codebase; per the task brief, none was added — "no UI unit tests"). The
+    // ReleaseMouseCapture() call added below does NOT change this: DoDragDrop's OLE loop
+    // intercepts the terminating mouse-up as a native message before WPF's input system
+    // ever turns it into a routed MouseLeftButtonUp, with or without capture already
+    // released — releasing only prevents capture from OUTLIVING the drag (see below), it
+    // doesn't resurrect the Click.
+    static void SetupDragSource(Button button, WindowHandle handle, string groupKey, string title)
     {
         Point? dragStart = null;
-        button.PreviewMouseLeftButtonDown += (_, e) => dragStart = e.GetPosition(null);
+
+        button.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            dragStart = e.GetPosition(null);
+            DnDTrace.Log($"press '{title}' in '{groupKey}'");
+        };
+
+        // Root-cause hardening, pitfall #2 (debugging brief): a plain click used to
+        // leave dragStart set FOREVER — nothing ever cleared it. Any later
+        // press-and-move that reaches this same button's handlers (a legitimate later
+        // click on this row, or a move mis-routed here by leftover capture — see the
+        // ReleaseMouseCapture note below) would then measure distance from that STALE
+        // point instead of the new press, which can misfire a drag using the wrong
+        // start position. Clearing on release and on a leave-while-not-pressed keeps a
+        // finished interaction from bleeding into whatever happens next on this row.
+        button.PreviewMouseLeftButtonUp += (_, _) => dragStart = null;
+        button.MouseLeave += (_, e) => { if (e.LeftButton != MouseButtonState.Pressed) dragStart = null; };
+
         button.PreviewMouseMove += (_, e) =>
         {
             if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
@@ -209,7 +275,26 @@ public partial class WindowGroupsView : UserControl
             if (Math.Abs(pos.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
                 && Math.Abs(pos.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
             dragStart = null;
-            DragDrop.DoDragDrop(button, new DataObject(DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
+
+            // Root-cause hardening, pitfall #1 (debugging brief): ButtonBase.
+            // OnMouseLeftButtonDown calls CaptureMouse() on press. Because DoDragDrop's
+            // modal OLE loop swallows the matching mouse-up itself (see the Click note
+            // above), ButtonBase's OWN OnMouseLeftButtonUp override — the one that would
+            // normally call ReleaseMouseCapture() — never runs for a press that turns
+            // into a drag. Without this explicit release, THIS row's button keeps WPF
+            // mouse capture for the rest of the app's life: capture redirects ALL
+            // subsequent mouse input in the window to the captured element regardless
+            // of where the cursor physically is, so the very NEXT press-and-move
+            // anywhere in the roster would tunnel through THIS row's handlers with
+            // THIS row's stale dragStart/handle/groupKey closed over — a "drag fires
+            // from the wrong row" failure mode that has nothing to do with direction
+            // and everything to do with which row happened to start a drag first.
+            button.ReleaseMouseCapture();
+
+            DnDTrace.Log($"drag-start '{title}' from '{groupKey}'");
+            DnDTrace.ResetTarget();
+            var effect = DragDrop.DoDragDrop(button, new DataObject(DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
+            DnDTrace.Log($"DoDragDrop returned {effect} for '{title}'");
         };
     }
 
