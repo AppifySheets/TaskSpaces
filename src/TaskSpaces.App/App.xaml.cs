@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using CSharpFunctionalExtensions;
 using H.NotifyIcon;
+using H.NotifyIcon.Core;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Windows.Desktops;
@@ -20,6 +21,7 @@ public partial class App : Application
     WindowMonitor? monitor;
     bool compatibilityMode;
     SwitcherPanel? switcherPanel;
+    HotkeyService? hotkeys;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -103,6 +105,11 @@ public partial class App : Application
             Icon = SystemIcons.Application, // placeholder until the product name settles
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
             ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp),
+            // Task 9 (Petre's testing feedback): left-click now opens the SAME menu as
+            // right-click — hover replaces click as the way to reach the switcher panel
+            // (see TrayMouseMove below), so left-click is free to become "menu" like
+            // every other tray icon on Windows.
+            MenuActivation = PopupActivationMode.LeftOrRightClick,
         };
         // H.NotifyIcon 2.x creates the shell icon lazily: with no window/XAML tree, a
         // code-built TaskbarIcon never registers with the tray until ForceCreate() is
@@ -115,15 +122,41 @@ public partial class App : Application
         manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
             trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp)));
 
-        // Left-click on the tray icon = the switcher panel (Petre: "clicking the tray
-        // icon should open the window"); right-click keeps the menu. Created lazily so
-        // compatibility mode without desktops still has a functional (if empty) panel.
-        trayIcon.TrayLeftMouseUp += (_, _) =>
+        // Task 9: hover-to-peek. TrayMouseMove fires continuously while the cursor sits
+        // over the icon, so a (re)started 400ms DispatcherTimer measures "cursor has been
+        // over the icon for a bit" without a separate enter/leave pair to track — each
+        // move restarts the timer, and it only ever fires once the cursor stops moving
+        // off the icon for 400ms. The panel itself (SwitcherPanel.Peek) owns hide-on-leave
+        // via its own proximity poll, so this timer's only job is the initial summon.
+        var hoverTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        hoverTimer.Tick += (_, _) =>
         {
+            hoverTimer.Stop();
             switcherPanel ??= new SwitcherPanel(manager);
             TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
-            switcherPanel.Summon(cursor.X, cursor.Y);
+            switcherPanel.Peek(cursor.X, cursor.Y);
         };
+        trayIcon.TrayMouseMove += (_, _) => hoverTimer.Start();
+
+        // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
+        // Gated on !compatibilityMode: CycleWorkspace/SwitchToIndex both call
+        // manager.Switch, which needs a real desktop to switch to — compatibility mode
+        // has none. Results are fire-and-forget: a hotkey has no UI to report a failure
+        // through, and a message box on every keypress that misses would be worse than a
+        // silent no-op (e.g. Ctrl+Alt+3 with only two workspaces defined).
+        if (!compatibilityMode)
+        {
+            hotkeys = new HotkeyService(
+                () => manager.CycleWorkspace(-1),
+                () => manager.CycleWorkspace(+1),
+                n => manager.SwitchToIndex(n));
+            if (hotkeys.Failures.Count > 0)
+                MessageBox.Show(
+                    "TaskSpaces could not register these keyboard shortcuts (another app already owns them):\n"
+                    + string.Join("\n", hotkeys.Failures)
+                    + "\n\nTaskSpaces will keep running; those chords just won't switch workspaces.",
+                    "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
 
         // Rename safety-net sweep (spec §5): event-driven re-apply is the fast path;
         // every 5s this re-asserts drifted titles and adopts persisted renames.
@@ -189,6 +222,7 @@ public partial class App : Application
     {
         manager?.RestoreAllTitles();  // leave every window as we found it
         monitor?.Dispose();
+        hotkeys?.Dispose(); // unregisters RegisterHotKey chords before the process exits
         trayIcon?.Dispose();
         Shutdown();
     }

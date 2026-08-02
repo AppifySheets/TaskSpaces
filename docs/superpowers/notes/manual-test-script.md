@@ -22,7 +22,9 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
     relaunch the app -> prompt lists "Work (1 app(s))"; Restore relaunches Notepad and
     it lands on Work's desktop.
 15. Left-click tray icon -> switcher panel opens near the tray, dark-themed, one group
-    per workspace with window counts; current workspace bold.
+    per workspace with window counts; current workspace bold. **Superseded by Task 9
+    (items 25-26 below): left-click now opens the tray MENU; the panel is reached by
+    hover or hotkey.** Re-verify panel appearance/grouping via item 25's hover instead.
 16. Panel: click a window row on another workspace -> lands on that workspace with the
     window focused; panel closes.
 17. Panel: right-click a window -> Pin to all workspaces -> window follows across every
@@ -43,6 +45,25 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
     reasserts within ~5s even if an occasional title flip slips through.
 24. Restart TaskSpaces with workspace apps still open -> restore prompt does NOT
     offer duplicates (only genuinely-missing apps listed).
+25. Hover the tray icon for about half a second -> the switcher panel peeks open
+    WITHOUT taking focus (taskbar/whatever app you were using stays highlighted as
+    active); move the mouse away from the panel -> it hides itself again. Hover once
+    more and click a row/button INSIDE the peeked panel first -> from then on it
+    behaves like a normal clicked-open panel (stays open, responds to child dialogs,
+    Deactivate-hides when you click elsewhere).
+26. Left-click the tray icon -> the tray MENU opens (same items/behavior as
+    right-click); the switcher panel does NOT open from a left-click anymore.
+27. Ctrl+Alt+Right / Ctrl+Alt+Left cycles through TaskSpaces workspaces in the order
+    they're defined (not the native Windows desktop order), wrapping from last back
+    to first (and vice versa), and skipping any plain OS desktop that isn't a
+    workspace.
+28. With at least two workspaces defined, Ctrl+Alt+2 jumps straight to the second
+    workspace (by defined order); Ctrl+Alt+9 with fewer than 9 workspaces does nothing
+    (no crash, no message box).
+29. If another application already owns one of these chords (e.g. some machines bind
+    Ctrl+Alt+Left/Right to a display-rotate shortcut), TaskSpaces shows exactly ONE
+    warning message box at startup listing the chord(s) it could not register, and
+    every other hotkey it DID register still works normally.
 
 ## Results (2026-08-01)
 
@@ -110,6 +131,11 @@ above.
 | 22 | Rename persistence across restart (sweep adopts persisted rename) | pending human execution |
 | 23 | Rename sweep reasserts short name after title drift (~5s) | pending human execution |
 | 24 | Restart with apps still open -> no duplicate restore offers | pending human execution |
+| 25 | Hover peeks panel without stealing focus; moving away hides it; click-inside graduates it to normal behavior | pending human execution |
+| 26 | Left-click tray icon opens the menu (not the panel) | pending human execution |
+| 27 | Ctrl+Alt+Right/Left cycles workspaces in defined order, wrapping, skipping non-workspace desktops | pending human execution |
+| 28 | Ctrl+Alt+2 (etc.) jumps directly to that workspace by defined order | pending human execution |
+| 29 | A chord already owned by another app produces exactly one startup warning; other hotkeys keep working | pending human execution |
 
 Re-run this script by hand before each release and replace the table above with actual
 pass/fail results plus notes on the Windows build tested.

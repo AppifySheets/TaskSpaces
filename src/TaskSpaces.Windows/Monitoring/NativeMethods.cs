@@ -59,4 +59,15 @@ public static class NativeMethods
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
     public const int SW_RESTORE = 9; // NEVER SW_HIDE anywhere in this codebase (spec)
+
+    // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
+    // RegisterHotKey delivers WM_HOTKEY to the given window's message queue regardless
+    // of focus — exactly what a background tray app needs (no window ever has to be
+    // foreground for the chord to fire).
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint vk);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool UnregisterHotKey(nint hwnd, int id);
+
+    public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2;
+    public const uint WM_HOTKEY = 0x0312;
+    public const uint VK_LEFT = 0x25, VK_RIGHT = 0x27;
 }

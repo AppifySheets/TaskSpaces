@@ -30,12 +30,25 @@ public partial class SwitcherPanel : Window
     // OnDeactivated checks it and skips Hide() while it's true.
     bool childDialogOpen;
 
+    // Task 9 (spec §Tray interaction & hotkeys): hover-to-peek. While true, the panel is
+    // visible but was never Activate()d — OnDeactivated must not hide it (it's not
+    // focused anyway, so a stray deactivation means nothing), and the proximity timer
+    // (not OnDeactivated) governs when it disappears.
+    bool peekMode;
+    readonly System.Windows.Threading.DispatcherTimer proximityTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+
+    // DIP margin around the panel's own bounds inside which the cursor keeps it open —
+    // without slack the panel would vanish the instant the mouse crosses its own edge
+    // while moving in to click something near the border.
+    const double ProximityMarginDip = 24;
+
     public SwitcherPanel(WorkspaceManager manager)
     {
         this.manager = manager;
         InitializeComponent();
         // Live refresh while open: windows appear/close and renames land as Petre watches.
         manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() => { if (IsVisible) Rebuild(); }));
+        proximityTimer.Tick += (_, _) => ProximityTick();
     }
 
     public void Summon(double screenX, double screenY)
@@ -50,6 +63,40 @@ public partial class SwitcherPanel : Window
         Show();
         Activate();
         PositionNear(screenX, screenY);
+    }
+
+    // Task 9: hover summon. Deliberately mirrors Summon() but WITHOUT Activate() — spec:
+    // "opens the switcher panel WITHOUT stealing focus". A no-op if already visible (a
+    // click-opened or already-peeking panel isn't repositioned out from under the cursor
+    // mid-interaction).
+    public void Peek(double screenX, double screenY)
+    {
+        if (IsVisible) return;
+        Rebuild();
+        ShowActivated = false;
+        peekMode = true;
+        Show();
+        PositionNear(screenX, screenY);
+        proximityTimer.Start();
+    }
+
+    // Polls the cursor rather than relying on WPF mouse-leave events: the panel was never
+    // activated, and MouseLeave on an unfocused, unowned popup-style window is unreliable
+    // across monitors/DPI boundaries — GetCursorPos + a bounds check is simple and correct.
+    void ProximityTick()
+    {
+        NativeMethods.GetCursorPos(out var cursor);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var cursorX = cursor.X / dpi.DpiScaleX;
+        var cursorY = cursor.Y / dpi.DpiScaleY;
+        var inside = cursorX >= Left - ProximityMarginDip && cursorX <= Left + ActualWidth + ProximityMarginDip
+            && cursorY >= Top - ProximityMarginDip && cursorY <= Top + ActualHeight + ProximityMarginDip;
+        if (inside) return;
+
+        proximityTimer.Stop();
+        peekMode = false;
+        ShowActivated = true; // restore normal click-open behavior for the next summon
+        Hide();
     }
 
     // Anchors the panel's bottom-right corner at the cursor (tray icons live bottom-right of
@@ -82,8 +129,23 @@ public partial class SwitcherPanel : Window
         Top = Math.Clamp(screenY - ActualHeight, workTop, Math.Max(workTop, workBottom - ActualHeight));
     }
 
-    void OnDeactivated(object? s, EventArgs e) { if (!childDialogOpen) Hide(); }
+    // Task 9: peekMode added alongside the existing childDialogOpen guard — a peeked
+    // panel was never Activate()d, so it can't legitimately Deactivate() either; any
+    // event here while peeking is spurious and must not hide it (the proximity timer
+    // owns hide-on-leave for peek mode instead).
+    void OnDeactivated(object? s, EventArgs e) { if (!childDialogOpen && !peekMode) Hide(); }
     void OnKeyDown(object s, KeyEventArgs e) { if (e.Key == Key.Escape) Hide(); }
+
+    // Task 9: clicking inside a peeked panel "graduates" it to a normal, focused panel —
+    // spec: "Clicking inside the peeked panel activates it, after which normal
+    // focus/dismiss behavior applies." From here on OnDeactivated's Hide() governs again.
+    void OnPreviewMouseDown(object s, MouseButtonEventArgs e)
+    {
+        if (!peekMode) return;
+        peekMode = false;
+        proximityTimer.Stop();
+        Activate();
+    }
 
     // Runs a child dialog (PromptDialog.Ask, OpenFileDialog.ShowDialog, the Report
     // MessageBoxes) without the panel disappearing out from under it: sets childDialogOpen so
