@@ -211,6 +211,28 @@ public sealed class WorkspaceManager(
             ? desktops.Switch(id)
             : Result.Failure("Workspace has no desktop (compatibility mode)."));
 
+    // Ctrl+Alt+arrows (spec §Tray interaction): cycle through OUR workspaces in their
+    // defined order — unlike native Win+Ctrl+arrows, which walks every OS desktop
+    // including unbound ones. Wrapping; a non-workspace current desktop enters the
+    // ring at the edge matching travel direction.
+    public Result CycleWorkspace(int direction) =>
+        State.Workspaces.Count == 0
+            ? Result.Failure("No workspaces to cycle through.")
+            : desktops.CurrentDesktop().Bind(current =>
+            {
+                var index = State.Workspaces.ToList().FindIndex(w => w.DesktopId == current);
+                var next = index < 0
+                    ? (direction > 0 ? 0 : State.Workspaces.Count - 1)
+                    : (index + direction + State.Workspaces.Count) % State.Workspaces.Count;
+                return Switch(State.Workspaces[next].Id);
+            });
+
+    // Ctrl+Alt+1..9: direct switch by defined order (hotkey digit - 1).
+    public Result SwitchToIndex(int index) =>
+        index >= 0 && index < State.Workspaces.Count
+            ? Switch(State.Workspaces[index].Id)
+            : Result.Failure($"No workspace #{index + 1}.");
+
     public Result<Workspace> AddWorkspace(string name) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
             .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))

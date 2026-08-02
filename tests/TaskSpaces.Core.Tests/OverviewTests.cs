@@ -152,4 +152,56 @@ public class OverviewTests
 
         Assert.Empty(desktops.WindowPlacements); // pinned = on ALL desktops; rules keep out
     }
+
+    // --- Task 9: hotkey-driven cycling / direct switch ---------------------------
+
+    [Fact]
+    public void Cycle_wraps_in_workspace_order()
+    {
+        var (manager, work1) = Started();
+        var work2 = manager.AddWorkspace("Personal").Value;
+        desktops.CurrentDesktopId = work1.DesktopId!.Value;
+
+        Assert.True(manager.CycleWorkspace(+1).IsSuccess);
+        Assert.Equal(work2.DesktopId!.Value, desktops.Switches.Last());
+
+        desktops.CurrentDesktopId = work2.DesktopId!.Value;
+        Assert.True(manager.CycleWorkspace(+1).IsSuccess);
+        Assert.Equal(work1.DesktopId!.Value, desktops.Switches.Last()); // wraps back to first
+    }
+
+    [Fact]
+    public void Cycle_from_non_workspace_desktop_goes_to_first()
+    {
+        var (manager, work1) = Started();
+        var work2 = manager.AddWorkspace("Personal").Value;
+        desktops.CurrentDesktopId = Guid.NewGuid(); // some plain OS desktop, not a workspace
+
+        Assert.True(manager.CycleWorkspace(+1).IsSuccess);
+        Assert.Equal(work1.DesktopId!.Value, desktops.Switches.Last()); // enters at the first
+
+        desktops.CurrentDesktopId = Guid.NewGuid();
+        Assert.True(manager.CycleWorkspace(-1).IsSuccess);
+        Assert.Equal(work2.DesktopId!.Value, desktops.Switches.Last()); // enters at the last
+    }
+
+    [Fact]
+    public void Cycle_with_no_workspaces_fails()
+    {
+        var manager = new WorkspaceManager(desktops, monitor, titles, store);
+        Assert.True(manager.Start().IsSuccess);
+
+        Assert.True(manager.CycleWorkspace(+1).IsFailure);
+    }
+
+    [Fact]
+    public void SwitchToIndex_out_of_range_fails()
+    {
+        var (manager, work) = Started();
+
+        Assert.True(manager.SwitchToIndex(0).IsSuccess);
+        Assert.Equal(work.DesktopId!.Value, desktops.Switches.Last());
+
+        Assert.True(manager.SwitchToIndex(5).IsFailure);
+    }
 }
