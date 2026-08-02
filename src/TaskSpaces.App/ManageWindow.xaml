@@ -49,8 +49,16 @@
                     <ListView x:Name="WindowList">
                         <ListView.View>
                             <GridView>
-                                <GridViewColumn Header="Process" Width="140" DisplayMemberBinding="{Binding ProcessName}"/>
-                                <GridViewColumn Header="Title" Width="420" DisplayMemberBinding="{Binding Title}"/>
+                                <GridViewColumn Header="" Width="28">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Image Source="{Binding Icon}" Width="16" Height="16"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Process" Width="110" DisplayMemberBinding="{Binding Window.ProcessName}"/>
+                                <GridViewColumn Header="Title" Width="330" DisplayMemberBinding="{Binding DisplayTitle}"/>
+                                <GridViewColumn Header="Workspace" Width="110" DisplayMemberBinding="{Binding Workspace}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>

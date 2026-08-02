@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Domain;
@@ -15,6 +16,15 @@ public partial class ManageWindow : Window
     // DataGrid needs mutable rows; the domain records are immutable. These DTOs are the bridge.
     public sealed class WorkspaceRuleRow { public string Workspace { get; set; } = ""; public RuleMatchKind Kind { get; set; } public string Pattern { get; set; } = ""; }
     public sealed class RenameRuleRow { public RuleMatchKind Kind { get; set; } public string Pattern { get; set; } = ""; public string ShortName { get; set; } = ""; }
+
+    // Windows-tab row: the window + which workspace it is ACTUALLY on (ground truth
+    // via the overview — "Pinned" for pinned, the desktop's own name for desktops no
+    // workspace owns) + both titles when renamed.
+    public sealed record WindowTabRow(WindowInfo Window, string Workspace, Maybe<string> OriginalTitle)
+    {
+        public ImageSource? Icon => IconCache.For(Window.ProcessPath);
+        public string DisplayTitle => OriginalTitle.HasValue ? $"{Window.Title}  ·  was: {OriginalTitle.Value}" : Window.Title;
+    }
 
     readonly WorkspaceManager manager;
     readonly ObservableCollection<WorkspaceRuleRow> workspaceRules = [];
@@ -41,11 +51,12 @@ public partial class ManageWindow : Window
     {
         var selectedWorkspaceId = (WorkspaceList.SelectedItem as Workspace)?.Id;
         var selectedAssignTargetId = (AssignTarget.SelectedItem as Workspace)?.Id;
-        var selectedWindowHandle = (WindowList.SelectedItem as WindowInfo)?.Handle;
+        var selectedWindowHandle = (WindowList.SelectedItem as WindowTabRow)?.Window.Handle;
 
         WorkspaceList.ItemsSource = manager.State.Workspaces;
         AssignTarget.ItemsSource = manager.State.Workspaces;
-        WindowList.ItemsSource = manager.KnownWindows;
+        var windowRows = WindowRows();
+        WindowList.ItemsSource = windowRows;
         workspaceRules.Clear();
         manager.State.WorkspaceRules.ToList().ForEach(r => workspaceRules.Add(new WorkspaceRuleRow
         {
@@ -61,8 +72,20 @@ public partial class ManageWindow : Window
         if (selectedAssignTargetId is { } atId)
             AssignTarget.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == atId);
         if (selectedWindowHandle is { } handle)
-            WindowList.SelectedItem = manager.KnownWindows.FirstOrDefault(w => w.Handle == handle);
+            WindowList.SelectedItem = windowRows.FirstOrDefault(r => r.Window.Handle == handle);
     }
+
+    // Windows-tab rows, keyed to actual ground truth: WindowsByWorkspace() (Task 5) tells us
+    // which workspace/desktop each window is REALLY on right now, not just its roster
+    // assignment. Falls back to KnownWindows (no workspace grouping) in compatibility mode,
+    // where WindowsByWorkspace() always fails — the tab must still list windows.
+    IReadOnlyList<WindowTabRow> WindowRows() =>
+        manager.WindowsByWorkspace()
+            .Map(o => (IReadOnlyList<WindowTabRow>)
+                [.. o.Pinned.Select(r => new WindowTabRow(r.Window, "Pinned", r.OriginalTitle)),
+                 .. o.Workspaces.SelectMany(g => g.Running.Select(r => new WindowTabRow(r.Window, g.Workspace.Name, r.OriginalTitle))),
+                 .. o.OtherDesktops.SelectMany(g => g.Windows.Select(r => new WindowTabRow(r.Window, g.Name, r.OriginalTitle)))])
+            .GetValueOrDefault([.. manager.KnownWindows.Select(w => new WindowTabRow(w, "—", Maybe<string>.None))]);
 
     void OnAddWorkspace(object s, RoutedEventArgs e) => Report(manager.AddWorkspace(NewWorkspaceName.Text).Map(_ => true)).Tap(Reload);
     void OnRenameWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RenameWorkspace(w.Id, NewWorkspaceName.Text));
@@ -118,7 +141,7 @@ public partial class ManageWindow : Window
             .TapError(err => MessageBox.Show(err));
 
     Result<bool> WithSelectedWindow(Func<WindowInfo, Result> action) =>
-        (WindowList.SelectedItem is WindowInfo w ? action(w) : Result.Failure("Select a window first."))
+        (WindowList.SelectedItem is WindowTabRow row ? action(row.Window) : Result.Failure("Select a window first."))
             .Map(() => true)
             .Tap(Reload)
             .TapError(err => MessageBox.Show(err));
