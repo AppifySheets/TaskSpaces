@@ -1,13 +1,15 @@
 <Window x:Class="TaskSpaces.App.SwitcherPanel"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TaskSpaces.App"
         WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True"
         SizeToContent="WidthAndHeight" MaxWidth="420" Deactivated="OnDeactivated"
         KeyDown="OnKeyDown" PreviewMouseDown="OnPreviewMouseDown">
     <Border BorderThickness="1" Padding="8" CornerRadius="6"
             BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}">
-        <ScrollViewer MaxHeight="640" VerticalScrollBarVisibility="Auto">
-            <StackPanel x:Name="GroupsHost" MinWidth="300"/>
-        </ScrollViewer>
+        <!-- Task 10: group/row building moved into the shared WindowGroupsView (also
+             hosted by ManageWindow's Windows tab) — the panel keeps only its popup shell
+             (peek/summon, positioning, child-dialog coordination) below. -->
+        <local:WindowGroupsView x:Name="Groups" MaxHeight="640"/>
     </Border>
 </Window>

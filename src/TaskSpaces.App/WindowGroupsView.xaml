@@ -1,0 +1,11 @@
+<UserControl x:Class="TaskSpaces.App.WindowGroupsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Shared by SwitcherPanel and ManageWindow's Windows tab (Task 10) — one control
+         builds the grouped Pinned / workspace / other-desktop rows so the two surfaces
+         cannot drift apart. Each host wraps this in whatever chrome it needs (SwitcherPanel:
+         a bordered popup with a MaxHeight; ManageWindow: a plain tab page). -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="GroupsHost" MinWidth="300"/>
+    </ScrollViewer>
+</UserControl>

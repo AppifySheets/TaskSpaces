@@ -1,6 +1,7 @@
 <Window x:Class="TaskSpaces.App.ManageWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TaskSpaces.App"
         Title="TaskSpaces — Manage" Width="720" Height="480">
     <DockPanel>
         <TextBlock x:Name="CompatBanner" DockPanel.Dock="Top" Background="#FFF4CE" Padding="8"
@@ -37,31 +38,16 @@
                 </DockPanel>
             </TabItem>
             <TabItem Header="Windows">
+                <!-- Task 10: same grouped view the switcher panel uses (headers with
+                     switch/▶ Start/Add app…, running-row jump + right-click menu, drag-
+                     and-drop) instead of a bespoke flat list + bottom action bar — the
+                     row context menu now covers Send-to/Rename/Restore that used to live
+                     in buttons here. Refresh and Start-with-Windows are the only controls
+                     that remain outside the shared view. -->
                 <DockPanel Margin="8">
-                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
-                        <ComboBox x:Name="AssignTarget" Width="160" DisplayMemberPath="Name"/>
-                        <Button Content="Send to workspace" Margin="8,0,0,0" Padding="12,2" Click="OnAssignWindow"/>
-                        <TextBox x:Name="ShortName" Width="160" Margin="24,0,0,0"/>
-                        <Button Content="Rename" Margin="8,0,0,0" Padding="12,2" Click="OnRenameWindow"/>
-                        <Button Content="Restore title" Margin="8,0,0,0" Padding="12,2" Click="OnRestoreTitle"/>
-                        <Button Content="Refresh" Margin="24,0,0,0" Padding="12,2" Click="OnRefreshWindows"/>
-                    </StackPanel>
-                    <ListView x:Name="WindowList">
-                        <ListView.View>
-                            <GridView>
-                                <GridViewColumn Header="" Width="28">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Image Source="{Binding Icon}" Width="16" Height="16"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Process" Width="110" DisplayMemberBinding="{Binding Window.ProcessName}"/>
-                                <GridViewColumn Header="Title" Width="330" DisplayMemberBinding="{Binding DisplayTitle}"/>
-                                <GridViewColumn Header="Workspace" Width="110" DisplayMemberBinding="{Binding Workspace}"/>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
+                    <Button DockPanel.Dock="Top" Content="Refresh" HorizontalAlignment="Left"
+                            Padding="12,2" Margin="0,0,0,8" Click="OnRefreshWindows"/>
+                    <local:WindowGroupsView x:Name="WindowGroups"/>
                 </DockPanel>
             </TabItem>
         </TabControl>

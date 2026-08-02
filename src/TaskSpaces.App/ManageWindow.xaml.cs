@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
 using System.Windows;
-using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Domain;
@@ -17,15 +16,6 @@ public partial class ManageWindow : Window
     public sealed class WorkspaceRuleRow { public string Workspace { get; set; } = ""; public RuleMatchKind Kind { get; set; } public string Pattern { get; set; } = ""; }
     public sealed class RenameRuleRow { public RuleMatchKind Kind { get; set; } public string Pattern { get; set; } = ""; public string ShortName { get; set; } = ""; }
 
-    // Windows-tab row: the window + which workspace it is ACTUALLY on (ground truth
-    // via the overview — "Pinned" for pinned, the desktop's own name for desktops no
-    // workspace owns) + both titles when renamed.
-    public sealed record WindowTabRow(WindowInfo Window, string Workspace, Maybe<string> OriginalTitle)
-    {
-        public ImageSource? Icon => IconCache.For(Window.ProcessPath);
-        public string DisplayTitle => OriginalTitle.HasValue ? $"{Window.Title}  ·  was: {OriginalTitle.Value}" : Window.Title;
-    }
-
     readonly WorkspaceManager manager;
     readonly ObservableCollection<WorkspaceRuleRow> workspaceRules = [];
     readonly ObservableCollection<RenameRuleRow> renameRules = [];
@@ -38,25 +28,26 @@ public partial class ManageWindow : Window
         StartWithWindows.IsChecked = StartupRegistration.IsEnabled;
         WorkspaceRulesGrid.ItemsSource = workspaceRules;
         RenameRulesGrid.ItemsSource = renameRules;
+        // Task 10: the Windows tab is now the shared WindowGroupsView (same control the
+        // switcher panel uses). No runChildDialog/afterAction override needed — this
+        // window doesn't hide-on-deactivate like the panel does, so the default
+        // pass-through dialog runner and a no-op afterAction are exactly right; live
+        // refresh on manager.StateChanged is the view's own responsibility now.
+        WindowGroups.Bind(manager);
         Reload();
     }
 
     // Reviewer (fix round 1, Important): reassigning ItemsSource wholesale drops the
-    // current selection, so every button click ("Rename", "Send to workspace", ...)
-    // silently deselects the very row the user just acted on — annoying for the common
-    // case of doing several operations on the same workspace/window in a row. Capture the
-    // selected *identity* (Id / Handle — never the object reference, since Reload() always
-    // rebuilds fresh instances) before rebinding, and re-select the matching item after.
+    // current selection, so every button click ("Rename", "Remove", ...) silently
+    // deselects the very row the user just acted on — annoying for the common case of
+    // doing several operations on the same workspace in a row. Capture the selected
+    // *identity* (Id — never the object reference, since Reload() always rebuilds fresh
+    // instances) before rebinding, and re-select the matching item after.
     void Reload()
     {
         var selectedWorkspaceId = (WorkspaceList.SelectedItem as Workspace)?.Id;
-        var selectedAssignTargetId = (AssignTarget.SelectedItem as Workspace)?.Id;
-        var selectedWindowHandle = (WindowList.SelectedItem as WindowTabRow)?.Window.Handle;
 
         WorkspaceList.ItemsSource = manager.State.Workspaces;
-        AssignTarget.ItemsSource = manager.State.Workspaces;
-        var windowRows = WindowRows();
-        WindowList.ItemsSource = windowRows;
         workspaceRules.Clear();
         manager.State.WorkspaceRules.ToList().ForEach(r => workspaceRules.Add(new WorkspaceRuleRow
         {
@@ -69,34 +60,15 @@ public partial class ManageWindow : Window
 
         if (selectedWorkspaceId is { } wsId)
             WorkspaceList.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == wsId);
-        if (selectedAssignTargetId is { } atId)
-            AssignTarget.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == atId);
-        if (selectedWindowHandle is { } handle)
-            WindowList.SelectedItem = windowRows.FirstOrDefault(r => r.Window.Handle == handle);
     }
-
-    // Windows-tab rows, keyed to actual ground truth: WindowsByWorkspace() (Task 5) tells us
-    // which workspace/desktop each window is REALLY on right now, not just its roster
-    // assignment. Falls back to KnownWindows (no workspace grouping) in compatibility mode,
-    // where WindowsByWorkspace() always fails — the tab must still list windows.
-    IReadOnlyList<WindowTabRow> WindowRows() =>
-        manager.WindowsByWorkspace()
-            .Map(o => (IReadOnlyList<WindowTabRow>)
-                [.. o.Pinned.Select(r => new WindowTabRow(r.Window, "Pinned", r.OriginalTitle)),
-                 .. o.Workspaces.SelectMany(g => g.Running.Select(r => new WindowTabRow(r.Window, g.Workspace.Name, r.OriginalTitle))),
-                 .. o.OtherDesktops.SelectMany(g => g.Windows.Select(r => new WindowTabRow(r.Window, g.Name, r.OriginalTitle)))])
-            .GetValueOrDefault([.. manager.KnownWindows.Select(w => new WindowTabRow(w, "—", Maybe<string>.None))]);
 
     void OnAddWorkspace(object s, RoutedEventArgs e) => Report(manager.AddWorkspace(NewWorkspaceName.Text).Map(_ => true)).Tap(Reload);
     void OnRenameWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RenameWorkspace(w.Id, NewWorkspaceName.Text));
     void OnRemoveWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RemoveWorkspace(w.Id));
-    void OnAssignWindow(object s, RoutedEventArgs e) =>
-        WithSelectedWindow(w => AssignTarget.SelectedItem is Workspace target
-            ? manager.AssignWindow(w.Handle, target.Id)
-            : Result.Failure("Pick a target workspace first."));
-    void OnRenameWindow(object s, RoutedEventArgs e) => WithSelectedWindow(w => manager.RenameWindow(w.Handle, ShortName.Text));
-    void OnRestoreTitle(object s, RoutedEventArgs e) => WithSelectedWindow(w => manager.RestoreTitle(w.Handle));
-    void OnRefreshWindows(object s, RoutedEventArgs e) => Reload();
+    // Explicit manual refresh, kept per spec alongside the view's own live StateChanged
+    // refresh — useful right after an error (e.g. a transient WindowsByWorkspace()
+    // failure) without waiting for the next state mutation.
+    void OnRefreshWindows(object s, RoutedEventArgs e) => WindowGroups.Refresh();
     void OnStartupToggled(object s, RoutedEventArgs e)
     {
         if (StartWithWindows.IsChecked == true) StartupRegistration.Enable(); else StartupRegistration.Disable();
@@ -136,12 +108,6 @@ public partial class ManageWindow : Window
 
     Result<bool> WithSelectedWorkspace(Func<Workspace, Result> action) =>
         (WorkspaceList.SelectedItem is Workspace w ? action(w) : Result.Failure("Select a workspace first."))
-            .Map(() => true)
-            .Tap(Reload)
-            .TapError(err => MessageBox.Show(err));
-
-    Result<bool> WithSelectedWindow(Func<WindowInfo, Result> action) =>
-        (WindowList.SelectedItem is WindowTabRow row ? action(row.Window) : Result.Failure("Select a window first."))
             .Map(() => true)
             .Tap(Reload)
             .TapError(err => MessageBox.Show(err));

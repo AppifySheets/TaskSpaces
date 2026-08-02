@@ -1,15 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using CSharpFunctionalExtensions;
-using Microsoft.Win32;
 using TaskSpaces.Core;
-using TaskSpaces.Core.Domain;
-using TaskSpaces.Core.Overview;
-using TaskSpaces.Core.Persistence;
-using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Monitoring;
 
 namespace TaskSpaces.App;
@@ -17,12 +10,16 @@ namespace TaskSpaces.App;
 // The switcher: every window across every workspace in one place (spec) — the answer
 // to "I need to see all windows, similar to taskbar, without changing desktop first".
 // One instance lives for the app's lifetime; each summon rebuilds content fresh.
+//
+// Task 10: group/row construction (AddGroup/WorkspaceHeader/RunningRow/RosterRow/
+// RunningMenu, the Report helpers) moved out into the shared WindowGroupsView (Groups,
+// declared in the XAML) — ManageWindow's Windows tab hosts the exact same control now.
+// This class keeps only the popup-shell machinery that is specific to being a
+// tray-summoned, borderless, topmost window: hover-to-peek, summon-point proximity,
+// multi-monitor positioning, and the child-dialog coordination that Groups needs
+// injected (RunChildDialog<T> below is passed to Groups.Bind as its runChildDialog hook).
 public partial class SwitcherPanel : Window
 {
-    readonly WorkspaceManager manager;
-    readonly WindowActivator activator = new();
-    readonly AppLauncher launcher = new();
-
     // Task 7 fix round 1 (reviewer, Important): PromptDialog/OpenFileDialog/MessageBox all
     // steal focus from the panel, which fires OnDeactivated -> Hide() the instant they open —
     // defeating the "panel stays open so Petre can act on several rows in a row" design (spec).
@@ -61,10 +58,12 @@ public partial class SwitcherPanel : Window
 
     public SwitcherPanel(WorkspaceManager manager)
     {
-        this.manager = manager;
         InitializeComponent();
-        // Live refresh while open: windows appear/close and renames land as Petre watches.
-        manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() => { if (IsVisible) Rebuild(); }));
+        // RunChildDialog<object?> closes over `this` and matches the non-generic
+        // Func<Func<object?>, object?> shape Groups.Bind expects exactly — no wrapper
+        // lambda needed. Hide is the afterAction: a successful jump/switch/start closes
+        // the panel, same as before extraction.
+        Groups.Bind(manager, RunChildDialog<object?>, Hide);
         proximityTimer.Tick += (_, _) => ProximityTick();
     }
 
@@ -83,7 +82,7 @@ public partial class SwitcherPanel : Window
     public void Peek(double screenX, double screenY)
     {
         if (IsVisible) return;
-        Rebuild();
+        Groups.Refresh();
         ShowActivated = false;
         peekMode = true;
         summonScreenX = screenX;
@@ -176,9 +175,10 @@ public partial class SwitcherPanel : Window
     }
 
     // Runs a child dialog (PromptDialog.Ask, OpenFileDialog.ShowDialog, the Report
-    // MessageBoxes) without the panel disappearing out from under it: sets childDialogOpen so
-    // OnDeactivated ignores the deactivation the dialog causes, then re-Activate()s the panel
-    // afterwards so focus/foreground comes back to it once the dialog closes.
+    // MessageBoxes — all triggered from within Groups) without the panel disappearing out
+    // from under it: sets childDialogOpen so OnDeactivated ignores the deactivation the
+    // dialog causes, then re-Activate()s the panel afterwards so focus/foreground comes
+    // back to it once the dialog closes. Passed to Groups.Bind as its runChildDialog hook.
     T RunChildDialog<T>(Func<T> show)
     {
         childDialogOpen = true;
@@ -189,138 +189,4 @@ public partial class SwitcherPanel : Window
             Activate();
         }
     }
-
-    void Rebuild()
-    {
-        GroupsHost.Children.Clear();
-        manager.WindowsByWorkspace()
-            .Tap(overview =>
-            {
-                if (overview.Pinned.Count > 0)
-                    AddGroup("📌 Pinned", isCurrent: false, header: null, overview.Pinned.Select(r => RunningRow(r, pinned: true)));
-                overview.Workspaces.ToList().ForEach(g => AddGroup(
-                    $"{g.Workspace.Name} ({g.Running.Count})", g.IsCurrent, WorkspaceHeader(g),
-                    g.Running.Select(r => RunningRow(r, pinned: false)).Concat(g.NotRunning.Select(e => RosterRow(g.Workspace.Id, e)))));
-                overview.OtherDesktops.ToList().ForEach(g => AddGroup(
-                    $"{g.Name} ({g.Windows.Count})", g.IsCurrent, header: null, g.Windows.Select(r => RunningRow(r, pinned: false))));
-            })
-            .TapError(err => GroupsHost.Children.Add(new TextBlock { Text = err, Margin = new Thickness(4) }));
-    }
-
-    // --- group scaffolding -------------------------------------------------------
-
-    void AddGroup(string title, bool isCurrent, UIElement? header, IEnumerable<UIElement> rows)
-    {
-        var panel = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
-        panel.Children.Add(header ?? new TextBlock { Text = title, FontWeight = isCurrent ? FontWeights.Bold : FontWeights.SemiBold, Margin = new Thickness(4, 2, 4, 2) });
-        rows.ToList().ForEach(r => panel.Children.Add(r));
-        GroupsHost.Children.Add(panel);
-    }
-
-    // Workspace headers are interactive: click = switch there; ▶ = start missing apps;
-    // ＋ = manually roster an exe. Bold marks the workspace Petre is on right now.
-    UIElement WorkspaceHeader(WorkspaceGroup group)
-    {
-        var header = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
-
-        var start = new Button { Content = "▶", Padding = new Thickness(6, 0, 6, 0), Margin = new Thickness(4, 0, 0, 0), ToolTip = $"Start {group.Workspace.Name}: launch its {group.NotRunning.Count} not-running app(s) and switch there", Visibility = group.NotRunning.Count > 0 ? Visibility.Visible : Visibility.Collapsed };
-        start.Click += (_, _) => Report(manager.StartWorkspace(group.Workspace.Id, launcher)).Tap(Hide);
-        DockPanel.SetDock(start, Dock.Right);
-
-        var add = new Button { Content = "＋", Padding = new Thickness(6, 0, 6, 0), Margin = new Thickness(4, 0, 0, 0), ToolTip = "Add app… (roster an exe in this workspace)" };
-        add.Click += (_, _) => OnAddApp(group.Workspace.Id);
-        DockPanel.SetDock(add, Dock.Right);
-
-        var name = new Button { Content = $"{group.Workspace.Name} ({group.Running.Count})", FontWeight = group.IsCurrent ? FontWeights.Bold : FontWeights.SemiBold, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = Brushes.Transparent, ToolTip = "Switch to this workspace" };
-        name.Click += (_, _) => Report(manager.Switch(group.Workspace.Id)).Tap(Hide);
-
-        header.Children.Add(start);
-        header.Children.Add(add);
-        header.Children.Add(name);
-        return header;
-    }
-
-    // --- rows ----------------------------------------------------------------------
-
-    UIElement RunningRow(WindowRow row, bool pinned)
-    {
-        var content = new StackPanel { Orientation = Orientation.Horizontal };
-        var icon = IconCache.For(row.Window.ProcessPath);
-        if (icon is not null) content.Children.Add(new Image { Source = icon, Width = 16, Height = 16, Margin = new Thickness(0, 0, 6, 0) });
-        content.Children.Add(new TextBlock { Text = row.Window.Title, FontWeight = row.OriginalTitle.HasValue ? FontWeights.SemiBold : FontWeights.Normal });
-        // Renamed window: short name prominent, original title dimmed beside it (spec).
-        row.OriginalTitle.Tap(original => content.Children.Add(new TextBlock { Text = $"  ·  was: {original}", Opacity = 0.55, TextTrimming = TextTrimming.CharacterEllipsis }));
-
-        var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(16, 2, 4, 2), ToolTip = row.Window.Title };
-        button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator)).Tap(Hide);
-        button.ContextMenu = RunningMenu(row, pinned);
-        return button;
-    }
-
-    ContextMenu RunningMenu(WindowRow row, bool pinned)
-    {
-        var menu = new ContextMenu();
-
-        var pin = new MenuItem { Header = pinned ? "Unpin from all workspaces" : "Pin to all workspaces" };
-        pin.Click += (_, _) => Report(pinned ? manager.UnpinWindow(row.Window.Handle) : manager.PinWindow(row.Window.Handle));
-        menu.Items.Add(pin);
-
-        var sendTo = new MenuItem { Header = "Send to" };
-        manager.State.Workspaces.ToList().ForEach(w =>
-        {
-            var item = new MenuItem { Header = w.Name };
-            item.Click += (_, _) => Report(manager.AssignWindow(row.Window.Handle, w.Id));
-            sendTo.Items.Add(item);
-        });
-        menu.Items.Add(sendTo);
-        menu.Items.Add(new Separator());
-
-        var rename = new MenuItem { Header = "Rename…" };
-        rename.Click += (_, _) => RunChildDialog(() => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title))
-            .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
-        menu.Items.Add(rename);
-
-        var restore = new MenuItem { Header = "Restore title", IsEnabled = row.OriginalTitle.HasValue };
-        restore.Click += (_, _) => Report(manager.RestoreTitle(row.Window.Handle));
-        menu.Items.Add(restore);
-        return menu;
-    }
-
-    // Roster-only entry: the app BELONGS here but isn't running — dimmed, click to launch.
-    // The panel stays open on purpose: the row flips to running as the window arrives,
-    // and Petre can start several apps in a row (spec).
-    UIElement RosterRow(Guid workspaceId, InventoryEntry entry)
-    {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Opacity = 0.55 };
-        var icon = IconCache.For(entry.ProcessPath);
-        if (icon is not null) content.Children.Add(new Image { Source = icon, Width = 16, Height = 16, Margin = new Thickness(0, 0, 6, 0) });
-        content.Children.Add(new TextBlock { Text = $"{entry.Title}  (not running)", FontStyle = FontStyles.Italic });
-
-        var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(16, 2, 4, 2), ToolTip = entry.CommandLine ?? entry.ProcessPath };
-        button.Click += (_, _) => Report(manager.StartRosterEntry(workspaceId, entry, launcher));
-
-        var menu = new ContextMenu();
-        var startOne = new MenuItem { Header = "Start" };
-        startOne.Click += (_, _) => Report(manager.StartRosterEntry(workspaceId, entry, launcher));
-        menu.Items.Add(startOne);
-        var remove = new MenuItem { Header = "Remove from workspace" };
-        remove.Click += (_, _) => Report(manager.RemoveRosterEntry(workspaceId, entry));
-        menu.Items.Add(remove);
-        button.ContextMenu = menu;
-        return button;
-    }
-
-    void OnAddApp(Guid workspaceId)
-    {
-        var picker = new OpenFileDialog { Filter = "Programs (*.exe)|*.exe", Title = "Add app to workspace" };
-        if (RunChildDialog(() => picker.ShowDialog()) != true) return;
-        var arguments = RunChildDialog(() => PromptDialog.Ask("Arguments", "Optional command-line arguments (path+args identify WHAT the app shows):"))
-            .GetValueOrDefault("");
-        Report(manager.AddRosterEntry(workspaceId, picker.FileName, arguments).Map(_ => true));
-    }
-
-    // Instance methods (not static — fix round 1): the failure MessageBox is itself a child
-    // dialog and must go through RunChildDialog too, else every reported error closed the panel.
-    Result Report(Result result) => result.TapError(err => RunChildDialog(() => MessageBox.Show(err, "TaskSpaces")));
-    Result<T> Report<T>(Result<T> result) => result.TapError(err => RunChildDialog(() => MessageBox.Show(err, "TaskSpaces")));
 }
