@@ -77,6 +77,20 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
     desktop grouping appear under an "Unplaced" catch-all group.
 33. The old ＋ button is gone from the workspace header; adding an app to a workspace
     is done via "Add app…" in the workspace header's right-click context menu.
+34. Tray menu -> "Show floating bar" -> a small translucent, always-on-top bar appears
+    showing icon rows, one per workspace with running windows (Pinned row first if any
+    windows are pinned; workspaces with nothing running show no row at all); click an
+    icon -> lands on that window (switches workspace if needed, focuses it); the bar
+    stays open after the click.
+35. Drag the bar's background (not an icon) to a new spot -> it moves with the cursor;
+    restart the app -> the bar reappears in that same spot. Toggle it off/on from the
+    tray menu (checkmark reflects state) -> restart the app -> it stays hidden/shown
+    exactly as last left. Right-click the bar -> "Hide floating bar" also hides it and
+    persists that.
+36. With the bar showing, open a new app that belongs to a workspace -> its icon
+    appears in that workspace's row live, without reopening the bar; close it -> the
+    icon disappears (and the whole row disappears if that was the workspace's last
+    running window).
 
 ## Results (2026-08-01)
 
@@ -153,6 +167,9 @@ above.
 | 31 | Windows tab shows the same grouped view; drag works identically; right-click menu covers rename/restore/pin/send | pending human execution |
 | 32 | Windows on unbound/default desktops group under a sensibly-named group (e.g. "Desktop 1"), including the current desktop; oddball shell windows appear under "Unplaced" | pending human execution |
 | 33 | ＋ button is gone; Add app… lives in the workspace header's right-click menu | pending human execution |
+| 34 | Floating bar shows icon rows per workspace, translucent, always on top; click icon -> lands on that window | pending human execution |
+| 35 | Drag bar -> position survives app restart; tray toggle hides/shows it, state survives restart | pending human execution |
+| 36 | Windows opening/closing update the bar live | pending human execution |
 
 Re-run this script by hand before each release and replace the table above with actual
 pass/fail results plus notes on the Windows build tested.
