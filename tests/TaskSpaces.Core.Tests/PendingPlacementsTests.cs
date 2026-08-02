@@ -55,4 +55,15 @@ public class PendingPlacementsTests
         var window = new WindowInfo(new WindowHandle(0x10), 999, "rider64", @"C:\rider\rider64.exe", "Y", "\"C:\\rider\\rider64.exe\" Y.sln");
         Assert.Equal(personal, pending.Match(window, T0.AddSeconds(5)).WorkspaceId.Value);
     }
+
+    [Fact]
+    public void Falls_back_to_bare_path_when_identity_tier_genuinely_fails()
+    {
+        // Some browsers hand the window to an existing process AND rewrite their args
+        // (e.g. --restore-session gets replaced) — neither pid NOR content identity
+        // survive, so the only tier left that can still match is the bare exe path.
+        var pending = PendingPlacements.Empty.Add(500, @"C:\rider\rider64.exe", Work, T0, "\"C:\\rider\\rider64.exe\" X.sln");
+        var window = new WindowInfo(new WindowHandle(0x10), 999, "rider64", @"C:\rider\rider64.exe", "X", "\"C:\\rider\\rider64.exe\" X-rewritten-args.sln");
+        Assert.Equal(Work, pending.Match(window, T0.AddSeconds(5)).WorkspaceId.Value);
+    }
 }

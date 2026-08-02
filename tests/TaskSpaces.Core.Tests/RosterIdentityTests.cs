@@ -33,6 +33,19 @@ public class RosterIdentityTests
     }
 
     [Fact]
+    public void Firefox_identity_uses_generic_args_not_profile_directory()
+    {
+        // Firefox has no --profile-directory (that's Chromium-only) — it uses -P/-profile,
+        // which BrowserProfile doesn't parse. Routing Firefox through the Chromium
+        // profile-only path would collapse every Firefox window to the same identity
+        // regardless of profile; it must go through the generic args-based path instead,
+        // where -P work vs -P home naturally differ.
+        var work = RosterIdentity.Of(@"C:\firefox\firefox.exe", "\"C:\\firefox\\firefox.exe\" -P work");
+        var home = RosterIdentity.Of(@"C:\firefox\firefox.exe", "\"C:\\firefox\\firefox.exe\" -P home");
+        Assert.NotEqual(work, home);
+    }
+
+    [Fact]
     public void Window_without_process_path_has_no_identity() =>
         Assert.True(RosterIdentity.Of(Window(@"C:\a.exe", null) with { ProcessPath = null }).HasNoValue);
 

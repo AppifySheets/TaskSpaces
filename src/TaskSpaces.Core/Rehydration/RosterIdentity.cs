@@ -12,8 +12,14 @@ public static class RosterIdentity
 {
     // Chromium browsers spray session-specific arguments (--restore-session, flag
     // switches...) that vary run to run — only --profile-directory identifies content.
+    // Firefox is deliberately NOT here: it has no --profile-directory (that's Chromium
+    // syntax) — its profile is -P/-profile, which BrowserProfile doesn't parse. Routing
+    // Firefox through this profile-only path would collapse EVERY Firefox window to the
+    // same identity regardless of profile. Leaving it out of this set means it falls
+    // through to the generic path+args identity below, where -P work vs -P home differ
+    // naturally — exactly the content-based-identity goal from the spec.
     static readonly IReadOnlySet<string> Browsers =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "chrome", "msedge", "firefox", "brave", "vivaldi", "opera" };
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "chrome", "msedge", "brave", "vivaldi", "opera" };
 
     public static string Of(string processPath, string? commandLine)
     {
