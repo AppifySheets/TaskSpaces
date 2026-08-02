@@ -132,6 +132,11 @@ public partial class App : Application
         hoverTimer.Tick += (_, _) =>
         {
             hoverTimer.Stop();
+            // Fix round 2 (belt and braces, reviewer): Peek() already no-ops when the
+            // panel is already visible, but check here too — two independent
+            // idempotency layers mean this timer can never re-summon a panel that's
+            // already showing, even if something upstream ever changes.
+            if (switcherPanel is { IsVisible: true }) return;
             switcherPanel ??= new SwitcherPanel(manager);
             TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
             switcherPanel.Peek(cursor.X, cursor.Y);

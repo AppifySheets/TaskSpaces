@@ -37,10 +37,27 @@ public partial class SwitcherPanel : Window
     bool peekMode;
     readonly System.Windows.Threading.DispatcherTimer proximityTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
 
+    // Fix round 2 (Petre: panel blinked while hovering the tray icon): the cursor
+    // location at the moment Peek() was called — physical screen pixels, same raw
+    // units GetCursorPos returns, converted to DIPs alongside the live cursor reading
+    // in ProximityTick (see there) rather than up front, since DPI can only be read
+    // reliably once the window is shown. This is the tray icon's position: when peeking
+    // from the tray, the cursor sits ON THE ICON, never inside the panel itself (which
+    // is positioned near, not under, the cursor) — without also treating that point as
+    // "still hovering", ProximityTick correctly finds "outside the panel" on every
+    // tick, hides ~250ms after every Peek, and the hover timer immediately re-Peeks —
+    // a hide/show strobe.
+    double summonScreenX, summonScreenY;
+
     // DIP margin around the panel's own bounds inside which the cursor keeps it open —
     // without slack the panel would vanish the instant the mouse crosses its own edge
     // while moving in to click something near the border.
     const double ProximityMarginDip = 24;
+
+    // Fix round 2: generous radius (DIPs) around the summon point (see summonScreenX/Y
+    // above) that also counts as "still hovering" — covers the tray icon itself plus
+    // slack for imprecise mousing, without being so large it never lets go.
+    const double SummonRadiusDip = 48;
 
     public SwitcherPanel(WorkspaceManager manager)
     {
@@ -69,6 +86,8 @@ public partial class SwitcherPanel : Window
         Rebuild();
         ShowActivated = false;
         peekMode = true;
+        summonScreenX = screenX;
+        summonScreenY = screenY;
         Show();
         PositionNear(screenX, screenY);
         proximityTimer.Start();
@@ -80,12 +99,27 @@ public partial class SwitcherPanel : Window
     void ProximityTick()
     {
         NativeMethods.GetCursorPos(out var cursor);
+        // GetCursorPos answers in physical screen pixels; Left/Top/ActualWidth/ActualHeight
+        // are DIPs (same mismatch PositionNear guards against) — divide by this window's
+        // DPI scale before comparing, or a scaled display hides/strobes at the wrong
+        // distance from the panel.
         var dpi = VisualTreeHelper.GetDpi(this);
         var cursorX = cursor.X / dpi.DpiScaleX;
         var cursorY = cursor.Y / dpi.DpiScaleY;
-        var inside = cursorX >= Left - ProximityMarginDip && cursorX <= Left + ActualWidth + ProximityMarginDip
+        var insidePanel = cursorX >= Left - ProximityMarginDip && cursorX <= Left + ActualWidth + ProximityMarginDip
             && cursorY >= Top - ProximityMarginDip && cursorY <= Top + ActualHeight + ProximityMarginDip;
-        if (inside) return;
+
+        // Fix round 2 (Petre: panel blinked while hovering the tray icon) — see
+        // summonScreenX/Y's comment above. The summon point is stored in the same raw
+        // physical-pixel units as GetCursorPos, so it's converted here alongside the
+        // live cursor reading rather than once at Peek() time.
+        var summonDipX = summonScreenX / dpi.DpiScaleX;
+        var summonDipY = summonScreenY / dpi.DpiScaleY;
+        var dx = cursorX - summonDipX;
+        var dy = cursorY - summonDipY;
+        var nearSummonPoint = dx * dx + dy * dy <= SummonRadiusDip * SummonRadiusDip;
+
+        if (insidePanel || nearSummonPoint) return;
 
         proximityTimer.Stop();
         peekMode = false;
