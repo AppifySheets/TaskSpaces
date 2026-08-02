@@ -19,6 +19,21 @@ Four user-visible capabilities on top of TaskSpaces v1:
 4. **Workspace roster + Start** — a workspace lists the apps that *belong* to it even
    when they aren't running (dimmed), and a ▶ Start button launches them all with
    their recorded command lines.
+5. **Persistent, self-healing renames** *(added 2026-08-02 during testing)* — manual
+   window renames survive app restarts (persisted as process + original title → short
+   name) and a periodic sweep (~5s) re-asserts every active rename even if a
+   title-change event was missed. Event-driven re-apply stays the primary mechanism;
+   the sweep is the safety net Petre asked for ("applying those renamed titles every
+   several seconds"). Known limit: after a restart, a window whose natural title has
+   since changed (browser navigated elsewhere) no longer matches its recorded original
+   title and stays un-renamed until renamed again — window identity across restarts is
+   fundamentally heuristic.
+6. **Polish requirements from testing** *(2026-08-02)*: app icons on every window row
+   (switcher panel AND Manage → Windows tab); left-click on the tray icon opens the
+   switcher panel (Manage stays on the right-click menu); renamed windows display both
+   names (short name + original title); windows on desktops that are not TaskSpaces
+   workspaces are grouped under **their desktop's actual name** (e.g. "Desktop 1"),
+   not a flat "Unassigned" — including the current desktop.
 
 ## Core model decision: membership is per-window, content-based
 
@@ -60,7 +75,17 @@ pin support. Same Result discipline, same integration-test trait as the rest.
   Windows tab: for each known window, pinned-check first (pinned windows are on all
   desktops), then ask the OS which desktop it is on (`DesktopOf`), map desktop →
   workspace. Groups: **Pinned**, one per workspace (running windows + not-running
-  roster entries), **Unassigned** (windows on desktops no workspace owns).
+  roster entries), then one group per **non-workspace desktop, labeled with that
+  desktop's actual name** (from the OS desktop list — "Desktop 1", etc.), so
+  uncategorized windows always sit under the name of the desktop they are on,
+  including the current one. Rows carry the applied short name AND the original
+  title when renamed.
+- **Rename persistence + sweep** — `RenameWindow` records a `PersistedRename`
+  (process name, title-at-rename, short name); `RestoreTitle` removes it. A public
+  `ReapplyRenames()` re-asserts all active renames (ledger windows whose current
+  title drifted, plus persisted renames matching windows not yet in the ledger) —
+  called once after Start() and every ~5 seconds by an App-side timer. Event-driven
+  NAMECHANGE re-apply remains the fast path; the sweep is the safety net.
 - **Roster lifecycle** (replaces v1's ephemeral inventory semantics): an entry is
   added/updated when a window is placed into a workspace (rule, late placement,
   manual move, pending-launch). Entries **survive window close** — that is the
@@ -88,8 +113,10 @@ pin support. Same Result discipline, same integration-test trait as the rest.
 - Group header = workspace name + running count + **▶ Start** (enabled when the
   roster has not-running entries); clicking the header switches to that workspace.
   Current workspace highlighted.
-- Rows: app icon + display title (short rename shown where applied). Running rows
-  normal; roster-only rows dimmed with "not running" affordance.
+- Rows: app icon (extracted from the exe, cached; also used by the Windows tab) +
+  display title. Renamed windows show both names — short name prominent, original
+  title dimmed beside it. Running rows normal; roster-only rows dimmed with "not
+  running" affordance.
 - **Click a running row → jump**: switch desktop if needed, restore if minimized,
   focus, close panel. Click a dimmed row → launch that one entry; the panel stays
   open (the row transitions to running as the window arrives — visible feedback,
@@ -117,6 +144,14 @@ same already-running filter. The v1 prompt's per-workspace opt-in stays.
 (path, command line, last title). Existing on-disk files remain readable — the shape
 is unchanged; only the lifecycle (no removal on window close) and the dedupe key
 (path+args) change. Enum values continue to serialize as names.
+
+`AppState` additionally gains `PersistedRenames` — a list of
+`(ProcessName, OriginalTitle, ShortName)` records. A manual rename adds one (keyed by
+the window's process and its title at rename time); *Restore title* removes it. On
+startup and in the periodic sweep, any window whose process+title exactly matches a
+persisted rename gets the short name applied (which also seeds the runtime ledger, so
+event-driven re-apply takes over from there). Missing `PersistedRenames` in an older
+state.json deserializes as empty — no migration needed.
 
 ## Error handling & testing
 
