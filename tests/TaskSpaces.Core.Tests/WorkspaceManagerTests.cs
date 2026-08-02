@@ -132,13 +132,16 @@ public class WorkspaceManagerTests
     }
 
     [Fact]
-    public void Disappeared_window_leaves_inventory()
+    public void Disappeared_window_keeps_its_roster_entry()
     {
+        // Superseded v1 behavior: inventory used to be "currently running members" and
+        // emptied on close. The roster spec inverts this on purpose — a workspace lists
+        // what BELONGS to it even when it isn't running (that's what ▶ Start launches).
         var (manager, work) = StartedWithWorkWorkspace();
         manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome()));
-        Assert.Empty(store.Stored.Inventory[work.Id]);
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
     }
 
     [Fact]
@@ -389,8 +392,12 @@ public class WorkspaceManagerTests
     }
 
     [Fact]
-    public void Hidden_window_leaves_inventory_and_known_windows_like_disappeared()
+    public void Hidden_window_leaves_known_windows_but_keeps_its_roster_entry()
     {
+        // Same roster-spec inversion as Disappeared (see
+        // Disappeared_window_keeps_its_roster_entry above): Hidden must still drop live
+        // bookkeeping (knownWindows/memberships), but the roster entry belongs to the
+        // workspace regardless of whether the window is currently showing anywhere.
         var (manager, work) = StartedWithWorkWorkspace();
         manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
@@ -398,7 +405,7 @@ public class WorkspaceManagerTests
 
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome()));
 
-        Assert.Empty(store.Stored.Inventory[work.Id]);                       // dropped from inventory
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe"); // roster entry stays
         Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == new WindowHandle(0x10)); // dropped from known windows
     }
 }

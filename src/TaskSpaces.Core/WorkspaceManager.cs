@@ -1,3 +1,4 @@
+using System.IO;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -13,10 +14,13 @@ namespace TaskSpaces.Core;
 
 // The heart of TaskSpaces: subscribes to window lifecycle events and applies the
 // data-flow from the spec —
-//   Appeared      -> workspace rule -> move to desktop -> record inventory
+//   Appeared      -> workspace rule -> move to desktop -> add/move roster entry
 //   Appeared      -> rename rule    -> apply short name (ledger keeps the original)
 //   TitleChanged  -> renamed window -> re-apply short name (apps rewrite their titles)
-//   Disappeared   -> drop from inventory + ledger
+//   TitleChanged  -> unplaced window -> late placement (rules re-run once the title
+//                    reveals what the window actually is)
+//   Disappeared   -> drop from live bookkeeping + ledger; roster entry SURVIVES (spec:
+//                    a workspace lists what belongs to it even when nothing is running)
 // Single-threaded by design: all events arrive on the UI dispatcher thread (WinEvent
 // hooks deliver there), and all UI calls originate there too. No locks needed.
 public sealed class WorkspaceManager(
@@ -130,31 +134,39 @@ public sealed class WorkspaceManager(
             // Not renamed yet — but the new title may now match a rename rule.
             RulesEngine.MatchRename(window, State.RenameRules)
                 .Tap(shortName => { ApplyRename(window, shortName); });
+
+        // Late placement (spec): a window that appeared bare may only now reveal what it
+        // is showing — Rider loading a solution rewrites its title. Only UNPLACED windows
+        // are eligible: once placed (rule, launch, or hand), a title change must never
+        // teleport a window between workspaces (browsers rewrite titles every tab switch).
+        if (!memberships.ContainsKey(window.Handle))
+            RulesEngine.MatchWorkspace(window, State.WorkspaceRules)
+                .Tap(workspaceId => { Place(window, workspaceId); }); // fire-and-forget, as above
     }
 
     // Finding 3 (reviewer, Important): a window that merely left the taskbar (e.g.
     // Discord/Outlook minimizing to tray) still EXISTS — its hwnd stays valid and it may
     // reappear later. Drop it from live-window bookkeeping exactly like Disappeared
     // (it's not on any desktop's visible taskbar right now, so tracking it as "known" or
-    // "in inventory" would be misleading), but deliberately do NOT touch the rename
+    // "placed" would be misleading), but deliberately do NOT touch the rename
     // ledger: if we forgot the original title here, a later re-show's rename-rule
     // re-application would record our OWN short name as the "original", permanently
     // breaking restore. Only a genuine Disappeared (the window is actually gone) forgets
     // the ledger entry. RestoreAllTitles on app exit still finds and restores hidden
-    // windows because their ledger entry — and their hwnd — are both still valid.
+    // windows because their ledger entry — and their hwnd — are both still valid. The
+    // roster (spec) is unaffected either way: it lists what BELONGS to a workspace, not
+    // what's currently live, so Hidden never touches it.
     void OnHidden(WindowInfo window)
     {
         knownWindows.Remove(window.Handle);
-        if (memberships.Remove(window.Handle, out var workspaceId))
-            PersistInventory(workspaceId);
+        memberships.Remove(window.Handle); // roster entry stays — that's the point (spec)
     }
 
     void OnDisappeared(WindowInfo window)
     {
         knownWindows.Remove(window.Handle);
         ledger = ledger.Remove(window.Handle);
-        if (memberships.Remove(window.Handle, out var workspaceId))
-            PersistInventory(workspaceId);
+        memberships.Remove(window.Handle); // roster entry stays — ▶ Start relaunches it
     }
 
     // Returns Result: workspace-lookup and desktop-move failures must reach the caller
@@ -168,7 +180,7 @@ public sealed class WorkspaceManager(
             .Tap(() =>
             {
                 memberships[window.Handle] = workspaceId;
-                PersistInventory(workspaceId);
+                RosterAdd(window, workspaceId);
             });
 
     // Returns Result: a failed WM_SETTEXT (hung/closed window) must not leave a ledger
@@ -223,12 +235,19 @@ public sealed class WorkspaceManager(
     public Result RemoveWorkspace(Guid id) =>
         Workspace(id)
             .Tap(w => { if (w.DesktopId is { } d) desktops.Remove(d); })
-            .Tap(w => Persist(State with
+            .Tap(w =>
             {
-                Workspaces = State.Workspaces.Where(x => x.Id != id).ToList(),
-                WorkspaceRules = State.WorkspaceRules.Where(r => r.WorkspaceId != id).ToList(),
-                Inventory = State.Inventory.Where(kv => kv.Key != id).ToDictionary(kv => kv.Key, kv => kv.Value),
-            }));
+                // Prune live bookkeeping too: without this, a later Disappeared for one of
+                // this workspace's windows would resurrect a phantom inventory key.
+                memberships.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList()
+                    .ForEach(h => memberships.Remove(h));
+                Persist(State with
+                {
+                    Workspaces = State.Workspaces.Where(x => x.Id != id).ToList(),
+                    WorkspaceRules = State.WorkspaceRules.Where(r => r.WorkspaceId != id).ToList(),
+                    Inventory = State.Inventory.Where(kv => kv.Key != id).ToDictionary(kv => kv.Key, kv => kv.Value),
+                });
+            });
 
     public Result SetRules(IReadOnlyList<WorkspaceRule> workspaceRules, IReadOnlyList<RenameRule> renameRules)
     {
@@ -332,18 +351,47 @@ public sealed class WorkspaceManager(
     Result<Workspace> Workspace(Guid id) =>
         State.Workspaces.TryFirst(w => w.Id == id).ToResult($"Workspace {id} not found.");
 
-    void PersistInventory(Guid workspaceId)
+    // Roster (spec): a workspace lists the apps that BELONG to it even when they are
+    // not running. An entry is added/updated when a window is PLACED here and SURVIVES
+    // the window closing; identity = path+args (browser: path+profile), and the same
+    // identity landing in another workspace MOVES (a window can't belong to two —
+    // last placement wins). Entries leave only via user removal or workspace deletion.
+    void RosterAdd(WindowInfo window, Guid workspaceId)
     {
-        var entries = memberships
-            .Where(kv => kv.Value == workspaceId)
-            .Select(kv => knownWindows.GetValueOrDefault(kv.Key))
-            .Where(w => w?.ProcessPath is not null)
-            .Select(w => new InventoryEntry(w!.ProcessPath!, w.CommandLine, ledger.OriginalTitle(w.Handle).GetValueOrDefault(w.Title)))
-            .ToList();
-        var inventory = State.Inventory.Where(kv => kv.Key != workspaceId)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
-        inventory[workspaceId] = entries;
+        if (window.ProcessPath is null) return; // elevated/inaccessible: nothing relaunchable to remember
+        AddEntry(workspaceId, new InventoryEntry(window.ProcessPath, window.CommandLine,
+            ledger.OriginalTitle(window.Handle).GetValueOrDefault(window.Title)));
+    }
+
+    void AddEntry(Guid workspaceId, InventoryEntry entry)
+    {
+        var identity = RosterIdentity.Of(entry);
+        var inventory = State.Inventory.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<InventoryEntry>)kv.Value.Where(e => RosterIdentity.Of(e) != identity).ToList());
+        inventory[workspaceId] = [.. inventory.GetValueOrDefault(workspaceId, []), entry];
         Persist(State with { Inventory = inventory });
+    }
+
+    public Result<InventoryEntry> AddRosterEntry(Guid workspaceId, string exePath, string? arguments) =>
+        Result.FailureIf(string.IsNullOrWhiteSpace(exePath), "Executable path required")
+            .Bind(() => Workspace(workspaceId))
+            .Map(_ => new InventoryEntry(
+                exePath,
+                string.IsNullOrWhiteSpace(arguments) ? $"\"{exePath}\"" : $"\"{exePath}\" {arguments}",
+                Path.GetFileNameWithoutExtension(exePath)))
+            .Tap(entry => AddEntry(workspaceId, entry));
+
+    public Result RemoveRosterEntry(Guid workspaceId, InventoryEntry entry)
+    {
+        var identity = RosterIdentity.Of(entry);
+        var current = State.Inventory.GetValueOrDefault(workspaceId, []);
+        var remaining = current.Where(e => RosterIdentity.Of(e) != identity).ToList();
+        if (remaining.Count == current.Count) return Result.Failure("That app is no longer in this workspace's list.");
+        var inventory = State.Inventory.ToDictionary(kv => kv.Key, kv => kv.Value);
+        inventory[workspaceId] = remaining;
+        Persist(State with { Inventory = inventory });
+        return Result.Success();
     }
 
     void Persist(AppState next)
