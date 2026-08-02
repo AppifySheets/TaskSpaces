@@ -1,0 +1,26 @@
+<Window x:Class="TaskSpaces.App.FloatingBar"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TaskSpaces"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight">
+    <!-- Task 11 (spec: Floating icon bar): translucent, borderless, icon-only bar.
+         AllowsTransparency requires WindowStyle=None; both set here in XAML (not
+         code-behind) to dodge the "AllowsTransparency must be set before the window is
+         shown, and WindowStyle must already be None" ordering exception WPF throws when
+         these are set imperatively in the wrong order. -->
+    <Border x:Name="Root" CornerRadius="8" Background="#99202020" Padding="6"
+            MouseLeftButtonDown="OnBorderMouseLeftButtonDown">
+        <!-- Right-click anywhere on the bar's background (not consumed by an icon
+             Button, which handles its own input): hide. -->
+        <Border.ContextMenu>
+            <ContextMenu>
+                <MenuItem Header="Hide floating bar" Click="OnHideClick"/>
+            </ContextMenu>
+        </Border.ContextMenu>
+        <!-- One horizontal row per group (Pinned first, then workspaces in order),
+             populated in code-behind (Rebuild); see FloatingBar.xaml.cs. -->
+        <StackPanel x:Name="Rows"/>
+    </Border>
+</Window>

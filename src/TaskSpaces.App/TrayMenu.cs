@@ -7,7 +7,13 @@ namespace TaskSpaces.App;
 // (The dedicated switcher surface — pill/flyout/bar — is a separate, post-mockup plan.)
 public static class TrayMenu
 {
-    public static ContextMenu Build(WorkspaceManager manager, bool compatibilityMode, Action openManage, Action exit)
+    // Task 11: toggleFloatingBar/floatingBarVisible added for the "Show floating bar"
+    // checkable item. Checked state is passed in (rather than read from AppState here)
+    // because the App composition root owns the FloatingBar instance's actual IsVisible —
+    // the persisted AppState.FloatingBar can lag one toggle behind at the instant the
+    // menu rebuilds, and the live instance is the source of truth for what the checkbox
+    // should show right now.
+    public static ContextMenu Build(WorkspaceManager manager, bool compatibilityMode, Action openManage, Action exit, Action toggleFloatingBar, bool floatingBarVisible)
     {
         var menu = new ContextMenu();
 
@@ -24,6 +30,17 @@ public static class TrayMenu
             item.Click += (_, _) => manager.Switch(w.Id);
             menu.Items.Add(item);
         });
+
+        menu.Items.Add(new Separator());
+
+        // Task 11 (spec §Floating icon bar): JumpTo (which the bar's icons call) needs
+        // real desktops to switch to, same reason hotkeys/rehydration are gated on
+        // !compatibilityMode elsewhere (App.xaml.cs) — disabled, not hidden, so it's
+        // still discoverable and its state survives compatibility mode ending on a
+        // later restart.
+        var floatingBar = new MenuItem { Header = "Show floating bar", IsCheckable = true, IsChecked = floatingBarVisible, IsEnabled = !compatibilityMode };
+        floatingBar.Click += (_, _) => toggleFloatingBar();
+        menu.Items.Add(floatingBar);
 
         menu.Items.Add(new Separator());
         var manage = new MenuItem { Header = "Manage…" };

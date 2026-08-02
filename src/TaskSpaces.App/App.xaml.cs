@@ -22,6 +22,7 @@ public partial class App : Application
     bool compatibilityMode;
     SwitcherPanel? switcherPanel;
     HotkeyService? hotkeys;
+    FloatingBar? floatingBar; // Task 11: created lazily on first show, same as switcherPanel
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -104,7 +105,7 @@ public partial class App : Application
         {
             Icon = SystemIcons.Application, // placeholder until the product name settles
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
-            ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp),
+            ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp, ToggleFloatingBar, floatingBar is { IsVisible: true }),
             // Task 9 (Petre's testing feedback): left-click now opens the SAME menu as
             // right-click — hover replaces click as the way to reach the switcher panel
             // (see TrayMouseMove below), so left-click is free to become "menu" like
@@ -118,9 +119,21 @@ public partial class App : Application
         // the process under EcoQoS throttling, and we need WinEvent callbacks handled
         // promptly to re-apply renames and route new windows without visible lag.
         trayIcon.ForceCreate(enablesEfficiencyMode: false);
-        // Rebuild the menu whenever workspaces change so names/counts stay honest.
+        // Rebuild the menu whenever workspaces change so names/counts stay honest. This
+        // also keeps the "Show floating bar" checkmark honest: SaveFloatingBar (called
+        // by every ShowBar()/HideBar()/drag) pulses StateChanged, which lands here.
         manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
-            trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp)));
+            trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp, ToggleFloatingBar, floatingBar is { IsVisible: true })));
+
+        // Task 11 (spec §Floating icon bar): restore the bar's own on/off state across
+        // restarts. Gated on !compatibilityMode for the same reason hotkeys/rehydration
+        // are below -- every icon click calls JumpTo, which needs a real desktop to
+        // switch to, and compatibility mode has none.
+        if (!compatibilityMode && manager.State.FloatingBar is { Visible: true })
+        {
+            floatingBar = new FloatingBar(manager);
+            floatingBar.ShowBar();
+        }
 
         // Task 9: hover-to-peek. TrayMouseMove fires continuously while the cursor sits
         // over the icon, so a (re)started 400ms DispatcherTimer measures "cursor has been
@@ -260,6 +273,20 @@ public partial class App : Application
     }
 
     void OpenManage() => new ManageWindow(manager!, compatibilityMode).Show();
+
+    // Task 11: tray menu callback for "Show floating bar". Created lazily like
+    // switcherPanel; ShowBar()/HideBar() each call manager.SaveFloatingBar, whose
+    // StateChanged pulse rebuilds the tray menu (see the subscription above) so the
+    // checkmark reflects the new state without this method touching the menu itself.
+    void ToggleFloatingBar()
+    {
+        if (floatingBar is { IsVisible: true }) floatingBar.HideBar();
+        else
+        {
+            floatingBar ??= new FloatingBar(manager!);
+            floatingBar.ShowBar();
+        }
+    }
 
     void ExitApp()
     {
