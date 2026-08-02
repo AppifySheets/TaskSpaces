@@ -4,14 +4,22 @@
         Title="TaskSpaces"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
-        SizeToContent="WidthAndHeight">
+        SizeToContent="WidthAndHeight"
+        PreviewMouseLeftButtonDown="OnPreviewMouseLeftButtonDown"
+        PreviewMouseMove="OnPreviewMouseMove"
+        PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp">
     <!-- Task 11 (spec: Floating icon bar): translucent, borderless, icon-only bar.
          AllowsTransparency requires WindowStyle=None; both set here in XAML (not
          code-behind) to dodge the "AllowsTransparency must be set before the window is
          shown, and WindowStyle must already be None" ordering exception WPF throws when
          these are set imperatively in the wrong order. -->
-    <Border x:Name="Root" CornerRadius="8" Background="#99202020" Padding="6"
-            MouseLeftButtonDown="OnBorderMouseLeftButtonDown">
+    <!-- Task 11 fix round 3 (reviewer, Petre: "can't drag it"): dragging is wired at
+         the WINDOW level (Preview* handlers above, tunnelling from the root through
+         every icon Button) rather than on this Border alone: the bar's surface is
+         nearly all icon Buttons with only 6px of Padding as bare background, leaving
+         almost nothing to grab. See FloatingBar.xaml.cs for the press/move/threshold
+         logic; this Border no longer has its own MouseLeftButtonDown handler. -->
+    <Border x:Name="Root" CornerRadius="8" Background="#99202020" Padding="6">
         <!-- Right-click anywhere on the bar's background (not consumed by an icon
              Button, which handles its own input): hide. -->
         <Border.ContextMenu>

@@ -31,6 +31,12 @@ public partial class FloatingBar : Window
     readonly WindowActivator activator = new();
     IDisposable? subscription;
 
+    // Task 11 fix round 3 (reviewer, Petre: "can't drag it"): the screen-coordinate
+    // press point, set on PreviewMouseLeftButtonDown and cleared on release or once a
+    // drag actually starts. Null means "no press in progress" -- same sentinel pattern
+    // as WindowGroupsView.SetupDragSource's dragStart.
+    Point? dragStart;
+
     public FloatingBar(WorkspaceManager manager)
     {
         this.manager = manager;
@@ -65,17 +71,46 @@ public partial class FloatingBar : Window
 
     void OnHideClick(object sender, RoutedEventArgs e) => HideBar();
 
-    // Dragging the bar's translucent background repositions it. A WPF Button
-    // (ButtonBase) marks its own MouseLeftButtonDown handled during OnMouseLeftButtonDown,
-    // so this bubbling handler on the Border never fires for a press that started on an
-    // icon button -- exactly the split the spec wants (background drags the bar, icons
-    // jump). DragMove() blocks until the mouse button is released, so persisting right
-    // after it returns captures the final dropped position -- no separate
-    // LocationChanged-debounce needed, per the brief.
-    void OnBorderMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    // Task 11 fix round 3 (reviewer, Petre: "can't drag it"): the ORIGINAL design put
+    // the drag handler on the Border alone, betting on it having bare background to
+    // grab -- but the bar is nearly all icon Buttons with only 6px of Padding around
+    // them, so there was almost no pixel left to press-and-drag from. Fixed by wiring
+    // drag at the WINDOW level instead: these Preview* (tunnelling) handlers see every
+    // press/move/release anywhere in the window BEFORE any icon Button's own (bubbling)
+    // Click processing, including presses that start ON an icon -- "drag from
+    // anywhere, clicks still work" (spec ask). This replaces the old
+    // Border.MouseLeftButtonDown handler outright (removed) rather than keeping both:
+    // the window-level mechanism already covers the Border's own bare-background case
+    // too, so a second, narrower mechanism would be pure redundancy.
+    //
+    // Records the press point but does NOT set e.Handled -- an icon Button must still
+    // arm normally on press (matches WindowGroupsView.SetupDragSource's
+    // PreviewMouseLeftButtonDown, which does the same for row-drag).
+    void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => dragStart = PointToScreen(e.GetPosition(this));
+
+    // Clears a finished press so a later, unrelated move never measures distance from
+    // a stale point -- same hardening WindowGroupsView.SetupDragSource applies to its
+    // own dragStart (pitfall #2 in that file's comments).
+    void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => dragStart = null;
+
+    void OnPreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (e.ChangedButton != MouseButton.Left) return;
-        DragMove();
+        if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
+        var current = PointToScreen(e.GetPosition(this));
+        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        dragStart = null;
+
+        // If the press landed on an icon Button, ButtonBase.OnMouseLeftButtonDown
+        // already called CaptureMouse() on it (same mechanism WindowGroupsView.
+        // SetupDragSource documents at length). Releasing that capture before
+        // DragMove() lets its own native move-loop take clean, uncontested control of
+        // the mouse, and -- just as importantly -- means that Button never receives
+        // the MouseLeftButtonUp DragMove()'s loop consumes, so it never raises Click
+        // for this press. That IS the desired split: press-and-drag moves the bar;
+        // press-and-release-in-place still reaches the icon's Click normally.
+        Mouse.Capture(null);
+        DragMove(); // blocks until the mouse button is released
         manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)); // only draggable while shown
     }
 
