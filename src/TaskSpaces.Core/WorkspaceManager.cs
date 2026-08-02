@@ -5,6 +5,7 @@ using System.Reactive.Subjects;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
+using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rehydration;
 using TaskSpaces.Core.Renaming;
@@ -113,8 +114,9 @@ public sealed class WorkspaceManager(
         // failed auto-placement (e.g. stale workspace, desktop move rejected) has
         // nowhere to surface here — it's silently skipped, unlike the UI-facing
         // AssignWindow, which must propagate the same failure to the caller.
-        placement.Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules))
-            .Tap(workspaceId => { Place(window, workspaceId); });
+        if (AutoPlaceable(window.Handle))
+            placement.Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules))
+                .Tap(workspaceId => { Place(window, workspaceId); });
 
         // Fire-and-forget for the same reason as above.
         RulesEngine.MatchRename(window, State.RenameRules)
@@ -148,7 +150,7 @@ public sealed class WorkspaceManager(
         // renamed this window and the observed title IS our applied name, skip late
         // placement entirely (no rename recorded, or observed title differs from what we
         // set, both fall through to the normal rule match).
-        if (!memberships.ContainsKey(window.Handle)
+        if (AutoPlaceable(window.Handle)
             && ledger.AppliedName(window.Handle).Map(applied => applied != window.Title).GetValueOrDefault(true))
             RulesEngine.MatchWorkspace(window, State.WorkspaceRules)
                 .Tap(workspaceId => { Place(window, workspaceId); }); // fire-and-forget, as above
@@ -267,8 +269,19 @@ public sealed class WorkspaceManager(
 
     public Result AssignWindow(WindowHandle window, Guid workspaceId) =>
         knownWindows.TryGetValue(window, out var info)
-            ? Place(info, workspaceId)
+            // Explicitly moving a pinned window to ONE workspace is a statement that it
+            // should no longer be on ALL of them — unpin first, then place (spec).
+            ? desktops.IsPinned(window)
+                .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
+                .Bind(() => Place(info, workspaceId))
             : Result.Failure("Window no longer exists.");
+
+    // Rules (and late placement) only touch windows that are neither placed nor pinned:
+    // pinned windows live on ALL desktops — moving one to a workspace desktop would
+    // silently defeat the pin Petre set by hand.
+    bool AutoPlaceable(WindowHandle handle) =>
+        !memberships.ContainsKey(handle)
+        && !desktops.IsPinned(handle).GetValueOrDefault(false);
 
     public Result RenameWindow(WindowHandle window, string shortName) =>
         knownWindows.TryGetValue(window, out var info)
@@ -355,6 +368,65 @@ public sealed class WorkspaceManager(
     // expect it soon". The command line lets two same-exe launches route separately.
     public void RegisterPendingLaunch(int processId, string processPath, Guid workspaceId, string? commandLine = null) =>
         pending = pending.Add(processId, processPath, workspaceId, now(), commandLine);
+
+    // --- overview / switcher-facing operations -----------------------------------
+
+    // Ground truth for "which workspace is this window in": ASK THE OS which desktop
+    // it is on (memberships only knows what WE placed). Pinned first — pinned windows
+    // are on all desktops, DesktopOf is meaningless for them.
+    public Result<Core.Overview.Overview> WindowsByWorkspace() =>
+        desktops.GetDesktops().Bind(live => desktops.CurrentDesktop().Map(current =>
+        {
+            var windows = knownWindows.Values.ToList();
+            var pinned = windows
+                .Where(w => desktops.IsPinned(w.Handle).GetValueOrDefault(false))
+                .Select(w => w.Handle).ToHashSet();
+            var desktopOf = windows
+                .Where(w => !pinned.Contains(w.Handle))
+                .Select(w => (w.Handle, Desktop: desktops.DesktopOf(w.Handle)))
+                .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
+                .ToDictionary(x => x.Handle, x => x.Desktop.Value);
+            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current);
+        }));
+
+    public Result PinWindow(WindowHandle window) =>
+        desktops.Pin(window).Tap(() => stateChanged.OnNext(Unit.Default));
+
+    public Result UnpinWindow(WindowHandle window) =>
+        desktops.Unpin(window).Tap(() => stateChanged.OnNext(Unit.Default));
+
+    // Jump = what clicking a taskbar button does, but across workspaces: land on the
+    // window's desktop (skip the no-op switch), then bring it to the foreground.
+    public Result JumpTo(WindowHandle window, IWindowActivator activator) =>
+        desktops.IsPinned(window).Bind(pinned => pinned
+            ? activator.Activate(window) // pinned windows are already wherever Petre is
+            : desktops.DesktopOf(window)
+                .Bind(desktopId => desktops.CurrentDesktop()
+                    .Bind(current => desktopId == current ? Result.Success() : desktops.Switch(desktopId)))
+                .Bind(() => activator.Activate(window)));
+
+    // "Not running" checks ALL known windows, not just this workspace's — Rider-on-X
+    // sitting in another workspace still means Start must not launch a duplicate.
+    public IReadOnlyList<InventoryEntry> NotRunningRoster(Guid workspaceId) =>
+        State.Inventory.GetValueOrDefault(workspaceId, [])
+            .Where(e => !RosterIdentity.IsRunning(e, knownWindows.Values))
+            .ToList();
+
+    public Result StartRosterEntry(Guid workspaceId, InventoryEntry entry, IAppLauncher launcher) =>
+        launcher.Launch(entry)
+            .ToResult($"Could not launch {entry.ProcessPath} (moved or uninstalled?)")
+            .Tap(pid => RegisterPendingLaunch(pid, entry.ProcessPath, workspaceId, entry.CommandLine))
+            .Bind(_ => Result.Success());
+
+    // ▶ Start: launch everything missing (best-effort per entry — one bad exe never
+    // aborts the batch, v1 rehydrator rule), then take Petre there.
+    public Result StartWorkspace(Guid workspaceId, IAppLauncher launcher) =>
+        Workspace(workspaceId).Bind(_ =>
+        {
+            foreach (var entry in NotRunningRoster(workspaceId))
+                StartRosterEntry(workspaceId, entry, launcher); // per-entry Result deliberately dropped
+            return Switch(workspaceId);
+        });
 
     // --- persistence helpers -----------------------------------------------------
 

@@ -88,3 +88,16 @@ public sealed class FakeStore : IPersistenceStore
     public Result<AppState> Load() => FailLoad ? Result.Failure<AppState>("corrupt state.json (test)") : Stored;
     public Result Save(AppState state) { Stored = state; SaveCount++; return Result.Success(); }
 }
+
+public sealed class FakeActivator : IWindowActivator
+{
+    public List<WindowHandle> Activated { get; } = [];
+    public Result Activate(WindowHandle w) { Activated.Add(w); return Result.Success(); }
+}
+
+public sealed class FakeLauncher : IAppLauncher
+{
+    public List<InventoryEntry> Launched { get; } = [];
+    int nextPid = 9000;
+    public Maybe<int> Launch(InventoryEntry entry) { Launched.Add(entry); return nextPid++; }
+}
