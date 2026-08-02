@@ -11,5 +11,9 @@ public sealed record AppState(
     IReadOnlyList<RenameRule> RenameRules,
     IReadOnlyDictionary<Guid, IReadOnlyList<InventoryEntry>> Inventory)
 {
+    // Manual renames that survive restarts (spec §Persistence). Init property with a
+    // default so older state.json files (no such key) deserialize to empty, no migration.
+    public IReadOnlyList<PersistedRename> PersistedRenames { get; init; } = [];
+
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }

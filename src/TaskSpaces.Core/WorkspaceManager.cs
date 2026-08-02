@@ -45,6 +45,7 @@ public sealed class WorkspaceManager(
             {
                 monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
                 subscription = monitor.Events.Subscribe(OnWindowEvent);
+                ReapplyRenames();
             });
 
     // Finding 1 (reviewer, Critical): split out of Start() so the composition root can
@@ -243,16 +244,65 @@ public sealed class WorkspaceManager(
     public Result RenameWindow(WindowHandle window, string shortName) =>
         knownWindows.TryGetValue(window, out var info)
             ? ApplyRename(info, shortName)
+                // Manual renames persist (spec: survive restarts). Rule-based renames never
+                // pass through here — the rule itself is already durable. Keyed by process +
+                // the title the window had before ANY rename (ledger's original).
+                .Tap(() =>
+                {
+                    var original = ledger.OriginalTitle(window).GetValueOrDefault(info.Title);
+                    Persist(State with
+                    {
+                        PersistedRenames =
+                        [
+                            .. State.PersistedRenames.Where(r => !(r.ProcessName.Equals(info.ProcessName, StringComparison.OrdinalIgnoreCase) && r.OriginalTitle == original)),
+                            new PersistedRename(info.ProcessName, original, shortName),
+                        ],
+                    });
+                })
             : Result.Failure("Window no longer exists.");
 
     public Result RestoreTitle(WindowHandle window) =>
         ledger.OriginalTitle(window)
             .ToResult("Window was never renamed.")
-            .Bind(original => titles.Set(window, original))
-            .Tap(() => ledger = ledger.Remove(window));
+            .Bind(original => titles.Set(window, original)
+                .Tap(() =>
+                {
+                    ledger = ledger.Remove(window);
+                    // Also forget the durable form, else the sweep would re-rename it seconds later.
+                    var processName = knownWindows.TryGetValue(window, out var info) ? info.ProcessName : null;
+                    var remaining = State.PersistedRenames
+                        .Where(r => !(r.OriginalTitle == original && (processName is null || r.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))))
+                        .ToList();
+                    if (remaining.Count != State.PersistedRenames.Count)
+                        Persist(State with { PersistedRenames = remaining });
+                }));
 
     // App exit / crash-avoidance: leave every window exactly as we found it.
     public void RestoreAllTitles() => ledger.Handles.ToList().ForEach(h => RestoreTitle(h));
+
+    // The safety-net sweep (Petre: "applying those renamed titles every several
+    // seconds"). Event-driven NAMECHANGE re-apply is the fast path; this catches missed
+    // events AND adopts persisted renames after a restart. App calls it on a ~5s timer.
+    public void ReapplyRenames()
+    {
+        // 1. Active renames whose on-screen title drifted without us hearing about it.
+        //    Fire-and-forget Sets: a hung/closed window just misses this sweep round.
+        ledger.Handles.ToList().ForEach(h =>
+            titles.Get(h).Tap(current =>
+            {
+                if (ledger.NeedsReapply(h, current))
+                    ledger.AppliedName(h).Tap(name => { titles.Set(h, name); });
+            }));
+
+        // 2. Persisted renames not yet active this session (the restart case): adopt any
+        //    window whose process + current title exactly match a recorded rename.
+        knownWindows.Values
+            .Where(w => ledger.AppliedName(w.Handle).HasNoValue)
+            .ToList()
+            .ForEach(w => State.PersistedRenames
+                .TryFirst(r => r.ProcessName.Equals(w.ProcessName, StringComparison.OrdinalIgnoreCase) && r.OriginalTitle == w.Title)
+                .Tap(r => { ApplyRename(w, r.ShortName); }));
+    }
 
     // Rehydrator/StartWorkspace tell us "pid X (path Y, args Z) belongs to workspace W,
     // expect it soon". The command line lets two same-exe launches route separately.
