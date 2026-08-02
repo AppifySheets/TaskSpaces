@@ -1,3 +1,4 @@
+using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
@@ -151,6 +152,53 @@ public class OverviewTests
         Appear(App(0x10));
 
         Assert.Empty(desktops.WindowPlacements); // pinned = on ALL desktops; rules keep out
+    }
+
+    // --- Task 10: bug fix — missing windows in the non-workspace section ---------
+
+    // Suspect (a): a desktop the user never manually renamed reports Name == "" from the
+    // OS (Windows' Task View label "Desktop 2" is a shell-UI overlay, not the COM Name
+    // property). Confirmed as a real implementation gap (not reproduced live — Petre's
+    // own desktops are all named — but the original code had no fallback at all). Fixed
+    // by falling back to "Desktop {index+1}" using GetDesktops order.
+    [Fact]
+    public void Unnamed_desktop_falls_back_to_positional_name()
+    {
+        var (manager, _) = Started();
+
+        // Position 0: a named desktop already claimed by "Work" (from Started()).
+        // Position 1: unnamed OS desktop, no workspace owns it.
+        var unnamed = new DesktopInfo(Guid.NewGuid(), "");
+        desktops.Desktops.Add(unnamed);
+        var strayWindow = Appear(App(0x40, name: "mystery", path: @"C:\mystery.exe", title: "???"));
+        desktops.WindowPlacements[strayWindow] = unnamed.Id;
+
+        var overview = manager.WindowsByWorkspace().Value;
+
+        var group = overview.OtherDesktops.Single(g => g.DesktopId == unnamed.Id);
+        Assert.Equal("Desktop 2", group.Name); // index 1 in GetDesktops order -> "Desktop 2"
+    }
+
+    // Suspect (b): CONFIRMED live on Petre's machine — a real, visible, taskbar-candidate
+    // window ("Windows Input Experience") for which DesktopOf failed (VirtualDesktop.
+    // FromHwnd returned null) was silently absent from Pinned, every workspace, AND
+    // OtherDesktops. WindowsByWorkspace() only ever populates `desktopOf` for successful
+    // queries, so a non-pinned window missing from that dictionary IS exactly this case.
+    // Fixed with a catch-all "Unplaced" group instead of disappearing outright.
+    [Fact]
+    public void Window_whose_desktop_cannot_be_resolved_lands_in_unplaced_catchall()
+    {
+        var (manager, _) = Started();
+
+        // Appear a window but never record a desktop placement for it (and don't pin
+        // it) -- FakeDesktops.DesktopOf fails exactly like the real API did for the
+        // shell-owned window found in the diagnostic.
+        var ghost = Appear(App(0x41, name: "ime", path: @"C:\Windows\ime.exe", title: "Windows Input Experience"));
+
+        var overview = manager.WindowsByWorkspace().Value;
+
+        var unplaced = overview.OtherDesktops.Single(g => g.Name == "Unplaced");
+        Assert.Equal(ghost, unplaced.Windows.Single().Window.Handle);
     }
 
     // --- Task 9: hotkey-driven cycling / direct switch ---------------------------
