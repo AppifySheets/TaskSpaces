@@ -161,6 +161,24 @@ state.json deserializes as empty — no migration needed.
   matching) → xunit. Pin/Unpin → manual-trait integration tests. Panel behavior →
   manual test script additions.
 
+## Tray interaction & hotkeys *(added 2026-08-02 during testing)*
+
+Petre's requests while using the panel:
+
+- **Hover to peek**: hovering the tray icon (~400 ms) opens the switcher panel
+  WITHOUT stealing focus (`ShowActivated=false`); it hides itself once the cursor
+  leaves the panel area (small grace margin, ~250 ms polling). Clicking inside the
+  peeked panel activates it, after which normal focus/dismiss behavior applies.
+- **Menu on click**: left-clicking the tray icon opens the tray menu (same as
+  right-click; H.NotifyIcon `MenuActivation = LeftOrRightClick`). The panel is
+  reached by hover or hotkey, not by click.
+- **Global hotkeys** (hardcoded v1, RegisterHotKey): **Ctrl+Alt+Left/Right** cycles
+  TaskSpaces workspaces in their defined order (wrapping; skips non-workspace
+  desktops; if the current desktop is not a workspace, goes to the first/last
+  workspace); **Ctrl+Alt+1..9** switches directly to workspace N (1-based, defined
+  order). Registration failures (another app owns the chord) surface once as a
+  warning — never a crash, never silent. Native Win+Ctrl+arrows remain untouched.
+
 ## Non-goals
 
 - Always-on-top persistent bar (revisit only if the on-demand panel proves

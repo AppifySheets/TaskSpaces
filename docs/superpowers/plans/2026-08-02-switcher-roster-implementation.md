@@ -2058,8 +2058,59 @@ git commit -m "feat: Windows tab shows icons, actual workspace, and both names f
 
 ---
 
+### Task 9: Tray interaction & hotkeys (added 2026-08-02 — Petre's testing feedback)
+
+Spec section "Tray interaction & hotkeys". Hover the tray icon → panel peeks without stealing focus; left-click → menu; Ctrl+Alt+Left/Right cycles workspaces; Ctrl+Alt+1..9 direct switch.
+
+**Files:**
+- Modify: `src/TaskSpaces.Windows/Monitoring/NativeMethods.cs` (RegisterHotKey/UnregisterHotKey + modifiers)
+- Modify: `src/TaskSpaces.Core/WorkspaceManager.cs` (+CycleWorkspace, +SwitchToIndex)
+- Create: `src/TaskSpaces.App/HotkeyService.cs`
+- Modify: `src/TaskSpaces.App/SwitcherPanel.xaml.cs` (peek mode), `src/TaskSpaces.App/App.xaml.cs` (MenuActivation, hover wiring, hotkey wiring)
+- Test: `tests/TaskSpaces.Core.Tests/OverviewTests.cs` (cycle/index tests appended)
+- Modify: `docs/superpowers/notes/manual-test-script.md`
+
+**Interfaces:**
+- Consumes: manager.Switch, desktops.CurrentDesktop (Task 1), SwitcherPanel.Summon (Task 7), NativeMethods (public).
+- Produces: `WorkspaceManager.CycleWorkspace(int direction) : Result` (direction ±1; wraps; current desktop not a workspace → first for +1 / last for -1; no workspaces → failure); `WorkspaceManager.SwitchToIndex(int index) : Result` (0-based internally, failure when out of range); `HotkeyService : IDisposable` (registers on construction with a message-only HwndSource, invokes callbacks on WM_HOTKEY, unregisters on Dispose, exposes `IReadOnlyList<string> Failures` for chords another app owns).
+
+- [ ] **Step 1 (TDD): cycle/index tests in OverviewTests.cs** — Cycle_wraps_in_workspace_order (two workspaces; CurrentDesktopId = ws1's desktop → Cycle(+1) switches to ws2; again → wraps to ws1); Cycle_from_non_workspace_desktop_goes_to_first (CurrentDesktopId = random guid → Cycle(+1) → first workspace; Cycle(-1) → last); Cycle_with_no_workspaces_fails; SwitchToIndex_out_of_range_fails. Run → FAIL.
+- [ ] **Step 2: implement CycleWorkspace/SwitchToIndex in WorkspaceManager**
+
+```csharp
+    // Ctrl+Alt+arrows (spec §Tray interaction): cycle through OUR workspaces in their
+    // defined order — unlike native Win+Ctrl+arrows, which walks every OS desktop
+    // including unbound ones. Wrapping; a non-workspace current desktop enters the
+    // ring at the edge matching travel direction.
+    public Result CycleWorkspace(int direction) =>
+        State.Workspaces.Count == 0
+            ? Result.Failure("No workspaces to cycle through.")
+            : desktops.CurrentDesktop().Bind(current =>
+            {
+                var index = State.Workspaces.ToList().FindIndex(w => w.DesktopId == current);
+                var next = index < 0
+                    ? (direction > 0 ? 0 : State.Workspaces.Count - 1)
+                    : (index + direction + State.Workspaces.Count) % State.Workspaces.Count;
+                return Switch(State.Workspaces[next].Id);
+            });
+
+    // Ctrl+Alt+1..9: direct switch by defined order (hotkey digit - 1).
+    public Result SwitchToIndex(int index) =>
+        index >= 0 && index < State.Workspaces.Count
+            ? Switch(State.Workspaces[index].Id)
+            : Result.Failure($"No workspace #{index + 1}.");
+```
+
+Run tests → PASS. Commit (`feat: workspace cycling and direct-switch for hotkeys` + trailer).
+- [ ] **Step 3: NativeMethods** — `RegisterHotKey(nint hwnd, int id, uint modifiers, uint vk)`, `UnregisterHotKey(nint hwnd, int id)`, `MOD_CONTROL = 0x2, MOD_ALT = 0x1, WM_HOTKEY = 0x0312, VK_LEFT = 0x25, VK_RIGHT = 0x27` (digits use char codes '1'..'9' = 0x31..0x39).
+- [ ] **Step 4: HotkeyService** (App) — ctor takes `Action cyclePrev, Action cycleNext, Action<int> switchTo`; creates `new HwndSource(new HwndSourceParameters("TaskSpacesHotkeys") { WindowStyle = 0, Width = 0, Height = 0, ParentWindow = new IntPtr(-3) /* HWND_MESSAGE */ })`; AddHook handling WM_HOTKEY by id; registers ids 1 (Ctrl+Alt+Left), 2 (Ctrl+Alt+Right), 10+n (Ctrl+Alt+digit); failed registrations recorded in `Failures` (chord name strings), not thrown; Dispose unregisters all + disposes the source. Ample comments (why message-only window; why failures are warnings).
+- [ ] **Step 5: SwitcherPanel peek mode** — add `bool peekMode` + `DispatcherTimer proximityTimer (250ms)`; `public void Peek(double screenX, double screenY)`: if IsVisible return; `ShowActivated = false; peekMode = true; Show(); PositionNear(...); proximityTimer.Start();` (do NOT Activate). Proximity tick: GetCursorPos; if cursor outside panel bounds inflated by 24px DIP margin → Hide(), stop timer, peekMode = false, ShowActivated = true (restore). `OnPreviewMouseDown`: if peekMode → `peekMode = false; proximityTimer.Stop(); Activate();` (from then on Deactivated-hide governs). OnDeactivated keeps its childDialogOpen guard and additionally ignores while peekMode (not focused anyway). Summon() unchanged for hotkey/other callers.
+- [ ] **Step 6: App wiring** — `trayIcon.MenuActivation = PopupActivationMode.LeftOrRightClick;` (menu on click — remove the TrayLeftMouseUp panel handler); `trayIcon.TrayMouseMove += ...` starting/restarting a 400ms DispatcherTimer whose Tick summons `switcherPanel.Peek(cursor)` (create panel lazily as before) and stops itself; hotkeys: `hotkeys = new HotkeyService(() => manager.CycleWorkspace(-1), () => manager.CycleWorkspace(+1), n => manager.SwitchToIndex(n));` gated on !compatibilityMode; if `hotkeys.Failures.Count > 0` show ONE warning MessageBox listing them; dispose in ExitApp. Results from hotkey actions are fire-and-forget (comment: a failed switch from a hotkey has no UI to speak through — silent no-op beats a message-box storm on every keypress).
+- [ ] **Step 7: manual script items** (pending human execution): 25. hover tray icon ~half a second → panel peeks without taking focus; move mouse away → it hides; click inside it first → it stays and behaves like the clicked-open panel. 26. left-click tray icon → menu opens (same as right-click). 27. Ctrl+Alt+Right/Left cycles workspaces in order, wrapping, skipping plain desktops. 28. Ctrl+Alt+2 jumps to the second workspace. 29. If another app owns a chord, one warning at startup, hotkeys otherwise functional.
+- [ ] **Step 8: verify + smoke** — build 0 warnings; suite green (96 + 4 = 100); stop app, rebuild Release, relaunch, alive, LEAVE RUNNING. Commit (`feat: hover-to-peek panel, menu on click, global workspace hotkeys` + trailer).
+
 ## After this plan
 
-- Petre executes manual-test-script items 15–24 (plus any remaining 1–14).
+- Petre executes manual-test-script items 15–29 (plus any remaining 1–14).
 - PR remains ON HOLD until Petre says otherwise.
 - Future (spec'd, not planned): UIA rule kind (browser URL / document path) — spike first.
