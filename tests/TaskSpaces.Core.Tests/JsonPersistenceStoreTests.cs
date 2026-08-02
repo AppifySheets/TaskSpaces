@@ -21,7 +21,10 @@ public sealed class JsonPersistenceStoreTests : IDisposable
             new Dictionary<Guid, IReadOnlyList<InventoryEntry>>
             {
                 [work.Id] = [new InventoryEntry(@"C:\Windows\System32\mstsc.exe", null, "RDP")],
-            });
+            })
+        {
+            PersistedRenames = [new PersistedRename("chrome", "Home - Google Chrome", "Home")],
+        };
     }
 
     [Fact]
@@ -38,6 +41,7 @@ public sealed class JsonPersistenceStoreTests : IDisposable
         Assert.Equal(state.RenameRules, loaded.RenameRules);
         Assert.Equal(state.Inventory.Keys, loaded.Inventory.Keys);
         Assert.Equal(state.Inventory.Values.Single(), loaded.Inventory.Values.Single());
+        Assert.Equal(state.PersistedRenames, loaded.PersistedRenames);
     }
 
     [Fact]
@@ -54,6 +58,29 @@ public sealed class JsonPersistenceStoreTests : IDisposable
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "state.json"), "{ not json !!!");
         Assert.True(new JsonPersistenceStore(dir).Load().IsFailure);
+    }
+
+    [Fact]
+    public void Old_state_file_without_PersistedRenames_loads_as_empty_list()
+    {
+        // Backward compatibility: old state.json files have no PersistedRenames key
+        // and should deserialize to an empty list (not null, not error).
+        Directory.CreateDirectory(dir);
+        var oldState = new
+        {
+            workspaces = new object[0],
+            workspaceRules = new object[0],
+            renameRules = new object[0],
+            inventory = new object[0],
+            // Note: no PersistedRenames key
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(oldState);
+        File.WriteAllText(Path.Combine(dir, "state.json"), json);
+
+        var loaded = new JsonPersistenceStore(dir).Load();
+
+        Assert.True(loaded.IsSuccess);
+        Assert.Empty(loaded.Value.PersistedRenames);
     }
 
     [Fact]

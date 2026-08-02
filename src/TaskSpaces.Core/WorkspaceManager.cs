@@ -261,24 +261,42 @@ public sealed class WorkspaceManager(
                 })
             : Result.Failure("Window no longer exists.");
 
-    public Result RestoreTitle(WindowHandle window) =>
+    // Restore a window's title to its original (called on user un-rename AND app exit).
+    // Internal helper that restores the title and ledger entry, but leaves PersistedRenames alone.
+    // Preserves the Set-before-ledger ordering: a failed WM_SETTEXT must not claim success in the ledger.
+    Result RestoreTitleOnly(WindowHandle window) =>
         ledger.OriginalTitle(window)
             .ToResult("Window was never renamed.")
             .Bind(original => titles.Set(window, original)
-                .Tap(() =>
+                .Tap(() => ledger = ledger.Remove(window)));
+
+    // User explicitly un-renames a window: restore the title AND remove the durable entry,
+    // else the sweep would re-apply it seconds later.
+    public Result RestoreTitle(WindowHandle window)
+    {
+        // Capture the original title before RestoreTitleOnly removes the ledger entry.
+        var original = ledger.OriginalTitle(window);
+        return RestoreTitleOnly(window)
+            .Tap(() => original.Tap(originalTitle =>
+            {
+                // Only remove the persisted entry if we know the process name — better a stale
+                // persisted rename than deleting another app's entry if the window is hidden.
+                var processName = knownWindows.TryGetValue(window, out var info) ? info.ProcessName : null;
+                if (processName is not null)
                 {
-                    ledger = ledger.Remove(window);
-                    // Also forget the durable form, else the sweep would re-rename it seconds later.
-                    var processName = knownWindows.TryGetValue(window, out var info) ? info.ProcessName : null;
                     var remaining = State.PersistedRenames
-                        .Where(r => !(r.OriginalTitle == original && (processName is null || r.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))))
+                        .Where(r => !(r.OriginalTitle == originalTitle && r.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase)))
                         .ToList();
                     if (remaining.Count != State.PersistedRenames.Count)
                         Persist(State with { PersistedRenames = remaining });
-                }));
+                }
+            }));
+    }
 
-    // App exit / crash-avoidance: leave every window exactly as we found it.
-    public void RestoreAllTitles() => ledger.Handles.ToList().ForEach(h => RestoreTitle(h));
+    // App exit / crash-avoidance: leave every window exactly as we found it. Exit-time restoration
+    // is temporary housekeeping; the durable PersistedRenames record must survive so renames re-apply
+    // at the next startup (spec: "renames survive app restarts").
+    public void RestoreAllTitles() => ledger.Handles.ToList().ForEach(h => RestoreTitleOnly(h));
 
     // The safety-net sweep (Petre: "applying those renamed titles every several
     // seconds"). Event-driven NAMECHANGE re-apply is the fast path; this catches missed

@@ -104,4 +104,35 @@ public class PersistedRenameTests
 
         Assert.Equal("Amy related", titles.Titles[new WindowHandle(0x10)]);
     }
+
+    [Fact]
+    public void RestoreAllTitles_preserves_persisted_renames_for_restart()
+    {
+        // Session 1: rename window, then exit (app calls RestoreAllTitles)
+        var first = Started();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        first.RenameWindow(new WindowHandle(0x10), "Amy related");
+
+        // Verify persisted rename was recorded
+        var persistedBefore = store.Stored.PersistedRenames.Single();
+        Assert.Equal("Amy related", persistedBefore.ShortName);
+
+        // App exit: RestoreAllTitles restores the original title but must NOT delete the
+        // persisted entry — the durable record survives so renames re-apply at next start.
+        first.RestoreAllTitles();
+
+        // Persisted rename still in store (not wiped by exit-time restoration)
+        var persistedAfter = store.Stored.PersistedRenames;
+        Assert.Single(persistedAfter);
+        Assert.Equal("Amy related", persistedAfter.Single().ShortName);
+
+        // Session 2: restart with same store and same window (returned to natural title)
+        var monitor2 = new FakeMonitor();
+        monitor2.InitialWindows.Add(Chrome(title: "Some Page - Chrome")); // back to original
+        var second = new WorkspaceManager(desktops, monitor2, titles, store);
+        Assert.True(second.Start().IsSuccess);
+
+        // Persisted rename was re-applied at startup
+        Assert.Equal("Amy related", titles.Titles[new WindowHandle(0x10)]);
+    }
 }
