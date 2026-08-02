@@ -39,8 +39,17 @@ static class DnDTrace
         if (!Enabled) return;
         lock (gate)
         {
+            // Reviewer (Task 11 fix round 1, Important): catch (Exception), not just
+            // IOException -- UnauthorizedAccessException (e.g. a locked/permission-
+            // denied %TEMP% file) does NOT derive from IOException and would otherwise
+            // propagate straight out of Log(), which runs on the dispatcher thread
+            // inside live drag handlers. This trace is deliberately ON in the Release
+            // build Petre uses day-to-day, and App's DispatcherUnhandledException
+            // handler intentionally lets crashes die -- so a narrower catch here would
+            // crash the app mid-drag over a diagnostic write failure. Never-crash
+            // discipline: logging must never be able to break the feature it's tracing.
             try { File.AppendAllText(path, $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}"); }
-            catch (IOException) { /* best-effort diagnostic; never let logging break a drag */ }
+            catch (Exception) { /* best-effort diagnostic; never let logging break a drag */ }
         }
     }
 

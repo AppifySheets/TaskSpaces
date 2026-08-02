@@ -128,6 +128,14 @@ public partial class FloatingBar : Window
         // Click -> jump, with no Hide() afterwards: unlike the switcher panel, this bar
         // is a persistent surface (spec) -- it stays open across every jump so Petre can
         // click several icons in a row.
+        //
+        // Reviewer (Task 11 fix round 1, Minor): why WindowActivator.Activate's
+        // SetForegroundWindow succeeds from here -- clicking the icon Button first
+        // activates THIS window (FloatingBar, a normal top-level window with no
+        // WS_EX_NOACTIVATE style), which grants our process the foreground-change
+        // rights Windows normally restricts; the activator then hands that foreground
+        // privilege on to the target window. Same rationale as SwitcherPanel's
+        // running-row click.
         button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator));
         return button;
     }
