@@ -103,15 +103,19 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
     // folds both the exceptional path (Result.Try) and the expected-false path into one
     // Result, matching Win32WindowTitles.Set's SuccessIf style for the same "bool means
     // expected outcome" shape.
+    //
+    // FIX (code review, round 1): the exception-path and false-path messages are now worded
+    // differently ("unexpected error" vs. "not found or not ready") so a failure message alone
+    // tells you which branch produced it, instead of both paths reading almost identically.
     public Result Pin(WindowHandle window) =>
         Result.Try(() => VirtualDesktop.PinWindow(window.Value),
-                e => $"Could not pin window {window.Value} (it may have closed): {e.Message}")
-            .Bind(ok => Result.SuccessIf(ok, $"Could not pin window {window.Value} (it may have closed or is not ready)."));
+                e => $"Unexpected error pinning window {window.Value}: {e.Message}")
+            .Bind(ok => Result.SuccessIf(ok, $"Could not pin window {window.Value}: window not found or not ready."));
 
     public Result Unpin(WindowHandle window) =>
         Result.Try(() => VirtualDesktop.UnpinWindow(window.Value),
-                e => $"Could not unpin window {window.Value}: {e.Message}")
-            .Bind(ok => Result.SuccessIf(ok, $"Could not unpin window {window.Value} (it may have closed or is not ready)."));
+                e => $"Unexpected error unpinning window {window.Value}: {e.Message}")
+            .Bind(ok => Result.SuccessIf(ok, $"Could not unpin window {window.Value}: window not found or not ready."));
 
     // IsPinnedWindow's bool IS the answer (pinned or not) rather than a success/failure
     // indicator, so unlike Pin/Unpin above it passes straight through as Result<bool>.
