@@ -40,5 +40,23 @@ public static class NativeMethods
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
 
+    // Task 7 fix round 1 (reviewer, Important): the switcher panel used to clamp its
+    // position to (0,0) — the PRIMARY monitor's origin — which is wrong on any layout with
+    // a monitor placed LEFT of primary (negative virtual-screen coordinates put the panel on
+    // the wrong screen entirely). These let the panel ask Windows which monitor the cursor is
+    // actually on, and clamp inside THAT monitor's work area (which excludes the taskbar).
+    [DllImport("user32.dll")] public static extern nint MonitorFromPoint(POINT pt, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO info);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor; // full monitor bounds
+        public RECT rcWork;    // bounds minus taskbar/docked toolbars
+        public uint dwFlags;
+    }
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
     public const int SW_RESTORE = 9; // NEVER SW_HIDE anywhere in this codebase (spec)
 }

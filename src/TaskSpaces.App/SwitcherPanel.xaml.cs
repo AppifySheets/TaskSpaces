@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -9,6 +10,7 @@ using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Windows.Activation;
+using TaskSpaces.Windows.Monitoring;
 
 namespace TaskSpaces.App;
 
@@ -21,6 +23,13 @@ public partial class SwitcherPanel : Window
     readonly WindowActivator activator = new();
     readonly AppLauncher launcher = new();
 
+    // Task 7 fix round 1 (reviewer, Important): PromptDialog/OpenFileDialog/MessageBox all
+    // steal focus from the panel, which fires OnDeactivated -> Hide() the instant they open —
+    // defeating the "panel stays open so Petre can act on several rows in a row" design (spec).
+    // Every child-dialog invocation runs through RunChildDialog, which sets this flag first;
+    // OnDeactivated checks it and skips Hide() while it's true.
+    bool childDialogOpen;
+
     public SwitcherPanel(WorkspaceManager manager)
     {
         this.manager = manager;
@@ -32,14 +41,64 @@ public partial class SwitcherPanel : Window
     public void Summon(double screenX, double screenY)
     {
         Rebuild();
-        Left = Math.Max(0, screenX - 320);   // hug the tray corner, stay on-screen
-        Top = Math.Max(0, screenY - 24 - 660);
+        // Task 7 fix round 1 (reviewer, Important): SizeToContent means ActualWidth/Height
+        // are unknown until the window has actually been shown once — so Show() first, THEN
+        // compute where it should sit. (Known trade-off: the window briefly appears at its
+        // previous position/default before this repositions it — a first-Show flicker that
+        // cannot be verified without a human at the keyboard; noted in the report rather than
+        // fabricating a "looks fine" claim.)
         Show();
         Activate();
+        PositionNear(screenX, screenY);
     }
 
-    void OnDeactivated(object? s, EventArgs e) => Hide();
+    // Anchors the panel's bottom-right corner at the cursor (tray icons live bottom-right of
+    // their own monitor) and clamps it fully inside THAT monitor's work area — never the
+    // primary monitor's — so a monitor placed left/above primary (negative virtual-screen
+    // coordinates) still gets the panel on the correct screen, never spilling over the taskbar.
+    void PositionNear(double screenX, double screenY)
+    {
+        var cursor = new NativeMethods.POINT { X = (int)screenX, Y = (int)screenY };
+        var monitor = NativeMethods.MonitorFromPoint(cursor, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+        if (!NativeMethods.GetMonitorInfo(monitor, ref info))
+        {
+            // Best-effort fallback if the API ever fails — better than crashing the summon.
+            Left = Math.Max(0, screenX - 320);
+            Top = Math.Max(0, screenY - 24 - 660);
+            return;
+        }
+
+        // GetMonitorInfo answers in physical pixels; WPF's Left/Top are device-independent
+        // units (DIPs). Divide by this window's DPI scale or a scaled display places the
+        // panel off by the scale factor (e.g. wrong by 25% at 125% scaling).
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var workLeft = info.rcWork.Left / dpi.DpiScaleX;
+        var workTop = info.rcWork.Top / dpi.DpiScaleY;
+        var workRight = info.rcWork.Right / dpi.DpiScaleX;
+        var workBottom = info.rcWork.Bottom / dpi.DpiScaleY;
+
+        Left = Math.Clamp(screenX - ActualWidth, workLeft, Math.Max(workLeft, workRight - ActualWidth));
+        Top = Math.Clamp(screenY - ActualHeight, workTop, Math.Max(workTop, workBottom - ActualHeight));
+    }
+
+    void OnDeactivated(object? s, EventArgs e) { if (!childDialogOpen) Hide(); }
     void OnKeyDown(object s, KeyEventArgs e) { if (e.Key == Key.Escape) Hide(); }
+
+    // Runs a child dialog (PromptDialog.Ask, OpenFileDialog.ShowDialog, the Report
+    // MessageBoxes) without the panel disappearing out from under it: sets childDialogOpen so
+    // OnDeactivated ignores the deactivation the dialog causes, then re-Activate()s the panel
+    // afterwards so focus/foreground comes back to it once the dialog closes.
+    T RunChildDialog<T>(Func<T> show)
+    {
+        childDialogOpen = true;
+        try { return show(); }
+        finally
+        {
+            childDialogOpen = false;
+            Activate();
+        }
+    }
 
     void Rebuild()
     {
@@ -127,7 +186,7 @@ public partial class SwitcherPanel : Window
         menu.Items.Add(new Separator());
 
         var rename = new MenuItem { Header = "Rename…" };
-        rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title)
+        rename.Click += (_, _) => RunChildDialog(() => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title))
             .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
         menu.Items.Add(rename);
 
@@ -164,11 +223,14 @@ public partial class SwitcherPanel : Window
     void OnAddApp(Guid workspaceId)
     {
         var picker = new OpenFileDialog { Filter = "Programs (*.exe)|*.exe", Title = "Add app to workspace" };
-        if (picker.ShowDialog() != true) return;
-        var arguments = PromptDialog.Ask("Arguments", "Optional command-line arguments (path+args identify WHAT the app shows):").GetValueOrDefault("");
+        if (RunChildDialog(() => picker.ShowDialog()) != true) return;
+        var arguments = RunChildDialog(() => PromptDialog.Ask("Arguments", "Optional command-line arguments (path+args identify WHAT the app shows):"))
+            .GetValueOrDefault("");
         Report(manager.AddRosterEntry(workspaceId, picker.FileName, arguments).Map(_ => true));
     }
 
-    static Result Report(Result result) => result.TapError(err => MessageBox.Show(err, "TaskSpaces"));
-    static Result<T> Report<T>(Result<T> result) => result.TapError(err => MessageBox.Show(err, "TaskSpaces"));
+    // Instance methods (not static — fix round 1): the failure MessageBox is itself a child
+    // dialog and must go through RunChildDialog too, else every reported error closed the panel.
+    Result Report(Result result) => result.TapError(err => RunChildDialog(() => MessageBox.Show(err, "TaskSpaces")));
+    Result<T> Report<T>(Result<T> result) => result.TapError(err => RunChildDialog(() => MessageBox.Show(err, "TaskSpaces")));
 }
