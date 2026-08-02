@@ -178,6 +178,14 @@ public partial class App : Application
         // OS shutdown/logoff: every window is about to close, and each close would fire
         // Disappeared and ERASE the inventory that rehydration needs. Unhook the monitor
         // FIRST so state.json keeps its last-known contents, then put titles back.
+        //
+        // Fix round 1 (reviewer, minor): deliberately does NOT call hotkeys?.Dispose()
+        // here, unlike ExitApp() below. SessionEnding means Windows is tearing the whole
+        // process down for logoff/shutdown regardless of what we do — RegisterHotKey's
+        // registrations are per-process and vanish with it, so unregistering first would
+        // be pure ceremony with nothing left to observe the result. ExitApp is the
+        // orderly, still-running-normally exit path (tray menu -> Exit), where disposing
+        // first is the tidy, deterministic thing to do. The asymmetry is intentional.
         SessionEnding += (_, _) =>
         {
             monitor.Dispose();

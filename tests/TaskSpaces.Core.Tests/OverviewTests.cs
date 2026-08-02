@@ -170,6 +170,21 @@ public class OverviewTests
         Assert.Equal(work1.DesktopId!.Value, desktops.Switches.Last()); // wraps back to first
     }
 
+    // Fix round 1 (reviewer, Important): the forward direction was covered above, but
+    // CycleWorkspace(-1) from a valid, already-in-the-ring index (as opposed to the
+    // non-workspace-desktop case below, which enters at an edge) exercises a different
+    // branch of the (index + direction + Count) % Count wrap arithmetic — pins it.
+    [Fact]
+    public void Cycle_wraps_backward_from_first_workspace_to_last()
+    {
+        var (manager, work1) = Started();
+        var work2 = manager.AddWorkspace("Personal").Value;
+        desktops.CurrentDesktopId = work1.DesktopId!.Value; // sitting on the FIRST workspace
+
+        Assert.True(manager.CycleWorkspace(-1).IsSuccess);
+        Assert.Equal(work2.DesktopId!.Value, desktops.Switches.Last()); // wraps to the last
+    }
+
     [Fact]
     public void Cycle_from_non_workspace_desktop_goes_to_first()
     {
@@ -203,5 +218,16 @@ public class OverviewTests
         Assert.Equal(work.DesktopId!.Value, desktops.Switches.Last());
 
         Assert.True(manager.SwitchToIndex(5).IsFailure);
+    }
+
+    // Fix round 1 (reviewer, minor): negative index is out of range same as too-large —
+    // its own test rather than folded into the one above, so it stays independently
+    // identifiable in the results.
+    [Fact]
+    public void SwitchToIndex_negative_fails()
+    {
+        var (manager, _) = Started();
+
+        Assert.True(manager.SwitchToIndex(-1).IsFailure);
     }
 }

@@ -51,24 +51,18 @@ public partial class SwitcherPanel : Window
         proximityTimer.Tick += (_, _) => ProximityTick();
     }
 
-    public void Summon(double screenX, double screenY)
-    {
-        Rebuild();
-        // Task 7 fix round 1 (reviewer, Important): SizeToContent means ActualWidth/Height
-        // are unknown until the window has actually been shown once — so Show() first, THEN
-        // compute where it should sit. (Known trade-off: the window briefly appears at its
-        // previous position/default before this repositions it — a first-Show flicker that
-        // cannot be verified without a human at the keyboard; noted in the report rather than
-        // fabricating a "looks fine" claim.)
-        Show();
-        Activate();
-        PositionNear(screenX, screenY);
-    }
+    // Fix round 1 (reviewer, Important): Summon(screenX, screenY) — the click-opened,
+    // Activate()-ing summon path — used to live here. Task 9 deleted its only caller
+    // (App.xaml.cs's TrayLeftMouseUp handler; left-click now opens the tray menu
+    // instead) and nothing else ever called it, making it dead code. Removed outright
+    // rather than kept "just in case" — Peek() below is now the only way this panel
+    // gets shown, and PositionNear (shared by both) is unchanged.
 
-    // Task 9: hover summon. Deliberately mirrors Summon() but WITHOUT Activate() — spec:
-    // "opens the switcher panel WITHOUT stealing focus". A no-op if already visible (a
-    // click-opened or already-peeking panel isn't repositioned out from under the cursor
-    // mid-interaction).
+    // Task 9: hover summon — the only way the panel is shown now that Summon() is gone.
+    // Deliberately does NOT Activate() — spec: "opens the switcher panel WITHOUT
+    // stealing focus". A no-op if already visible (an already-open — peeking or
+    // graduated-to-focused, see OnPreviewMouseDown — panel isn't repositioned out from
+    // under the cursor mid-interaction).
     public void Peek(double screenX, double screenY)
     {
         if (IsVisible) return;
@@ -95,7 +89,7 @@ public partial class SwitcherPanel : Window
 
         proximityTimer.Stop();
         peekMode = false;
-        ShowActivated = true; // restore normal click-open behavior for the next summon
+        ShowActivated = true; // reset so the next Peek() starts from the same unfocused state
         Hide();
     }
 
