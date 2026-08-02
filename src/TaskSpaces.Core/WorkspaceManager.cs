@@ -139,7 +139,17 @@ public sealed class WorkspaceManager(
         // is showing — Rider loading a solution rewrites its title. Only UNPLACED windows
         // are eligible: once placed (rule, launch, or hand), a title change must never
         // teleport a window between workspaces (browsers rewrite titles every tab switch).
-        if (!memberships.ContainsKey(window.Handle))
+        //
+        // Fix round 1 (reviewer, Important): ApplyRename's titles.Set produces a genuine
+        // NAMECHANGE, which re-enters here as an "echo" carrying OUR OWN short name as
+        // window.Title. A still-unplaced window must not have workspace rules run
+        // against that synthetic title — only titles the APP itself wrote are legitimate
+        // placement signals. `ledger.AppliedName(...) != window.Title` guards this: if we
+        // renamed this window and the observed title IS our applied name, skip late
+        // placement entirely (no rename recorded, or observed title differs from what we
+        // set, both fall through to the normal rule match).
+        if (!memberships.ContainsKey(window.Handle)
+            && ledger.AppliedName(window.Handle).Map(applied => applied != window.Title).GetValueOrDefault(true))
             RulesEngine.MatchWorkspace(window, State.WorkspaceRules)
                 .Tap(workspaceId => { Place(window, workspaceId); }); // fire-and-forget, as above
     }
