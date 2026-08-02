@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
+using TaskSpaces.Core.Geometry;
 using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Windows.Activation;
@@ -141,14 +142,37 @@ public partial class FloatingBar : Window
     }
 
     // Restores Left/Top from persisted state (or computes the bottom-right work-area
-    // default when never configured) and clamps into the nearest monitor's work area --
-    // the same DPI-conversion pattern as SwitcherPanel.PositionNear, reused here because
-    // the physical-pixel/DIP mismatch it guards against applies identically to this
-    // window. Called after Show() (like SwitcherPanel.Peek does for PositionNear) so
-    // ActualWidth/ActualHeight already reflect the SizeToContent layout pass.
+    // default when never configured) and clamps into the nearest monitor's work area.
+    // Called after Show() (like SwitcherPanel.Peek does for PositionNear) so
+    // ActualWidth/ActualHeight already reflect the SizeToContent layout pass -- but see
+    // the GetDpiForMonitor comment below for why that ordering alone is NOT enough.
+    //
+    // Task 11 fix round 2 (reviewer): root-caused Petre's invisible bar. State.json had
+    // FloatingBar = { Left: 2408, Top: 1396, Visible: true } -- his monitor is 2560x1440
+    // at 125% scaling, whose real DIP-space work area is only ~2048x1152, so that
+    // position sat ~360 DIPs past the right/bottom edge. This was the FIRST-EVER show
+    // (brand new feature, no prior drag), so it came from the DEFAULT branch below:
+    // workRight/workBottom computed with a DPI scale of 1.0 instead of 1.25 --
+    // VisualTreeHelper.GetDpi(this), queried immediately after Show() returns, can
+    // still report the window's stale/provisional per-monitor-DPI-context (scale 1.0)
+    // before its WM_DPICHANGED round-trip has actually landed on the dispatcher, even
+    // though Show() already ran. 2560/1.0 - ActualWidth and 1440/1.0 - ActualHeight
+    // land almost exactly on the reported (2408, 1396) -- the raw physical rcWork was
+    // written straight into DIP-valued Left/Top, unconverted. Reordering Show() before
+    // positioning (already true here) does NOT fix this, because the race is in
+    // GetDpi's window-scoped negotiation state, not in call order.
+    //
+    // Fix: query the MONITOR's own DPI directly (GetDpiForMonitor, Shcore.dll) using
+    // the SAME HMONITOR already returned by MonitorFromPoint below, instead of asking
+    // the window. A monitor-scoped query has no per-window negotiation state to race.
     void PositionFromState()
     {
         var stored = manager.State.FloatingBar;
+        // Task 11 fix round 2 (reviewer, restore-path safety): the saved position is
+        // run through MonitorFromPoint + the clamp on EVERY show, stored or not, so a
+        // stale/bad save (like Petre's) self-heals here without editing state.json --
+        // MONITOR_DEFAULTTONEAREST always returns a real, valid monitor no matter how
+        // far outside every monitor's bounds the probe point falls.
         var probe = new NativeMethods.POINT { X = (int)(stored?.Left ?? 0), Y = (int)(stored?.Top ?? 0) };
         var monitor = NativeMethods.MonitorFromPoint(probe, NativeMethods.MONITOR_DEFAULTTONEAREST);
         var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
@@ -160,20 +184,23 @@ public partial class FloatingBar : Window
             return;
         }
 
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var workLeft = info.rcWork.Left / dpi.DpiScaleX;
-        var workTop = info.rcWork.Top / dpi.DpiScaleY;
-        var workRight = info.rcWork.Right / dpi.DpiScaleX;
-        var workBottom = info.rcWork.Bottom / dpi.DpiScaleY;
+        NativeMethods.GetDpiForMonitor(monitor, NativeMethods.MDT_EFFECTIVE_DPI, out var dpiX, out var dpiY);
+        var scaleX = dpiX / 96.0;
+        var scaleY = dpiY / 96.0;
+        var workLeft = info.rcWork.Left / scaleX;
+        var workTop = info.rcWork.Top / scaleY;
+        var workRight = info.rcWork.Right / scaleX;
+        var workBottom = info.rcWork.Bottom / scaleY;
 
         // No persisted state at all (first run, or an old state.json): default to the
-        // bottom-right corner of the work area minus the bar's own size (brief).
+        // bottom-right corner of the work area minus the bar's own size (brief). This
+        // default path gets the exact same clamp treatment as the restore path below --
+        // one shared call, both branches feed into it.
         var (rawLeft, rawTop) = stored is { } s
             ? (s.Left, s.Top)
             : (workRight - ActualWidth, workBottom - ActualHeight);
 
-        Left = Math.Clamp(rawLeft, workLeft, Math.Max(workLeft, workRight - ActualWidth));
-        Top = Math.Clamp(rawTop, workTop, Math.Max(workTop, workBottom - ActualHeight));
+        (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, workLeft, workTop, workRight, workBottom);
     }
 
     Result Report(Result result) => result.TapError(err => MessageBox.Show(err, "TaskSpaces"));

@@ -58,6 +58,18 @@ public static class NativeMethods
     }
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
+    // Task 11 fix round 2 (reviewer, confirmed root cause of Petre's off-screen
+    // floating bar): GetDpiForMonitor (Shcore.dll) asks Windows for a SPECIFIC
+    // monitor's DPI directly, independent of any Window's own per-monitor-DPI-
+    // awareness negotiation. VisualTreeHelper.GetDpi(window) is scoped to a WINDOW
+    // instead, and can read a stale/provisional DPI (scale 1.0) immediately after that
+    // window's first Show() -- before its WM_DPICHANGED round-trip has landed -- which
+    // is exactly how a monitor's raw physical rcWork ended up written into FloatingBar's
+    // DIP-valued Left/Top unconverted. Querying the MONITOR (the same HMONITOR already
+    // in hand from MonitorFromPoint) instead of the window removes that race entirely.
+    [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(nint hMonitor, int dpiType, out uint dpiX, out uint dpiY);
+    public const int MDT_EFFECTIVE_DPI = 0;
+
     public const int SW_RESTORE = 9; // NEVER SW_HIDE anywhere in this codebase (spec)
 
     // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
