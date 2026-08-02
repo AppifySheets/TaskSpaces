@@ -179,6 +179,30 @@ Petre's requests while using the panel:
   order). Registration failures (another app owns the chord) surface once as a
   warning — never a crash, never silent. Native Win+Ctrl+arrows remain untouched.
 
+## Drag-and-drop window management *(added 2026-08-02, second testing round)*
+
+Petre: "that plus sign makes no sense, i'd much rather have the ability to drag
+windows around" and "this windows [tab] should have spaces, windows underneath each
+space, and let me drag and drop them, similar to the [hover panel]".
+
+- The switcher panel's **＋ Add app button is removed** (manual roster-add stays
+  reachable via the workspace header's right-click menu — one entry, out of the way).
+- **Window rows are draggable** — drop onto a workspace group moves the window there
+  (AssignWindow semantics, incl. unpin-first); drop onto the 📌 Pinned group pins it.
+  Unbound-desktop groups are not drop targets in v1.
+- The Manage window's **Windows tab is restructured to the same grouped view** as the
+  panel: workspace/desktop headers with their windows underneath, same drag-and-drop,
+  same right-click menu (Pin/Unpin · Send to · Rename… · Restore title). One shared
+  control (`WindowGroupsView`) backs both surfaces so they cannot drift. The tab's
+  bottom action bar (Send-to combo, rename textbox/buttons) is removed — actions live
+  on the rows; Refresh and "Start with Windows" remain.
+
+Also from this testing round (bug, under investigation as part of the same task):
+windows on unbound/default desktops reportedly missing from the panel's
+non-workspace section — root-cause first (suspects: unnamed default desktops return
+"" from the API making the group header unrecognizable; silent per-window omission
+when the desktop query fails), then fix with evidence.
+
 ## Non-goals
 
 - Always-on-top persistent bar (revisit only if the on-demand panel proves
