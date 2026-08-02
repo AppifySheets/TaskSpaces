@@ -19,6 +19,7 @@ public partial class App : Application
     WorkspaceManager? manager;
     WindowMonitor? monitor;
     bool compatibilityMode;
+    SwitcherPanel? switcherPanel;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -113,6 +114,25 @@ public partial class App : Application
         // Rebuild the menu whenever workspaces change so names/counts stay honest.
         manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
             trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp)));
+
+        // Left-click on the tray icon = the switcher panel (Petre: "clicking the tray
+        // icon should open the window"); right-click keeps the menu. Created lazily so
+        // compatibility mode without desktops still has a functional (if empty) panel.
+        trayIcon.TrayLeftMouseUp += (_, _) =>
+        {
+            switcherPanel ??= new SwitcherPanel(manager);
+            TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
+            switcherPanel.Summon(cursor.X, cursor.Y);
+        };
+
+        // Rename safety-net sweep (spec §5): event-driven re-apply is the fast path;
+        // every 5s this re-asserts drifted titles and adopts persisted renames.
+        if (!compatibilityMode)
+        {
+            var sweep = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            sweep.Tick += (_, _) => manager.ReapplyRenames();
+            sweep.Start();
+        }
 
         // Task 9: post-reboot rehydration. state.json's inventory survives a reboot even
         // though the desktops/windows it describes don't — offer to relaunch each

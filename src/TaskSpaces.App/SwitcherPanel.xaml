@@ -1,0 +1,13 @@
+<Window x:Class="TaskSpaces.App.SwitcherPanel"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True"
+        SizeToContent="WidthAndHeight" MaxWidth="420" Deactivated="OnDeactivated"
+        KeyDown="OnKeyDown">
+    <Border BorderThickness="1" Padding="8" CornerRadius="6"
+            BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}">
+        <ScrollViewer MaxHeight="640" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="GroupsHost" MinWidth="300"/>
+        </ScrollViewer>
+    </Border>
+</Window>

@@ -21,6 +21,28 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
 14. Put Notepad in Work via a rule; exit the app (inventory persists); close Notepad;
     relaunch the app -> prompt lists "Work (1 app(s))"; Restore relaunches Notepad and
     it lands on Work's desktop.
+15. Left-click tray icon -> switcher panel opens near the tray, dark-themed, one group
+    per workspace with window counts; current workspace bold.
+16. Panel: click a window row on another workspace -> lands on that workspace with the
+    window focused; panel closes.
+17. Panel: right-click a window -> Pin to all workspaces -> window follows across every
+    workspace and appears in the 📌 Pinned group. Unpin reverses it. Send to a
+    workspace from a pinned window unpins it.
+18. Panel: windows on a non-workspace desktop appear under that desktop's own name
+    (e.g. "Desktop 1"), including the current desktop.
+19. Panel: renamed windows show "ShortName · was: Original Title"; icons show on every
+    row (panel AND Manage window's Windows tab).
+20. Roster: close an app that was in a workspace -> it stays listed, dimmed
+    "(not running)"; click it -> it relaunches with its original command line and lands
+    back in its workspace. ▶ on the header starts everything missing and switches.
+21. Add app… -> pick an exe + optional args -> appears dimmed in the group;
+    Remove from workspace deletes it.
+22. Rename persistence: manually rename a window, exit TaskSpaces, relaunch ->
+    within ~5s the window is renamed again (same title as before rename required).
+23. Rename sweep: rename a browser window, navigate tabs rapidly -> the short name
+    reasserts within ~5s even if an occasional title flip slips through.
+24. Restart TaskSpaces with workspace apps still open -> restore prompt does NOT
+    offer duplicates (only genuinely-missing apps listed).
 
 ## Results (2026-08-01)
 
@@ -78,6 +100,16 @@ above.
 | 12 | Invalid regex rejected with message box | pending human execution |
 | 13 | Start-with-Windows registry toggle | pending human execution |
 | 14 | Rehydration prompt lists app counts; Restore relaunches into the right workspace | pending human execution (non-crash proxy verified: no prompt window shown when inventory is empty) |
+| 15 | Left-click tray -> switcher panel opens, grouped, current workspace bold | pending human execution |
+| 16 | Panel: click a window row -> jumps workspace + focuses, panel closes | pending human execution |
+| 17 | Panel: pin/unpin via context menu; pinned group; send-to unpins | pending human execution |
+| 18 | Panel: non-workspace desktop windows grouped under desktop name | pending human execution |
+| 19 | Panel: renamed-window "was: ..." display; icons on every row | pending human execution |
+| 20 | Roster: closed app stays dimmed "(not running)"; click relaunches; ▶ starts all | pending human execution |
+| 21 | Add app… roster entry; Remove from workspace | pending human execution |
+| 22 | Rename persistence across restart (sweep adopts persisted rename) | pending human execution |
+| 23 | Rename sweep reasserts short name after title drift (~5s) | pending human execution |
+| 24 | Restart with apps still open -> no duplicate restore offers | pending human execution |
 
 Re-run this script by hand before each release and replace the table above with actual
 pass/fail results plus notes on the Windows build tested.
