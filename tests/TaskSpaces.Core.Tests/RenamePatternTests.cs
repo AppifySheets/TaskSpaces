@@ -4,7 +4,7 @@ using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Tests;
 
-// Petre: "'beeper | maia sagharadze' I'd change this to say 'beeper *' which would match all
+// Petre: "'beeper | work chat' I'd change this to say 'beeper *' which would match all
 // beepers and still rename to beeper".
 public class RenamePatternTests
 {
@@ -28,7 +28,7 @@ public class RenamePatternTests
     {
         var pattern = RenamePattern.ToRegex("beeper *");
 
-        Assert.Matches(pattern, "beeper | maia sagharadze");
+        Assert.Matches(pattern, "beeper | work chat");
         Assert.Matches(pattern, "beeper | HRIS");
         Assert.DoesNotMatch(pattern, "Slack | general");
     }
@@ -47,9 +47,9 @@ public class RenamePatternTests
     [Fact]
     public void Regex_metacharacters_in_a_title_are_escaped_not_interpreted()
     {
-        var pattern = RenamePattern.ToRegex("Remote Desktop Manager [_Richard - fhd]*");
+        var pattern = RenamePattern.ToRegex("Remote Desktop Manager [server-01 - fhd]*");
 
-        Assert.Matches(pattern, "Remote Desktop Manager [_Richard - fhd] extra");
+        Assert.Matches(pattern, "Remote Desktop Manager [server-01 - fhd] extra");
         // Would match if the brackets were treated as a character class.
         Assert.DoesNotMatch(pattern, "Remote Desktop Manager R");
     }
@@ -78,7 +78,7 @@ public class WildcardRenameTests
     public void A_wildcard_rename_creates_a_rule_and_leaves_no_exact_persisted_rename()
     {
         var manager = Started();
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | maia sagharadze")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
 
         Assert.True(manager.RenameWindow(new WindowHandle(0x1), "beeper *").IsSuccess);
 
@@ -93,7 +93,7 @@ public class WildcardRenameTests
     public void A_wildcard_rename_renames_the_window_that_prompted_it()
     {
         var manager = Started();
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | maia sagharadze")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
 
         Assert.True(manager.RenameWindow(new WindowHandle(0x1), "beeper *").IsSuccess);
 
@@ -106,7 +106,7 @@ public class WildcardRenameTests
     public void A_later_window_with_a_different_title_is_renamed_too()
     {
         var manager = Started();
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | maia sagharadze")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
         Assert.True(manager.RenameWindow(new WindowHandle(0x1), "beeper *").IsSuccess);
 
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x2, "beeper | someone else entirely")));
@@ -119,7 +119,7 @@ public class WildcardRenameTests
     public void A_plain_rename_still_uses_the_exact_title_mechanism()
     {
         var manager = Started();
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | maia sagharadze")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
 
         Assert.True(manager.RenameWindow(new WindowHandle(0x1), "Beeper").IsSuccess);
 
@@ -131,7 +131,7 @@ public class WildcardRenameTests
     public void A_bare_star_is_rejected_rather_than_naming_every_window_nothing()
     {
         var manager = Started();
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | maia")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
 
         var result = manager.RenameWindow(new WindowHandle(0x1), "*");
 

@@ -59,7 +59,7 @@ public static class TitleToken
             ["datagrip64"] = Shape.LeadingContainer,
             ["studio64"] = Shape.LeadingContainer,
 
-            // Petre's own: "Remote Desktop Manager [_Richard - fhd]" — the session is
+            // Petre's own: "Remote Desktop Manager [server-01 - fhd]" — the session is
             // bracketed, and note it contains a " - " of its own, which is precisely why the
             // bracket rule has to run BEFORE any splitting.
             ["remotedesktopmanager"] = Shape.Bracketed,

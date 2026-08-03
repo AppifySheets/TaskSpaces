@@ -15,6 +15,8 @@ public static class NativeMethods
     [DllImport("user32.dll")] public static extern bool UnhookWinEvent(nint hook);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, nint lparam);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(nint hwnd);
+    // Used to reject shell-owned windows, which Windows itself never lists on the taskbar.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(nint hwnd, [Out] char[] buffer, int size);
     // Seeds the active-window highlight at startup; EVENT_SYSTEM_FOREGROUND alone only
     // reports CHANGES, so without this nothing is highlighted until the user switches window.
     [DllImport("user32.dll")] public static extern nint GetForegroundWindow();

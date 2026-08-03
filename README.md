@@ -83,16 +83,15 @@ single ~74 MB exe in `artifacts/publish`.
   it lives, drag icons between rows to move windows between workspaces, click a row
   label to switch to it, right-click an icon to rename it, hover to see what an icon
   actually is. The focused window's icon is highlighted. Turn it on and off in Manage.
-- **Manage.** Workspaces (add, rename, remove, reorder), rules, and a **Windows** tab
-  with the same grouped view: click a row to jump, drag rows between workspaces,
-  right-click for pin, send-to, rename and restore-title.
+- **Manage.** Workspaces (add, rename, remove, reorder) and naming patterns. Opened by
+  left-clicking the tray icon.
 - **Hotkeys.** `Ctrl+Alt+←/→` cycles workspaces, `Ctrl+Alt+1…9` jumps to one
   directly.
 - **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of
-  `Remote Desktop Manager [_Richard - fhd]`. Names persist across restarts and are
+  `Remote Desktop Manager [server-01 - fhd]`. Names persist across restarts and are
   re-applied when an app rewrites its own title.
 - **Rosters.** A workspace remembers which apps belong to it even when they are
-  closed, so ▶ Start relaunches them all.
+  closed, and offers to relaunch them after a reboot.
 
 ## Why this matters
 
@@ -179,7 +178,7 @@ And the features that exist because manual organisation decays the moment it nee
 upkeep: **placement memory** (where you last put a window is where it goes next time,
 keyed to what the app *is* rather than to a window handle), **rosters and rehydration**
 (a workspace remembers its apps even when they are closed), and **renaming** (`RDP` is
-parsed faster than `Remote Desktop Manager [_Richard - fhd]`, and retrieval cues work
+parsed faster than `Remote Desktop Manager [server-01 - fhd]`, and retrieval cues work
 better when they are legible).
 
 ### Who it is for, and who it is not

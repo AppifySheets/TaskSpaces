@@ -71,7 +71,7 @@ public class TitleTokenTests
     // the bracket rule must run BEFORE any splitting.
     [Fact]
     public void Remote_Desktop_Manager_yields_the_bracketed_session_including_its_own_dash() =>
-        Assert.Equal("_Richard - fhd", TitleToken.For("RemoteDesktopManager", "Remote Desktop Manager [_Richard - fhd]").Value);
+        Assert.Equal("server-01 - fhd", TitleToken.For("RemoteDesktopManager", "Remote Desktop Manager [server-01 - fhd]").Value);
 
     [Fact]
     public void Remote_Desktop_Manager_with_no_session_has_no_container() =>
@@ -82,7 +82,7 @@ public class TitleTokenTests
     // Petre: "not a good idea to apply to browsers, because browser tabs are a bad way to
     // identify which tab to assign it to."
     [Theory]
-    [InlineData("chrome", "Inbox (12) - petre@gepha.com - Gmail - Google Chrome")]
+    [InlineData("chrome", "Inbox (12) - someone@example.com - Gmail - Google Chrome")]
     [InlineData("msedge", "TaskSpaces design - Notion - Microsoft Edge")]
     [InlineData("firefox", "Some Page - Mozilla Firefox")]
     public void Browsers_are_never_tokenised(string process, string title) =>
@@ -91,7 +91,7 @@ public class TitleTokenTests
     // Petre: "it doesn't have to apply to single instance apps, like beeper, whatsapp, etc."
     // One window means one identity means one workspace, which placement memory handles.
     [Theory]
-    [InlineData("Beeper", "Beeper | Maiko Sagharadze")]
+    [InlineData("Beeper", "Beeper | work chat")]
     [InlineData("WhatsApp", "WhatsApp")]
     [InlineData("ms-teams", "Meeting in Application Support | Microsoft Teams")]
     public void Single_window_apps_are_never_tokenised(string process, string title) =>

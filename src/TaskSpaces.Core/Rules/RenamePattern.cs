@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace TaskSpaces.Core.Rules;
 
 // Petre: "when renaming, i want to have the ability to specify a wildcard instead of the full
-// window name, so 'beeper | maia sagharadze' I'd change this to say 'beeper *' which would
+// window name, so 'beeper | work chat' I'd change this to say 'beeper *' which would
 // match all beepers and still rename to beeper".
 //
 // WHY it matters: a manual rename is stored as a PersistedRename keyed on the EXACT title the
@@ -24,7 +24,7 @@ public static class RenamePattern
     public static bool IsWildcard(string input) => input.Contains('*');
 
     // Glob to anchored regex. Everything except '*' is escaped, so a title full of regex
-    // metacharacters -- "Remote Desktop Manager [_Richard - fhd]" is nothing but brackets and
+    // metacharacters -- "Remote Desktop Manager [server-01 - fhd]" is nothing but brackets and
     // dashes -- cannot turn into an accidental pattern or a crash.
     public static string ToRegex(string input) =>
         "^" + string.Join(".*", input.Split('*').Select(Regex.Escape)) + "$";
