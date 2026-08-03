@@ -20,8 +20,10 @@ download bundles the .NET runtime, so there is no framework to install first.
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
 2. Put it somewhere permanent — `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
-3. Double-click it. TaskSpaces has no window of its own; it lives in the
-   notification area (the tray). Look for the tiled icon there.
+3. Double-click it. Nothing appears to happen — TaskSpaces opens no window at
+   startup, it goes straight to the notification area (the tray). Look for the
+   tiled icon there. (It does have windows: **Manage** and the switcher panel open
+   when you ask for them.)
 4. Right- or left-click the tray icon to open the menu, then **Manage…** to create
    your first workspace.
 5. In Manage, tick **Start TaskSpaces with Windows** if you want it always running.
@@ -80,6 +82,10 @@ single ~74 MB exe in `artifacts/publish`.
   closed, so ▶ Start relaunches them all.
 
 ## Why
+
+**→ [The longer answer, with the research behind it](docs/why-taskspaces.md)** — what the
+evidence on context switching and task resumption actually says, which widely-quoted
+statistic to distrust, and where the argument for this app is weak.
 
 Windows virtual desktops can already separate contexts, but the experience around
 them is clunky: no visible names, slow Task View, apps open on whatever desktop is
