@@ -121,35 +121,24 @@ public class FloatingBarRebuildTests
         Assert.Contains("📌", Labels(bar.Rows));
     });
 
-    // Task 12 (spec: "Unplaced leaves the bar"). The bar's contract is "click an icon, go
-    // to that window", which an Unplaced row cannot honour: Guid.Empty is neither a switch
-    // target nor a drop target, so a permanent row on a permanently-visible surface would
-    // be pure noise.
+    // A window whose desktop the COM API cannot resolve MUST appear somewhere, or it becomes
+    // unfindable: the Task 10 defect Petre reported as "i don't think i see windows in the
+    // non-workspace section".
+    //
+    // This assertion is the REVERSE of what it was a few commits ago. Task 12 hid the
+    // "Unplaced" row from the bar because the row is not actionable and the switcher panel
+    // would still show it ("bar = actionable, panel = complete"). The panel and Manage's
+    // Windows tab have both since been deleted, so the bar is the only surface left and hiding
+    // the row would resurrect the original bug. The test flipped along with the reasoning
+    // rather than being deleted, so the invariant stays enforced either way.
     [Fact]
-    public void Unplaced_windows_get_no_row_on_the_bar() => StaThread.Run(() =>
+    public void Unplaced_windows_still_appear_somewhere_which_is_now_the_bar() => StaThread.Run(() =>
     {
         var harness = Harness.Build(withUnresolvableWindow: true);
 
         using var bar = harness.ShowBar();
 
-        Assert.DoesNotContain(Labels(bar.Rows), label => label.StartsWith("Unplaced"));
-    });
-
-    // ...and the other half of that ruling: "bar = actionable, panel = complete". This
-    // test exists to fail loudly if anyone ever "fixes" the row above by deleting the
-    // catch-all itself -- it is what stops a window the COM API loses track of from
-    // becoming invisible everywhere (the Task 10 defect).
-    [Fact]
-    public void Unplaced_windows_still_get_a_group_in_the_switcher_panel() => StaThread.Run(() =>
-    {
-        var harness = Harness.Build(withUnresolvableWindow: true);
-
-        var view = new WindowGroupsView();
-        view.Bind(harness.Manager);
-
-        // The panel suffixes group headers with a count ("Unplaced (1)"), hence the prefix
-        // match rather than equality.
-        Assert.Contains(Labels((Panel)view.FindName("GroupsHost")!), label => label.StartsWith("Unplaced"));
+        Assert.Contains(Labels(bar.Rows), label => label.StartsWith("Unplaced"));
     });
 
     // Task 12: the menu is exactly Rename… + Restore title. Petre explicitly rejected

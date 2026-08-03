@@ -56,19 +56,16 @@
                     </StackPanel>
                 </DockPanel>
             </TabItem>
-            <TabItem Header="Windows">
-                <!-- Task 10: same grouped view the switcher panel uses (headers with
-                     switch/▶ Start/Add app…, running-row jump + right-click menu, drag-
-                     and-drop) instead of a bespoke flat list + bottom action bar — the
-                     row context menu now covers Send-to/Rename/Restore that used to live
-                     in buttons here. Refresh and Start-with-Windows are the only controls
-                     that remain outside the shared view. -->
-                <DockPanel Margin="8">
-                    <Button DockPanel.Dock="Top" Content="Refresh" HorizontalAlignment="Left"
-                            Padding="12,2" Margin="0,0,0,8" Click="OnRefreshWindows"/>
-                    <local:WindowGroupsView x:Name="WindowGroups"/>
-                </DockPanel>
-            </TabItem>
+            <!-- The "Windows" tab is deliberately gone. Petre: "no need for that window tab",
+                 "what's the point of it? we already have floating window manager doing just
+                 that". The floating bar covers jumping to a window and dragging windows
+                 between workspaces, which is what the tab was mostly used for.
+                 What went with it, so the loss is on the record rather than discovered later:
+                 ▶ Start (relaunch a workspace's apps), Add app… / Remove from workspace, and
+                 the dimmed not-running roster rows. The roster DATA is untouched and still
+                 drives placement memory and the post-reboot restore prompt; only its editing
+                 UI is gone. If ▶ Start is wanted back it belongs on the Workspaces tab, next
+                 to the workspace it starts. -->
         </TabControl>
     </DockPanel>
 </Window>

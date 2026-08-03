@@ -245,16 +245,20 @@ public partial class FloatingBar : Window
             // Guid.Empty, windows whose desktop the COM API can't resolve) is not a
             // real desktop -- no switch target exists, so its label stays plain text.
             overview.OtherDesktops
-                // Task 12 (spec: "Unplaced leaves the bar"). The catch-all group -- windows
-                // whose desktop the COM API refuses to resolve, e.g. "Windows Input
-                // Experience" -- is dropped HERE ONLY. This bar's contract is "click an
-                // icon, go to that window", and Guid.Empty honours neither half of it: not a
-                // switch target, not a drop target. A permanently-visible surface cannot
-                // afford a permanent row nobody can act on. The catch-all itself stays in
-                // OverviewBuilder and on the switcher panel, which is the auditing surface --
-                // it is what stops a window the API loses from becoming invisible everywhere
-                // (Task 10 defect). Bar = actionable, panel = complete.
-                .Where(g => g.DesktopId != Guid.Empty)
+                // "Unplaced" (Guid.Empty: windows whose desktop the COM API refuses to
+                // resolve) is rendered here again, REVERSING the Task 12 decision to hide it.
+                //
+                // That decision was justified as "bar = actionable, panel = complete": the row
+                // is not a switch or drop target, so it was noise on a permanently-visible
+                // surface, and the switcher panel would still show it. Both of those surfaces
+                // have since been deleted at Petre's request, so the premise is gone. Leaving
+                // the filter in place would mean a window the API loses track of appears in NO
+                // surface at all -- exactly the Task 10 defect Petre originally reported ("i
+                // don't think i see windows in the non-workspace section"), reintroduced by a
+                // ruling whose reasoning no longer holds.
+                //
+                // A row that can only be looked at beats a window that cannot be found. Its
+                // label stays non-clickable and it is still not a drop target (see below).
                 .ToList()
                 .ForEach(g => groupRows.Add(GroupRow(g.Name, g.Name, g.IsCurrent,
                     // Guid.Empty == the "Unplaced" catch-all: not a real desktop, so

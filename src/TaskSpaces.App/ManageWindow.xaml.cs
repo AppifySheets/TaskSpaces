@@ -48,7 +48,6 @@ public partial class ManageWindow : Window
         // window doesn't hide-on-deactivate like the panel does, so the default
         // pass-through dialog runner and a no-op afterAction are exactly right; live
         // refresh on manager.StateChanged is the view's own responsibility now.
-        WindowGroups.Bind(manager);
         Reload();
     }
 
@@ -88,10 +87,6 @@ public partial class ManageWindow : Window
     // rather than popping an error box.
     void OnMoveWorkspaceUp(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, -1));
     void OnMoveWorkspaceDown(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, +1));
-    // Explicit manual refresh, kept per spec alongside the view's own live StateChanged
-    // refresh — useful right after an error (e.g. a transient WindowsByWorkspace()
-    // failure) without waiting for the next state mutation.
-    void OnRefreshWindows(object s, RoutedEventArgs e) => WindowGroups.Refresh();
     void OnStartupToggled(object s, RoutedEventArgs e)
     {
         if (StartWithWindows.IsChecked == true) StartupRegistration.Enable(); else StartupRegistration.Disable();
