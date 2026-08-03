@@ -207,8 +207,14 @@ when the desktop query fails), then fix with evidence.
 "always-on-top persistent bar" non-goal below; Petre asked for it explicitly)*
 
 A small always-on-top, borderless, translucent window showing **only app icons**,
-grouped one compact row per workspace (📌 pinned row on top when non-empty; unbound
-desktops excluded — it is a workspace bar). Clicking an icon **jumps to that window**
+grouped one compact row per group: 📌 pinned row on top when non-empty, then EVERY
+workspace (an empty one shows just its click-to-switch label), then unbound desktops
+that have windows, labeled with the desktop's real name and click-to-switch too.
+*(Amended in the fourth testing round — the original "unbound desktops excluded — it
+is a workspace bar" rule collapsed the bar to a single row on Petre's machine, where
+most windows live on the unbound "Main" desktop; he asked to "show tabs from all
+workspaces". The "Unplaced" catch-all group keeps a plain, non-clickable label — it
+is not a real desktop.)* Clicking an icon **jumps to that window**
 (switch workspace if needed + focus — existing JumpTo). Hover tooltip:
 "Workspace · window title". Dragging the bar's background moves it; its position and
 visibility persist in state.json (`FloatingBar` init-property on AppState — older

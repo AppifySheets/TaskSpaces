@@ -230,6 +230,14 @@ public sealed class WorkspaceManager(
             ? desktops.Switch(id)
             : Result.Failure("Workspace has no desktop (compatibility mode)."));
 
+    // Floating-bar fix round 6 (Petre: the bar must "show tabs from all workspaces" —
+    // including windows on UNBOUND desktops like his "Main"): a desktop group's label
+    // needs a click-to-go-there affordance just like a workspace label, but Switch()
+    // above takes a WORKSPACE id. This is the raw-desktop counterpart for
+    // Overview.DesktopGroup rows — same delegate, no persistence (like Switch, "current
+    // workspace" is always derived live from CurrentDesktop, never stored).
+    public Result SwitchToDesktop(Guid desktopId) => desktops.Switch(desktopId);
+
     // Ctrl+Alt+arrows (spec §Tray interaction): cycle through OUR workspaces in their
     // defined order — unlike native Win+Ctrl+arrows, which walks every OS desktop
     // including unbound ones. Wrapping; a non-workspace current desktop enters the

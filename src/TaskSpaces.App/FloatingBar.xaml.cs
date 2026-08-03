@@ -14,9 +14,11 @@ using TaskSpaces.Windows.Monitoring;
 namespace TaskSpaces.App;
 
 // Task 11 (spec §Floating icon bar): a small always-on-top, borderless, translucent
-// bar showing ONLY app icons, one compact row per workspace (📌 Pinned first when
-// non-empty; unbound/non-workspace desktops excluded -- it is a workspace bar, not the
-// full switcher overview). Click an icon -> JumpTo (switch workspace if needed, then
+// bar showing ONLY app icons, one compact row per group (📌 Pinned first when
+// non-empty; then EVERY workspace; then unbound desktops that have windows -- fix
+// round 6, Petre: "show tabs from all workspaces", and his windows largely live on the
+// unbound "Main" desktop, so the original workspaces-only design showed him a single
+// row). Click an icon -> JumpTo (switch workspace if needed, then
 // focus). No text, no roster (not-running) entries, no drag-and-drop of WINDOWS onto
 // it -- only the bar's own background is draggable, to reposition itself. A glanceable
 // jump surface, not a manager (spec, explicitly).
@@ -131,16 +133,29 @@ public partial class FloatingBar : Window
                 // say the full word "Pinned" -- a glyph reads fine as a compact row
                 // label, but "Pinned · window title" is a nicer tooltip than "📌 ·
                 // window title".
-                groupRows.Add(GroupRow(visualLabel: "📌", tooltipPrefix: "Pinned", isCurrent: false, workspaceId: null, overview.Pinned));
+                groupRows.Add(GroupRow(visualLabel: "📌", tooltipPrefix: "Pinned", isCurrent: false, switchTo: null, overview.Pinned));
 
-            // Spec: "unbound desktops excluded -- it is a workspace bar" (OtherDesktops
-            // is never consulted here). Workspaces with nothing running are skipped
-            // outright rather than shown as an empty placeholder row -- an icon bar
-            // with nothing to click in a group is noise, not useful chrome.
+            // Fix round 6 (Petre, screenshot showing ONE "Sparrow" row: "it does follow
+            // across every workspace, but not showw all workspace tabs"). The original
+            // design ("unbound desktops excluded -- it is a workspace bar", empty
+            // workspaces skipped) collapsed to a single row on his machine because most
+            // of his windows live on the unbound "Main" desktop. Superseded, spec
+            // amended: EVERY workspace gets a row -- an empty one is just its label,
+            // which since round 5 is a click-to-switch button, so it's a legitimate
+            // switch target rather than dead chrome.
             overview.Workspaces
-                .Where(g => g.Running.Count > 0)
                 .ToList()
-                .ForEach(g => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent, g.Workspace.Id, g.Running)));
+                .ForEach(g => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent, () => manager.Switch(g.Workspace.Id), g.Running)));
+
+            // ...and unbound desktops with windows (OverviewBuilder already drops empty
+            // ones) get rows too, labeled with the desktop's actual name; label click
+            // switches to that raw desktop. The "Unplaced" catch-all (DesktopId ==
+            // Guid.Empty, windows whose desktop the COM API can't resolve) is not a
+            // real desktop -- no switch target exists, so its label stays plain text.
+            overview.OtherDesktops
+                .ToList()
+                .ForEach(g => groupRows.Add(GroupRow(g.Name, g.Name, g.IsCurrent,
+                    g.DesktopId == Guid.Empty ? null : () => manager.SwitchToDesktop(g.DesktopId), g.Windows)));
 
             groupRows
                 .SelectMany((row, i) => i == 0 ? new[] { row } : new[] { Separator(), row })
@@ -163,10 +178,10 @@ public partial class FloatingBar : Window
         Opacity = 0.2,
     };
 
-    UIElement GroupRow(string visualLabel, string tooltipPrefix, bool isCurrent, Guid? workspaceId, IEnumerable<WindowRow> rows)
+    UIElement GroupRow(string visualLabel, string tooltipPrefix, bool isCurrent, Func<Result>? switchTo, IEnumerable<WindowRow> rows)
     {
         var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        container.Children.Add(RowLabel(visualLabel, isCurrent, workspaceId));
+        container.Children.Add(RowLabel(visualLabel, isCurrent, switchTo));
 
         var icons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         rows.ToList().ForEach(r => icons.Children.Add(IconButton(tooltipPrefix, r)));
@@ -181,7 +196,7 @@ public partial class FloatingBar : Window
     // workspace gets SemiBold (Overview.WorkspaceGroup.IsCurrent) so it stands out from
     // the rest without shouting -- everything here stays at 55% opacity regardless, this
     // is a glance-only surface, not a reading surface.
-    UIElement RowLabel(string text, bool isCurrent, Guid? workspaceId)
+    UIElement RowLabel(string text, bool isCurrent, Func<Result>? switchTo)
     {
         var textBlock = new TextBlock
         {
@@ -193,20 +208,21 @@ public partial class FloatingBar : Window
             Margin = new Thickness(2, 0, 6, 0),
         };
 
-        if (workspaceId is not { } id)
-            // The Pinned row's "📌" label is deliberately NOT a click target: pinned
-            // windows are, by definition, already on every workspace, so there is no
-            // single destination a click here could switch to -- a Button would be
-            // dead chrome pretending to do something.
+        if (switchTo is null)
+            // No destination -> no click target. Two callers pass null deliberately:
+            // the 📌 Pinned row (pinned windows are, by definition, already on every
+            // workspace, so there's no single place a click could go) and the
+            // "Unplaced" catch-all (Guid.Empty is not a real desktop). A Button here
+            // would be dead chrome pretending to do something.
             return textBlock;
 
         // Brief: "if it's trivial to make it switch to the workspace via
-        // manager.Switch, DO make it switch -- that's an obvious affordance." It is
-        // trivial (manager.Switch already takes exactly this Guid), and a label that
-        // reads as "this is workspace X" inviting a click to go there is the expected
-        // behavior, not a surprise -- so unlike the icon buttons (transparent, no
-        // visible chrome) this one keeps the same borderless/transparent styling for
-        // visual consistency but wires Click straight to Switch.
+        // manager.Switch, DO make it switch -- that's an obvious affordance." A label
+        // that reads as "this is workspace/desktop X" invites a click to go there --
+        // so unlike the icon buttons (transparent, no visible chrome) this one keeps
+        // the same borderless/transparent styling for visual consistency but wires
+        // Click straight to the caller's switch action (manager.Switch for workspace
+        // rows, manager.SwitchToDesktop for unbound-desktop rows -- fix round 6).
         var button = new Button
         {
             Content = textBlock,
@@ -216,7 +232,7 @@ public partial class FloatingBar : Window
             VerticalAlignment = VerticalAlignment.Center,
             ToolTip = $"Switch to {text}",
         };
-        button.Click += (_, _) => Report(manager.Switch(id));
+        button.Click += (_, _) => Report(switchTo());
         return button;
     }
 

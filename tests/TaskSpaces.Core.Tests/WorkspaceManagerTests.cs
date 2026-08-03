@@ -132,6 +132,17 @@ public class WorkspaceManagerTests
     }
 
     [Fact]
+    public void SwitchToDesktop_delegates_raw_desktop_id()
+    {
+        // Floating-bar unbound-desktop rows switch by DESKTOP id, not workspace id —
+        // no workspace lookup involved, any guid goes straight to the service.
+        var (manager, _) = StartedWithWorkWorkspace();
+        var unboundDesktop = Guid.NewGuid();
+        Assert.True(manager.SwitchToDesktop(unboundDesktop).IsSuccess);
+        Assert.Equal(new[] { unboundDesktop }, desktops.Switches);
+    }
+
+    [Fact]
     public void Disappeared_window_keeps_its_roster_entry()
     {
         // Superseded v1 behavior: inventory used to be "currently running members" and
