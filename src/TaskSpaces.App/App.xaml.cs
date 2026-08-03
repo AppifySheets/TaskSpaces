@@ -1,10 +1,13 @@
 using System.Drawing;
 using System.IO;
 using System.Windows;
+using System.Windows.Interop;
 using CSharpFunctionalExtensions;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
 using TaskSpaces.Core;
+using TaskSpaces.Core.Abstractions;
+using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Monitoring;
@@ -23,6 +26,8 @@ public partial class App : Application
     SwitcherPanel? switcherPanel;
     HotkeyService? hotkeys;
     FloatingBar? floatingBar; // Task 11: created lazily on first show, same as switcherPanel
+    IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
+    bool floatingBarPinned, switcherPanelPinned; // Task 11 fix round 4: pin each window's real hwnd to all desktops exactly once (see PinOwnWindow)
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -48,7 +53,7 @@ public partial class App : Application
 
         var stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces");
         var statePath = Path.Combine(stateDir, "state.json");
-        var desktops = new VirtualDesktopService();
+        desktops = new VirtualDesktopService();
         monitor = new WindowMonitor();
         manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir));
 
@@ -133,6 +138,7 @@ public partial class App : Application
         {
             floatingBar = new FloatingBar(manager);
             floatingBar.ShowBar();
+            PinFloatingBar();
         }
 
         // Task 9: hover-to-peek. TrayMouseMove fires continuously while the cursor sits
@@ -175,6 +181,7 @@ public partial class App : Application
             if (dx * dx + dy * dy > HoverDriftRadiusPx * HoverDriftRadiusPx) return;
             switcherPanel ??= new SwitcherPanel(manager);
             switcherPanel.Peek(cursor.X, cursor.Y);
+            PinSwitcherPanel();
         };
         trayIcon.TrayMouseMove += (_, _) =>
         {
@@ -285,7 +292,55 @@ public partial class App : Application
         {
             floatingBar ??= new FloatingBar(manager!);
             floatingBar.ShowBar();
+            PinFloatingBar(); // no-op after the first successful/attempted pin (see PinFloatingBar)
         }
+    }
+
+    // Task 11 fix round 4 (Petre: the bar stayed behind on workspace switch): dogfooding
+    // our own Pin support. FloatingBar/SwitcherPanel are ordinary top-level windows --
+    // without pinning, each belongs to whichever desktop it happened to be showing on
+    // and vanishes the instant Petre switches away, defeating the entire point of an
+    // "always visible" bar / "peek from anywhere" panel. Pinning makes them omnipresent.
+    //
+    // WindowInteropHelper.Handle is non-zero only once the window has a REAL hwnd (i.e.
+    // after Show()/SourceInitialized) -- both call sites below call this immediately
+    // after ShowBar()/Peek(), which already called Show(). Guarded by the pinned flag
+    // so repeated toggles/peeks attempt the native pin call (and, on failure, show a
+    // MessageBox) at most ONCE per window's lifetime: Windows' pin state lives on the
+    // hwnd itself and survives Hide()/Show() cycles (only Close()+recreate would lose
+    // it), and neither window is ever closed/recreated during the app's lifetime.
+    //
+    // Sanity check (grep-confirmed): WindowMonitor's hooks are registered with
+    // WINEVENT_SKIPOWNPROCESS (WindowMonitor.cs, Hook()), so our own windows never fire
+    // WinEvents into WorkspaceManager's knownWindows/memberships in the first place --
+    // pinning them cannot pollute the roster or the switcher/bar's own overview
+    // (WorkspaceManager.WindowsByWorkspace/IsPinned only ever look at knownWindows).
+    void PinFloatingBar()
+    {
+        if (floatingBarPinned) return;
+        var hwnd = new WindowInteropHelper(floatingBar!).Handle;
+        if (hwnd == nint.Zero) return; // not shown yet -- shouldn't happen, called right after ShowBar()
+        floatingBarPinned = true;
+        desktops!.Pin(new WindowHandle(hwnd))
+            .TapError(err => MessageBox.Show(
+                $"TaskSpaces could not pin the floating bar to every workspace:\n{err}\n\nIt will only stay visible on the desktop it was shown on.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
+    }
+
+    // Same rationale as PinFloatingBar above, for the hover-peeked switcher panel: a
+    // Hide()n window keeps whatever desktop affinity it had, so after a workspace
+    // switch a later Peek() could resurrect it on the PREVIOUS desktop -- invisible on
+    // the one Petre is actually looking at, even though IsVisible would say true.
+    void PinSwitcherPanel()
+    {
+        if (switcherPanelPinned) return;
+        var hwnd = new WindowInteropHelper(switcherPanel!).Handle;
+        if (hwnd == nint.Zero) return;
+        switcherPanelPinned = true;
+        desktops!.Pin(new WindowHandle(hwnd))
+            .TapError(err => MessageBox.Show(
+                $"TaskSpaces could not pin the switcher panel to every workspace:\n{err}\n\nHover-peek may show it on the wrong desktop after switching.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
     }
 
     void ExitApp()
