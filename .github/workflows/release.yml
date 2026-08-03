@@ -1,0 +1,120 @@
+# Builds TaskSpaces and attaches a ready-to-run Windows executable to a GitHub Release.
+#
+# WHEN THIS RUNS
+#   - When a Release is PUBLISHED (including publishing a draft). GitHub runs `release`
+#     workflows from the DEFAULT BRANCH only, so this file must be merged to main before
+#     publishing a release, or nothing will happen at all.
+#   - Manually, via the Actions tab (workflow_dispatch), to prove the pipeline works without
+#     having to publish anything. A manual run builds and uploads nothing.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# The default GITHUB_TOKEN is read-only for contents; uploading a release asset needs write.
+# Nothing else is granted — least privilege, since this workflow builds untrusted-by-default
+# code and then writes to the repo's releases.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # MUST be Windows: this is a WPF app targeting net10.0-windows, and the test suite
+    # constructs real WPF windows. It cannot build or test on Linux.
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install the .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          # Matches the TargetFramework (net10.0-windows10.0.19041.0). The wildcard takes the
+          # newest 10.0 patch the runner offers rather than pinning a patch that may vanish.
+          dotnet-version: '10.0.x'
+
+      - name: Work out the version from the release tag
+        id: version
+        shell: pwsh
+        run: |
+          # A published release gives us its tag (e.g. "v1.0.0"); a manual run has no tag, so
+          # fall back to the version already committed in Directory.Build.props. Stripping the
+          # leading "v" is what turns a git tag into a .NET version.
+          $tag = "${{ github.event.release.tag_name }}"
+          $version = if ($tag) { $tag.TrimStart('v') } else { '1.0.0' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "Building version $version"
+
+      - name: Restore dependencies
+        run: dotnet restore TaskSpaces.sln
+
+      - name: Build
+        # -warnaserror: the branch builds clean today, and a release is exactly the wrong
+        # moment to let a new warning slide by unnoticed.
+        run: dotnet build TaskSpaces.sln -c Release --no-restore -warnaserror -p:VersionPrefix=${{ steps.version.outputs.version }}
+
+      - name: Test
+        # Category=Integration is EXCLUDED deliberately: those tests create, switch and delete
+        # REAL Windows virtual desktops. On a CI runner that is at best meaningless and at
+        # worst hangs the agent. Everything else — the whole domain, rules engine, roster,
+        # placement memory, title tokens and the WPF surfaces — does run here.
+        run: dotnet test TaskSpaces.sln -c Release --no-build --filter "Category!=Integration" --verbosity normal
+
+      - name: Publish a self-contained executable
+        # Choices here, and why:
+        #   --self-contained        the .NET runtime is bundled, so whoever downloads this
+        #                           does NOT need to install anything first. That matters more
+        #                           than file size for an app being handed to colleagues.
+        #   PublishSingleFile       one file to download, copy and run.
+        #   EnableCompressionInSingleFile  cuts the result from ~175 MB to ~74 MB. Costs a
+        #                           little startup time while it decompresses.
+        #   IncludeNativeLibrariesForSelfExtract  WPF drags native libraries along; without
+        #                           this they would sit beside the exe instead of inside it,
+        #                           which defeats the point of a single file.
+        #   DebugType=none          no PDB next to a shipped binary.
+        #   NOT PublishTrimmed      WPF is not trim-safe; trimming it produces an app that
+        #                           builds and then fails at runtime on missing reflection
+        #                           targets. Do not add it.
+        run: >
+          dotnet publish src/TaskSpaces.App/TaskSpaces.App.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=none
+          -p:VersionPrefix=${{ steps.version.outputs.version }}
+          -o artifacts/publish
+
+      - name: Name the executable after its version
+        id: artifact
+        shell: pwsh
+        run: |
+          # A download called "TaskSpaces.App.exe" tells nobody which build they have; one
+          # called "TaskSpaces-1.0.0-win-x64.exe" survives being sitting in a Downloads folder.
+          $name = "TaskSpaces-${{ steps.version.outputs.version }}-win-x64.exe"
+          Move-Item artifacts/publish/TaskSpaces.App.exe "artifacts/publish/$name"
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "{0} — {1:N1} MB" -f $name, ((Get-Item "artifacts/publish/$name").Length / 1MB)
+
+      - name: Keep the build even when there is no release to attach it to
+        # So a workflow_dispatch run still leaves something downloadable to inspect.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: artifacts/publish/${{ steps.artifact.outputs.name }}
+          if-no-files-found: error
+
+      - name: Attach the executable to the release
+        # Skipped on manual runs, which have no release to attach to.
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # --clobber so re-running a failed job replaces the asset instead of erroring on a
+        # name that already exists.
+        run: gh release upload ${{ github.event.release.tag_name }} "artifacts/publish/${{ steps.artifact.outputs.name }}" --clobber

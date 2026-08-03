@@ -1,0 +1,43 @@
+# Builds and tests every push to main and every pull request.
+#
+# WHY this exists separately from release.yml: a release workflow only tells you something was
+# broken at the moment you tried to ship, which is far too late. This one fails on the PR that
+# introduced the problem. It matters more now that the app is being shared with other people —
+# nobody else can see the local test run on Petre's machine.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    # MUST be Windows: WPF app targeting net10.0-windows, and the tests construct real windows.
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install the .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore TaskSpaces.sln
+
+      - name: Build
+        # -warnaserror keeps the zero-warning build honest; a warning that lands on main is a
+        # warning nobody will ever go back and fix.
+        run: dotnet build TaskSpaces.sln -c Release --no-restore -warnaserror
+
+      - name: Test
+        # Category=Integration excluded: those tests create, switch and delete REAL virtual
+        # desktops, which on a CI runner is meaningless at best and hangs the agent at worst.
+        # Same filter Petre runs locally.
+        run: dotnet test TaskSpaces.sln -c Release --no-build --filter "Category!=Integration" --verbosity normal
