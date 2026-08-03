@@ -107,7 +107,41 @@ public partial class WindowGroupsView : UserControl
     // above wouldn't fire), so the panel never flashes stale content as it appears.
     public void Refresh() => Rebuild();
 
+    // Same re-entrancy defect FloatingBar.Rebuild documents at length, in the same shape:
+    // clear at the top, add at the bottom, with a message-pumping COM query in between,
+    // reached through a Dispatcher.Invoke subscription that runs INLINE when already on the
+    // dispatcher thread (line 101 above). A window event delivered mid-query re-entered
+    // here, so the nested rebuild's groups survived and the outer rebuild's were appended
+    // after them. Petre caught it on the floating bar first because that surface is on
+    // screen permanently; this one had the identical bug waiting for the same coincidence.
+    bool rebuilding;
+    bool rebuildRequested;
+
     void Rebuild()
+    {
+        if (rebuilding)
+        {
+            rebuildRequested = true;
+            return;
+        }
+
+        rebuilding = true;
+        try
+        {
+            RebuildCore();
+        }
+        finally
+        {
+            rebuilding = false;
+        }
+
+        // Queued, not looped — see FloatingBar.Rebuild for why the pump needs a turn here.
+        if (!rebuildRequested) return;
+        rebuildRequested = false;
+        Dispatcher.BeginInvoke(new Action(() => { if (IsVisible) Rebuild(); }));
+    }
+
+    void RebuildCore()
     {
         GroupsHost.Children.Clear();
         manager.WindowsByWorkspace()
@@ -218,7 +252,9 @@ public partial class WindowGroupsView : UserControl
         // Renamed window: short name prominent, original title dimmed beside it (spec).
         row.OriginalTitle.Tap(original => content.Children.Add(new TextBlock { Text = $"  ·  was: {original}", Opacity = 0.55, TextTrimming = TextTrimming.CharacterEllipsis }));
 
-        var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(16, 2, 4, 2), ToolTip = row.Window.Title };
+        // Active-window highlight, same fact the floating bar uses (Overview.WindowRow.IsActive)
+        // so the two surfaces agree about which window has focus.
+        var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = row.IsActive ? ActiveBackground : Brushes.Transparent, Padding = new Thickness(16, 2, 4, 2), ToolTip = row.Window.Title };
         button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator)).Tap(() => afterAction?.Invoke());
         button.ContextMenu = RunningMenu(row, pinned);
         // Shared with FloatingBar's icons — see WindowDragSource.cs for the press/
@@ -279,6 +315,21 @@ public partial class WindowGroupsView : UserControl
         menu.Items.Add(remove);
         button.ContextMenu = menu;
         return button;
+    }
+
+    // Subtler than the bar's equivalent: these rows carry titles and icons on a full-width
+    // surface, so a background tint alone reads clearly without an outline.
+    //
+    // FROZEN for the same reason FloatingBar freezes its brushes: an unfrozen Freezable takes
+    // the thread affinity of whichever thread created it, and a `static` one is created once
+    // per process, so assigning it from any other thread throws during Arrange.
+    static readonly Brush ActiveBackground = Frozen();
+
+    static Brush Frozen()
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+        brush.Freeze();
+        return brush;
     }
 
     void OnAddApp(Guid workspaceId)

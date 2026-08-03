@@ -65,6 +65,14 @@ public partial class ManageWindow : Window
     void OnAddWorkspace(object s, RoutedEventArgs e) => Report(manager.AddWorkspace(NewWorkspaceName.Text).Map(_ => true)).Tap(Reload);
     void OnRenameWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RenameWorkspace(w.Id, NewWorkspaceName.Text));
     void OnRemoveWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RemoveWorkspace(w.Id));
+
+    // Petre: "i need to be able to move workspaces up or down in the manage window".
+    // WithSelectedWorkspace already reloads and re-selects by Id, so the selection follows
+    // the workspace as it moves and ↑ can simply be clicked repeatedly. MoveWorkspace
+    // returns success for an out-of-range move, so hitting ↑ on the top row does nothing
+    // rather than popping an error box.
+    void OnMoveWorkspaceUp(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, -1));
+    void OnMoveWorkspaceDown(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, +1));
     // Explicit manual refresh, kept per spec alongside the view's own live StateChanged
     // refresh — useful right after an error (e.g. a transient WindowsByWorkspace()
     // failure) without waiting for the next state mutation.

@@ -22,6 +22,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TaskSpaces.Windows\TaskSpaces.Windows.csproj" />
+    <!-- TaskSpaces.App is a WinExe, but referencing it is what lets the WPF surfaces
+         (FloatingBar, WindowGroupsView) be tested at all: this project is already
+         net10.0-windows with UseWPF and already owns StaThread.cs, so it is the natural
+         home rather than a fourth project holding one test file. Referencing an exe
+         brings in its generated Main, which is harmless — the test host supplies its own
+         entry point. -->
+    <ProjectReference Include="..\..\src\TaskSpaces.App\TaskSpaces.App.csproj" />
   </ItemGroup>
 
 </Project>

@@ -143,7 +143,58 @@ public partial class FloatingBar : Window
         manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)); // only draggable while shown
     }
 
+    // Petre's screenshot: EVERY row rendered twice (GEPHA / Sparrow / Main / Unplaced,
+    // then all four again). RebuildCore below clears Rows.Children at its top and adds the
+    // new rows at its bottom, and four separate facts conspire to make that gap re-entrant:
+    //
+    //   1. WindowMonitor hooks with WINEVENT_OUTOFCONTEXT, so its callbacks arrive on THIS
+    //      thread while messages are being pumped.
+    //   2. WorkspaceManager.stateChanged is a plain Rx Subject: OnNext runs subscribers
+    //      synchronously, inline, on the caller's thread.
+    //   3. The subscription above uses Dispatcher.Invoke, which does NOT queue when the
+    //      caller is already on the dispatcher thread -- it runs the delegate immediately.
+    //   4. manager.WindowsByWorkspace() makes virtual-desktop COM calls, and COM calls on
+    //      an STA thread PUMP THE MESSAGE QUEUE.
+    //
+    // So a window appearing or vanishing during the query re-entered Rebuild: the nested
+    // call cleared an already-empty panel, added its rows and returned, after which the
+    // outer call appended its own rows underneath. Doubled until the next clean pulse
+    // repaired it -- which is why it looked transient and healed itself.
+    //
+    // Pinned by FloatingBarRebuildTests in TaskSpaces.Windows.Tests.
+    bool rebuilding;
+    bool rebuildRequested;
+
     void Rebuild()
+    {
+        // A pulse that arrives mid-rebuild is remembered, not executed: letting it run now
+        // is precisely the doubling bug.
+        if (rebuilding)
+        {
+            rebuildRequested = true;
+            return;
+        }
+
+        rebuilding = true;
+        try
+        {
+            RebuildCore();
+        }
+        finally
+        {
+            rebuilding = false;
+        }
+
+        // The suppressed pulse still carried real news (a window opened, closed or moved),
+        // so serve it -- but via BeginInvoke rather than a synchronous loop. Queuing hands
+        // the message pump a turn between passes, so a title-rewriting browser cannot spin
+        // the UI thread in back-to-back COM-heavy rebuilds.
+        if (!rebuildRequested) return;
+        rebuildRequested = false;
+        Dispatcher.BeginInvoke(new Action(() => { if (IsVisible) Rebuild(); }));
+    }
+
+    void RebuildCore()
     {
         Rows.Children.Clear();
         ClearInfo();
@@ -156,12 +207,18 @@ public partial class FloatingBar : Window
             // trailing after the last.
             var groupRows = new List<UIElement>();
 
-            if (overview.Pinned.Count > 0)
-                // Visual label is just "📌" (brief) but the icon tooltips below still
-                // say the full word "Pinned" -- a glyph reads fine as a compact row
-                // label, but "Pinned · window title" is a nicer tooltip than "📌 ·
-                // window title".
-                groupRows.Add(GroupRow(visualLabel: "📌", groupLabel: "Pinned", isCurrent: false, switchTo: null,
+            // Task 12: rendered UNCONDITIONALLY, empty or not. Dropping a window here is
+            // the only way to pin one from the bar, so the old `Pinned.Count > 0` guard
+            // was self-defeating: with nothing pinned there was no row, with no row there
+            // was no drop target, and so the first window could never be pinned. Exactly
+            // the trap fix round 6 removed for empty workspaces, whose labels are likewise
+            // kept as legitimate targets rather than hidden as dead chrome.
+            //
+            // Visual label is just "📌" (brief) but the icon tooltips below still
+            // say the full word "Pinned" -- a glyph reads fine as a compact row
+            // label, but "Pinned · window title" is a nicer tooltip than "📌 ·
+            // window title".
+            groupRows.Add(GroupRow(visualLabel: "📌", groupLabel: "Pinned", isCurrent: false, switchTo: null,
                     groupKey: DraggedWindow.PinnedGroupKey,
                     onDrop: h => Report(manager.PinWindow(h)),
                     overview.Pinned));
@@ -188,6 +245,16 @@ public partial class FloatingBar : Window
             // Guid.Empty, windows whose desktop the COM API can't resolve) is not a
             // real desktop -- no switch target exists, so its label stays plain text.
             overview.OtherDesktops
+                // Task 12 (spec: "Unplaced leaves the bar"). The catch-all group -- windows
+                // whose desktop the COM API refuses to resolve, e.g. "Windows Input
+                // Experience" -- is dropped HERE ONLY. This bar's contract is "click an
+                // icon, go to that window", and Guid.Empty honours neither half of it: not a
+                // switch target, not a drop target. A permanently-visible surface cannot
+                // afford a permanent row nobody can act on. The catch-all itself stays in
+                // OverviewBuilder and on the switcher panel, which is the auditing surface --
+                // it is what stops a window the API loses from becoming invisible everywhere
+                // (Task 10 defect). Bar = actionable, panel = complete.
+                .Where(g => g.DesktopId != Guid.Empty)
                 .ToList()
                 .ForEach(g => groupRows.Add(GroupRow(g.Name, g.Name, g.IsCurrent,
                     // Guid.Empty == the "Unplaced" catch-all: not a real desktop, so
@@ -271,7 +338,31 @@ public partial class FloatingBar : Window
 
     // ~20% white: enough to read as "this row is armed" against the bar's #99202020
     // background without washing the icons out mid-drag.
-    static readonly Brush DropHighlight = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+    static readonly Brush DropHighlight = Frozen(0x33, 0xFF, 0xFF, 0xFF);
+
+    // Active-window highlight. Kept dimmer than DropHighlight above and paired with a
+    // brighter outline: the drop highlight is a transient answer to "where will this land",
+    // while this one is always on screen somewhere, so it has to read as a marker rather
+    // than compete with the icons themselves.
+    static readonly Brush ActiveBackground = Frozen(0x22, 0xFF, 0xFF, 0xFF);
+    static readonly Brush ActiveBorder = Frozen(0x99, 0xFF, 0xFF, 0xFF);
+
+    // Every shared brush here is FROZEN. A Freezable that is still mutable takes on the
+    // thread affinity of whoever created it, and these are `static` — created once, on
+    // whichever thread happens to touch this class first — so an unfrozen brush assigned to
+    // a control on any other thread throws "Cannot use a DependencyObject that belongs to a
+    // different thread than its parent Freezable" during Arrange. That surfaced as
+    // order-dependent test failures (each bar test passing alone, failing in a suite, since
+    // StaThread gives every test its own STA thread), but the same hazard applies in the app
+    // to any future surface built off the UI thread. Freezing also lets WPF skip
+    // change-tracking on a value that never changes. Same reasoning as IconCache's frozen
+    // bitmaps.
+    static Brush Frozen(byte a, byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        brush.Freeze();
+        return brush;
+    }
 
     // --- hover info line ------------------------------------------------------------
 
@@ -300,7 +391,7 @@ public partial class FloatingBar : Window
         Info.Inlines.Add(new Run("hover an icon · drag icons between rows · drag labels to move") { Foreground = DimForeground });
     }
 
-    static readonly Brush DimForeground = new SolidColorBrush(Color.FromArgb(0x8C, 0xFF, 0xFF, 0xFF));
+    static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
 
     // Task 11 fix round 5 (Petre: "separated nicely, so i can tell which workspace i'm
     // going to"): tiny, dim label to the LEFT of each row's icons, vertically centered
@@ -354,8 +445,14 @@ public partial class FloatingBar : Window
         {
             Padding = new Thickness(2),
             Margin = new Thickness(2),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
+            // Petre: "active window should be highlighted in the floating window". On an
+            // icon-only surface with three identical VS Code glyphs, "which one am I in" is
+            // otherwise unanswerable. BorderThickness stays 1 for EVERY icon with a
+            // transparent brush when inactive, so gaining the highlight cannot nudge the
+            // row's layout (and thus the whole SizeToContent bar's position) by 2px.
+            Background = row.IsActive ? ActiveBackground : Brushes.Transparent,
+            BorderBrush = row.IsActive ? ActiveBorder : Brushes.Transparent,
+            BorderThickness = new Thickness(1),
             ToolTip = $"{groupLabel} · {row.Window.Title}",
             Tag = IconTag, // marks this as an icon: press-drag moves the WINDOW, not the bar
         };
@@ -395,7 +492,46 @@ public partial class FloatingBar : Window
         // onDragStarting clears the info line: the icon under the cursor never raises
         // MouseLeave once the modal drag loop owns the mouse, so nothing else would.
         WindowDragSource.Attach(button, row.Window.Handle, groupKey, row.Window.Title, onDragStarting: ClearInfo);
+        button.ContextMenu = IconMenu(row);
         return button;
+    }
+
+    // Task 12 (Petre: "right clicking on the icon should give me option to customize that
+    // one - tab rename"). Exactly two entries, and the omissions are the point: Petre was
+    // offered "Send to ▸ workspace" and "Pin / Unpin" here and rejected both -- "i can drag
+    // and drop, no need for this" and "another drag to the pinned section". The rule that
+    // settles it, and that future surfaces should follow:
+    //
+    //     drag expresses movement and pinning; right-click expresses naming.
+    //
+    // Naming is the ONE operation a drag cannot express, which is exactly why it earns a
+    // menu. Same "a second, narrower mechanism would be pure redundancy" reasoning that
+    // deleted the duplicate bar-drag handler in fix round 3. (Unpinning stays reachable by
+    // dragging an icon OUT of the 📌 row onto any workspace or desktop row -- AssignWindow
+    // and MoveToDesktop both unpin first.)
+    //
+    // Wording and semantics deliberately mirror WindowGroupsView.RunningMenu, including
+    // greying "Restore title" out rather than hiding it: the bar is an icon-only surface
+    // with nothing else to advertise the feature, and a menu whose shape changes per icon
+    // is harder to learn than one whose unavailable entry is visibly unavailable.
+    //
+    // The bar's own background ContextMenu ("Hide floating bar", in XAML) is unaffected:
+    // ContextMenuService opens the menu of the INNERMOST element that has one, so an icon
+    // gets this menu and bare bar still gets Hide.
+    ContextMenu IconMenu(WindowRow row)
+    {
+        var menu = new ContextMenu();
+
+        var rename = new MenuItem { Header = "Rename…" };
+        rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title, owner: this)
+            .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
+        menu.Items.Add(rename);
+
+        var restore = new MenuItem { Header = "Restore title", IsEnabled = row.OriginalTitle.HasValue };
+        restore.Click += (_, _) => Report(manager.RestoreTitle(row.Window.Handle));
+        menu.Items.Add(restore);
+
+        return menu;
     }
 
     // Restores Left/Top from persisted state (or computes the bottom-right work-area
@@ -460,5 +596,8 @@ public partial class FloatingBar : Window
         (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, workLeft, workTop, workRight, workBottom);
     }
 
-    Result Report(Result result) => result.TapError(err => MessageBox.Show(err, "TaskSpaces"));
+    // Owned by the bar for the same reason PromptDialog.Ask now takes an owner: this window
+    // is Topmost, so an unowned message box can open behind it and strand the user with an
+    // invisible modal.
+    Result Report(Result result) => result.TapError(err => MessageBox.Show(this, err, "TaskSpaces"));
 }

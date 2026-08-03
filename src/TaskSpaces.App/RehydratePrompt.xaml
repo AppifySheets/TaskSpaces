@@ -2,7 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="TaskSpaces — Restore workspaces?" Width="420" SizeToContent="Height"
-        WindowStartupLocation="CenterScreen" Topmost="True">
+        WindowStartupLocation="CenterScreen" Topmost="True"
+        Icon="pack://application:,,,/TaskSpaces.App;component/Assets/taskspaces.ico">
     <DockPanel Margin="12">
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
                    Text="These workspaces had apps in them before the last shutdown. Relaunch them into their workspaces?"/>

@@ -29,6 +29,15 @@ public partial class App : Application
     IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
     bool floatingBarPinned, switcherPanelPinned; // Task 11 fix round 4: pin each window's real hwnd to all desktops exactly once (see PinOwnWindow)
 
+    // The app's icon, loaded once from the Resource the csproj also stamps into the exe.
+    // Public so every window can bind its own Icon to it (Manage, switcher, prompts) without
+    // each one re-decoding the file or hardcoding its own path.
+    // Assembly-qualified pack URI, matching the window XAML: the short "/Assets/..." form
+    // resolves against Application.ResourceAssembly, which only a WPF exe's generated Main
+    // sets, so it breaks anywhere the app is loaded as a library (notably under test).
+    public static readonly System.Windows.Media.ImageSource AppIcon =
+        new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/TaskSpaces.App;component/Assets/taskspaces.ico"));
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -108,7 +117,12 @@ public partial class App : Application
 
         trayIcon = new TaskbarIcon
         {
-            Icon = SystemIcons.Application, // placeholder until the product name settles
+            // The real app icon, replacing the generic SystemIcons.Application placeholder.
+            // IconSource (an ImageSource) rather than Icon (a System.Drawing.Icon): the ico's
+            // frames are PNG-compressed, which WPF's icon decoder handles cleanly while
+            // GDI+ historically does not. Same file the exe is stamped with, so tray,
+            // taskbar and window icons cannot drift apart.
+            IconSource = AppIcon,
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
             ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp, ToggleFloatingBar, floatingBar is { IsVisible: true }),
             // Task 9 (Petre's testing feedback): left-click now opens the SAME menu as

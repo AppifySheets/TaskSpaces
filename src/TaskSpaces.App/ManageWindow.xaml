@@ -1,8 +1,13 @@
+<!-- Icon uses an ABSOLUTE pack URI naming the assembly, not the short "/Assets/..." form:
+     the short form resolves against Application.ResourceAssembly, which a WPF exe's generated
+     Main sets but a test host does not, so it made this window unconstructable under test
+     with "Cannot locate resource". Same form in PromptDialog, RehydratePrompt and App.AppIcon. -->
 <Window x:Class="TaskSpaces.App.ManageWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:TaskSpaces.App"
-        Title="TaskSpaces — Manage" Width="720" Height="480">
+        Title="TaskSpaces — Manage" Width="720" Height="480"
+        Icon="pack://application:,,,/TaskSpaces.App;component/Assets/taskspaces.ico">
     <DockPanel>
         <TextBlock x:Name="CompatBanner" DockPanel.Dock="Top" Background="#FFF4CE" Padding="8"
                    Text="⚠ Virtual desktops are unavailable on this Windows build. Workspaces are listed but windows will not be moved."
@@ -13,11 +18,19 @@
         <TabControl>
             <TabItem Header="Workspaces">
                 <DockPanel Margin="8">
+                    <!-- Order is not cosmetic, so it is worth saying so where it is edited:
+                         this one list drives the floating bar's rows, the switcher panel's
+                         groups and which workspace Ctrl+Alt+1..9 selects. Same explanatory
+                         style as the Rules tab below. -->
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Order sets the floating bar's rows, the switcher panel's groups and the Ctrl+Alt+1…9 shortcuts. Select a workspace and use ↑ / ↓ to reorder."/>
                     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
                         <TextBox x:Name="NewWorkspaceName" Width="200"/>
                         <Button Content="Add" Margin="8,0,0,0" Padding="12,2" Click="OnAddWorkspace"/>
                         <Button Content="Rename" Margin="8,0,0,0" Padding="12,2" Click="OnRenameWorkspace"/>
                         <Button Content="Remove" Margin="8,0,0,0" Padding="12,2" Click="OnRemoveWorkspace"/>
+                        <Button Content="↑ Up" Margin="16,0,0,0" Padding="12,2" Click="OnMoveWorkspaceUp"/>
+                        <Button Content="↓ Down" Margin="4,0,0,0" Padding="12,2" Click="OnMoveWorkspaceDown"/>
                     </StackPanel>
                     <ListBox x:Name="WorkspaceList" DisplayMemberPath="Name"/>
                 </DockPanel>

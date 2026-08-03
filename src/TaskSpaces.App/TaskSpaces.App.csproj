@@ -13,8 +13,19 @@
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- ApplicationIcon stamps the icon into the exe itself (Explorer, taskbar, alt-tab,
+         the Programs list). The Resource entry is what lets the RUNNING app load the same
+         file for its tray icon and window icons via a pack:// URI, so there is exactly one
+         source of truth for the app's identity. Generated as a 9-resolution ico
+         (16..256) so Windows never has to rescale, which is what makes small sizes look
+         crisp rather than smudged. -->
+    <Resource Include="Assets\taskspaces.ico" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <ApplicationIcon>Assets\taskspaces.ico</ApplicationIcon>
     <!-- Must match TaskSpaces.Windows' TFM exactly (net10.0-windows alone is a different,
          incompatible target from the project-reference resolver's point of view). -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
