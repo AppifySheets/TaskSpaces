@@ -81,18 +81,141 @@ single ~74 MB exe in `artifacts/publish`.
 - **Rosters** — a workspace remembers which apps belong to it even when they are
   closed, so ▶ Start relaunches them all.
 
-## Why
+## Why this matters
 
-**→ [The longer answer, with the research behind it](docs/why-taskspaces.md)** — what the
-evidence on context switching and task resumption actually says, which widely-quoted
-statistic to distrust, and where the argument for this app is weak.
+Switching between projects is expensive, and the expensive part is not the switch —
+it is **rebuilding the context you had before**. Here is what the research actually
+says about that, including the parts that argue against this app.
 
-Windows virtual desktops can already separate contexts, but the experience around
-them is clunky: no visible names, slow Task View, apps open on whatever desktop is
-active, and nothing survives a restart. Existing tools each cover a slice
-(PowerToys Workspaces relaunches layouts, Groupy tabs windows, TaskbarGroups groups
-shortcuts) but nothing does *live context switching with persistence*. TaskSpaces
-fills that gap.
+### The unit people think in is the project, not the window
+
+[González and Mark](https://dl.acm.org/doi/10.1145/985692.985707) followed analysts,
+developers and managers through their working days and found that people organise work
+into **"working spheres"**: thematically connected units, each with its own documents,
+tools and people. Workers spent roughly **three minutes on a single event** before
+switching, and a little over two minutes on any one document or tool.
+
+A taskbar shows you windows. Your head is organised by spheres. That mismatch is the gap.
+[Mark's twenty-year follow-up](https://ics.uci.edu/~gmark/CHI2005.pdf) found the
+fragmentation getting finer — average time on a single screen fell from about **2.5
+minutes in 2004 to roughly 47 seconds**.
+
+### Resuming is the costly half, and it is mostly *searching*
+
+The most directly relevant study is
+[Parnin and Rugaber's](https://link.springer.com/article/10.1007/s11219-010-9104-9)
+analysis of **10,000 recorded programming sessions from 86 developers**, plus a survey of
+414 more. Two numbers stand out:
+
+- only **10%** of sessions resume programming activity within a minute of an interruption;
+- only **7%** involve *no* navigation to other locations before editing resumes.
+
+After a switch, most of the time goes on re-finding things rather than doing the work.
+That is the cost a workspace tool can actually attack.
+
+### Your windows are external memory, not clutter
+
+The same study names the strategy developers invent for themselves: **cue priming** —
+deliberately leaving the last edited window open, or highlighting the relevant lines, so
+that returning to the task triggers recall.
+
+This is the crux of the whole argument. **A window arrangement is externalised mental
+state.** Every open window is a deliberate cue about where you were. So anything that
+scatters the arrangement destroys the cue, and anything that preserves it preserves the
+context for free. TaskSpaces does not help you rebuild context — it stops the context
+being demolished.
+
+### Which is what virtual desktops were invented for, in 1986
+
+[Henderson and Card](https://dl.acm.org/doi/10.1145/24054.24056) built *Rooms* at Xerox
+PARC to attack what they named **"window thrashing"**: the state where the screen is too
+small for the work, so the user "must expend considerable effort to keep desired windows
+visible". Their fix was multiple virtual workspaces, exploiting the fact that window
+access clusters by task.
+
+Forty years on, Windows ships virtual desktops that solve the *space* problem and barely
+touch the *context* problem: no visible names, no memory of what belongs where, and
+nothing survives a reboot. Existing tools each cover a slice — PowerToys Workspaces
+relaunches layouts, Groupy tabs windows, TaskbarGroups groups shortcuts — but none does
+*live context switching with persistence*.
+
+### Attention residue: why unfinished work keeps charging you
+
+[Leroy](https://ideas.repec.org/a/eee/jobhdp/v109y2009i2p168-181.html) found that when
+people switch tasks, part of their attention stays with the previous one, and they
+perform measurably worse on the new task as a result. The effect is strongest when the
+previous task was **unfinished**, time-pressured or emotionally engaging, and it does not
+fade after a moment's adjustment.
+
+Fifteen taskbar buttons from four projects are fifteen reminders of things you have not
+finished. **Stated honestly:** Leroy studied cognitive residue, not taskbars. That
+visible unfinished work sustains residue is a reasonable inference, not a measured
+finding.
+
+### One number you should distrust
+
+You will see everywhere that it takes **"23 minutes and 15 seconds"** to recover from an
+interruption, usually credited to Mark's
+[*The Cost of Interrupted Work*](https://ics.uci.edu/~gmark/chi08-mark.pdf). That paper
+does not contain the figure. It reports closer to the opposite: participants spent *less*
+time on the original task when interrupted (20.31 and 20.60 minutes) than when not
+(22.77 minutes) — they worked faster, at the cost of significantly **higher stress,
+frustration, time pressure and effort**. The 23-minute figure appears to originate in
+interviews and press coverage rather than any published result, and
+[has become self-perpetuating folk wisdom](https://blog.oberien.de/2023/11/05/23-minutes-15-seconds.html).
+
+It is not used to sell this app. The real finding is more interesting anyway:
+interruption does not necessarily make you slower, it makes you more stressed and more
+error-prone.
+
+### How that maps onto what the app does
+
+| The research says | What TaskSpaces does |
+|---|---|
+| Work is organised in *spheres*, not windows | Workspaces are named, first-class things you switch between |
+| Only 10% of resumptions are fast; the rest are re-finding | A switch restores an entire context at once — nothing to re-find |
+| People leave windows open as recall cues | The cue *is* the workspace, preserved and persisted |
+| Window thrashing wastes effort keeping the right windows visible | Other contexts' windows are on another desktop, natively filtered out of the taskbar |
+| Unfinished work stays costly while it is in view | Other projects are genuinely out of sight, not merely minimised |
+| Fragmentation is getting finer | A switch is one click or one hotkey |
+
+And the features that exist because manual organisation decays the moment it needs
+upkeep: **placement memory** (where you last put a window is where it goes next time,
+keyed to what the app *is* rather than to a window handle), **rosters and rehydration**
+(a workspace remembers its apps even when they are closed), and **renaming** (`RDP` is
+parsed faster than `Remote Desktop Manager [_Richard - fhd]` — retrieval cues work better
+when they are legible).
+
+### Who it is for, and who it is not
+
+The benefit scales with **how many unrelated contexts you hold at once**, not with how
+hard you work: several projects with distinct toolchains, switching on someone else's
+schedule, work and personal life on one machine, contexts that live for days.
+
+If you work on one thing at a time and close it when you are done, this solves a problem
+you do not have.
+
+### Where the argument is weak
+
+1. **Cheaper switching is not less switching.** The research suggests *frequency* drives
+   the stress. This lowers the cost per switch and may even encourage more of them.
+2. **No study measures TaskSpaces.** Everything above is adjacent research on
+   interruption, resumption and window management; the step from "resumption is mostly
+   re-finding" to "therefore this helps" is mechanism-level reasoning, not evidence about
+   this product.
+3. **Windows already provides the mechanism.** The claim is not that this invents context
+   isolation, only that it makes it nameable, persistent and automatic.
+
+### Sources
+
+- Victor M. González and Gloria Mark, ["Constant, constant, multi-tasking craziness": Managing multiple working spheres](https://dl.acm.org/doi/10.1145/985692.985707), CHI 2004.
+- Gloria Mark, Victor M. González and Justin Harris, [No Task Left Behind? Examining the Nature of Fragmented Work](https://ics.uci.edu/~gmark/CHI2005.pdf), CHI 2005.
+- Gloria Mark, Daniela Gudith and Ulrich Klocke, [The Cost of Interrupted Work: More Speed and Stress](https://ics.uci.edu/~gmark/chi08-mark.pdf), CHI 2008.
+- Gloria Mark, *Attention Span* (Hanover Square Press, 2023) — the 2.5-minutes-to-47-seconds figure.
+- Chris Parnin and Spencer Rugaber, [Resumption strategies for interrupted programming tasks](https://link.springer.com/article/10.1007/s11219-010-9104-9), Software Quality Journal 19(1), 2011 ([PDF](http://www.chrisparnin.me/pdf/parnin-sqj11.pdf)).
+- D. Austin Henderson and Stuart K. Card, [Rooms: the use of multiple virtual workspaces to reduce space contention in a window-based graphical user interface](https://dl.acm.org/doi/10.1145/24054.24056), ACM Transactions on Graphics 5(3), 1986 ([PDF](http://rivcons.com/wp-content/uploads/1987/Rooms-TOG.pdf)).
+- Sophie Leroy, [Why is it so hard to do my work? The challenge of attention residue when switching between work tasks](https://ideas.repec.org/a/eee/jobhdp/v109y2009i2p168-181.html), Organizational Behavior and Human Decision Processes 109(2), 2009.
+- oberien, [Interruptions cost 23 minutes 15 seconds, right?](https://blog.oberien.de/2023/11/05/23-minutes-15-seconds.html) — traces the figure and finds no published source.
 
 ## How it works
 
