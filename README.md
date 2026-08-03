@@ -34,11 +34,11 @@ download bundles the .NET runtime, so there is no framework to install first.
    choice. **Not** your Downloads folder: see the note below.
 3. Double-click it. Nothing appears to happen, because TaskSpaces opens no window at
    startup; it goes straight to the notification area (the tray). Look for the
-   tiled icon there. (It does have windows: **Manage** and the switcher panel open
-   when you ask for them.)
-4. Right- or left-click the tray icon to open the menu, then **Manage…** to create
-   your first workspace.
-5. In Manage, tick **Start TaskSpaces with Windows** if you want it always running.
+   tiled icon there.
+4. **Left-click the tray icon** to open Manage, the main window, and create your first
+   workspace. (Right-click gives you just Manage and Exit.)
+5. In Manage, tick **Start TaskSpaces with Windows** if you want it always running,
+   and **Show floating bar** for the always-on-top strip.
 
 There is no installer yet, and no admin rights are needed. TaskSpaces writes
 nothing outside your own user profile:
@@ -76,15 +76,16 @@ single ~74 MB exe in `artifacts/publish`.
 
 ## Using it
 
-- **Tray icon.** Hover it to peek at every window across every workspace; click for
-  the menu.
-- **Switcher panel.** Click a row to jump straight to that window, wherever it
-  lives. Drag rows between workspaces. Right-click for pin, send-to, rename and
-  restore-title.
-- **Floating bar.** An always-on-top, icon-only strip with one row per workspace.
-  Click an icon to jump to that window, drag icons between rows to move windows,
-  right-click an icon to rename it, hover to see what it actually is. The focused
-  window's icon is highlighted. Toggle it from the tray menu.
+- **Tray icon.** Left-click opens **Manage**, the main window. Right-click gives you
+  just Manage and Exit.
+- **Floating bar.** An always-on-top, icon-only strip with one row per workspace, and
+  the surface you will actually live in. Click an icon to jump to that window wherever
+  it lives, drag icons between rows to move windows between workspaces, click a row
+  label to switch to it, right-click an icon to rename it, hover to see what an icon
+  actually is. The focused window's icon is highlighted. Turn it on and off in Manage.
+- **Manage.** Workspaces (add, rename, remove, reorder), rules, and a **Windows** tab
+  with the same grouped view: click a row to jump, drag rows between workspaces,
+  right-click for pin, send-to, rename and restore-title.
 - **Hotkeys.** `Ctrl+Alt+←/→` cycles workspaces, `Ctrl+Alt+1…9` jumps to one
   directly.
 - **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of

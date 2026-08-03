@@ -20,12 +20,27 @@ public partial class ManageWindow : Window
     readonly ObservableCollection<WorkspaceRuleRow> workspaceRules = [];
     readonly ObservableCollection<RenameRuleRow> renameRules = [];
 
-    public ManageWindow(WorkspaceManager manager, bool compatibilityMode)
+    // The floating bar lives in the App composition root, so Manage reaches it through a
+    // callback rather than holding the window. The state is a FUNC, not a bool: the bar can
+    // also be hidden from its own right-click menu, which would leave a by-value copy stale.
+    readonly Action toggleFloatingBar;
+    // Guards the checkbox's own event from acting on a programmatic update (setting IsChecked
+    // in the constructor would otherwise fire OnFloatingBarToggled and toggle the bar off).
+    bool suppressFloatingBarEvent;
+
+    public ManageWindow(WorkspaceManager manager, bool compatibilityMode, Action toggleFloatingBar, Func<bool> floatingBarVisible)
     {
         this.manager = manager;
+        this.toggleFloatingBar = toggleFloatingBar;
         InitializeComponent();
         if (compatibilityMode) CompatBanner.Visibility = Visibility.Visible;
         StartWithWindows.IsChecked = StartupRegistration.IsEnabled;
+        suppressFloatingBarEvent = true;
+        ShowFloatingBar.IsChecked = floatingBarVisible();
+        // Same gate the tray item had: every bar icon click calls JumpTo, which needs a real
+        // desktop to switch to. Disabled rather than hidden, so it stays discoverable.
+        ShowFloatingBar.IsEnabled = !compatibilityMode;
+        suppressFloatingBarEvent = false;
         WorkspaceRulesGrid.ItemsSource = workspaceRules;
         RenameRulesGrid.ItemsSource = renameRules;
         // Task 10: the Windows tab is now the shared WindowGroupsView (same control the
@@ -80,6 +95,12 @@ public partial class ManageWindow : Window
     void OnStartupToggled(object s, RoutedEventArgs e)
     {
         if (StartWithWindows.IsChecked == true) StartupRegistration.Enable(); else StartupRegistration.Disable();
+    }
+
+    void OnFloatingBarToggled(object s, RoutedEventArgs e)
+    {
+        if (suppressFloatingBarEvent) return;
+        toggleFloatingBar();
     }
 
     void OnSaveRules(object s, RoutedEventArgs e)

@@ -1,22 +1,30 @@
 using System.Windows.Controls;
-using TaskSpaces.Core;
 
 namespace TaskSpaces.App;
 
-// The tray context menu IS the v1 switcher: one workspace per item, click to switch.
-// (The dedicated switcher surface — pill/flyout/bar — is a separate, post-mockup plan.)
+// The right-click menu, deliberately down to two commands.
+//
+// Petre: "no need for workspace switching on right click", and "right click gives exit and
+// manage". Both removals are because the work moved elsewhere rather than because the
+// features went away:
+//   - switching workspaces is the floating bar's row labels, plus Ctrl+Alt+arrows and
+//     Ctrl+Alt+1..9, so a list of workspaces here was a third way to do the same thing;
+//   - "Show floating bar" moved into Manage, next to "Start with Windows". It could not
+//     simply be deleted: the bar can hide itself from its own right-click menu, and with no
+//     way back a hidden bar would look like data loss. Manage is now one left-click away,
+//     which makes it a better home for a persistent setting than a transient menu.
+//
+// The manager is no longer a parameter at all, which is the real signal that this menu
+// stopped being a switcher.
 public static class TrayMenu
 {
-    // Task 11: toggleFloatingBar/floatingBarVisible added for the "Show floating bar"
-    // checkable item. Checked state is passed in (rather than read from AppState here)
-    // because the App composition root owns the FloatingBar instance's actual IsVisible —
-    // the persisted AppState.FloatingBar can lag one toggle behind at the instant the
-    // menu rebuilds, and the live instance is the source of truth for what the checkbox
-    // should show right now.
-    public static ContextMenu Build(WorkspaceManager manager, bool compatibilityMode, Action openManage, Action exit, Action toggleFloatingBar, bool floatingBarVisible)
+    public static ContextMenu Build(bool compatibilityMode, Action openManage, Action exit)
     {
         var menu = new ContextMenu();
 
+        // Informational, not a command, and disabled: it exists so the user is not left
+        // wondering why nothing moves between desktops on a Windows build whose COM API we
+        // cannot drive.
         if (compatibilityMode)
             menu.Items.Add(new MenuItem
             {
@@ -24,31 +32,14 @@ public static class TrayMenu
                 IsEnabled = false,
             });
 
-        manager.State.Workspaces.ToList().ForEach(w =>
-        {
-            var item = new MenuItem { Header = w.Name, IsEnabled = !compatibilityMode };
-            item.Click += (_, _) => manager.Switch(w.Id);
-            menu.Items.Add(item);
-        });
-
-        menu.Items.Add(new Separator());
-
-        // Task 11 (spec §Floating icon bar): JumpTo (which the bar's icons call) needs
-        // real desktops to switch to, same reason hotkeys/rehydration are gated on
-        // !compatibilityMode elsewhere (App.xaml.cs) — disabled, not hidden, so it's
-        // still discoverable and its state survives compatibility mode ending on a
-        // later restart.
-        var floatingBar = new MenuItem { Header = "Show floating bar", IsCheckable = true, IsChecked = floatingBarVisible, IsEnabled = !compatibilityMode };
-        floatingBar.Click += (_, _) => toggleFloatingBar();
-        menu.Items.Add(floatingBar);
-
-        menu.Items.Add(new Separator());
         var manage = new MenuItem { Header = "Manage…" };
         manage.Click += (_, _) => openManage();
         menu.Items.Add(manage);
+
         var exitItem = new MenuItem { Header = "Exit" };
         exitItem.Click += (_, _) => exit();
         menu.Items.Add(exitItem);
+
         return menu;
     }
 }

@@ -23,11 +23,11 @@ public partial class App : Application
     WorkspaceManager? manager;
     WindowMonitor? monitor;
     bool compatibilityMode;
-    SwitcherPanel? switcherPanel;
+    ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
     FloatingBar? floatingBar; // Task 11: created lazily on first show, same as switcherPanel
     IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
-    bool floatingBarPinned, switcherPanelPinned; // Task 11 fix round 4: pin each window's real hwnd to all desktops exactly once (see PinOwnWindow)
+    bool floatingBarPinned; // Task 11 fix round 4: pin the bar's real hwnd to all desktops exactly once (see PinFloatingBar)
 
     // The app's icon, loaded once from the Resource the csproj also stamps into the exe.
     // Public so every window can bind its own Icon to it (Manage, switcher, prompts) without
@@ -124,13 +124,15 @@ public partial class App : Application
             // taskbar and window icons cannot drift apart.
             IconSource = AppIcon,
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
-            ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp, ToggleFloatingBar, floatingBar is { IsVisible: true }),
-            // Task 9 (Petre's testing feedback): left-click now opens the SAME menu as
-            // right-click — hover replaces click as the way to reach the switcher panel
-            // (see TrayMouseMove below), so left-click is free to become "menu" like
-            // every other tray icon on Windows.
-            MenuActivation = PopupActivationMode.LeftOrRightClick,
+            ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp),
+            // Petre: "left click gives us the main window, right click gives exit and
+            // manage". RightClick only, so a left-click is free to open Manage (wired
+            // below) instead of raising the same menu twice.
+            MenuActivation = PopupActivationMode.RightClick,
         };
+        // Left-click IS the main window now. Manage was previously reachable only through a
+        // menu item, which made the app's one real window the least accessible thing in it.
+        trayIcon.TrayLeftMouseUp += (_, _) => OpenManage();
         // H.NotifyIcon 2.x creates the shell icon lazily: with no window/XAML tree, a
         // code-built TaskbarIcon never registers with the tray until ForceCreate() is
         // called (see the library's own Wpf.Windowless sample — found the hard way when
@@ -138,11 +140,10 @@ public partial class App : Application
         // the process under EcoQoS throttling, and we need WinEvent callbacks handled
         // promptly to re-apply renames and route new windows without visible lag.
         trayIcon.ForceCreate(enablesEfficiencyMode: false);
-        // Rebuild the menu whenever workspaces change so names/counts stay honest. This
-        // also keeps the "Show floating bar" checkmark honest: SaveFloatingBar (called
-        // by every ShowBar()/HideBar()/drag) pulses StateChanged, which lands here.
-        manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
-            trayIcon.ContextMenu = TrayMenu.Build(manager, compatibilityMode, OpenManage, ExitApp, ToggleFloatingBar, floatingBar is { IsVisible: true })));
+        // NOTE: no StateChanged subscription rebuilding this menu any more. It used to be
+        // rebuilt on every pulse so the workspace list and the "Show floating bar" checkmark
+        // stayed accurate; the menu now holds neither, so it is built once and never needs
+        // to change. One fewer thing reacting to every window event.
 
         // Task 11 (spec §Floating icon bar): restore the bar's own on/off state across
         // restarts. Gated on !compatibilityMode for the same reason hotkeys/rehydration
@@ -155,57 +156,23 @@ public partial class App : Application
             PinFloatingBar();
         }
 
-        // Task 9: hover-to-peek. TrayMouseMove fires continuously while the cursor sits
-        // over the icon, so a (re)started 400ms DispatcherTimer measures "cursor has been
-        // over the icon for a bit" without a separate enter/leave pair to track — each
-        // move restarts the timer, and it only ever fires once the cursor stops moving
-        // off the icon for 400ms. The panel itself (SwitcherPanel.Peek) owns hide-on-leave
-        // via its own proximity poll, so this timer's only job is the initial summon.
+        // The hover-to-peek switcher panel USED to be summoned from here, with a 400ms
+        // DispatcherTimer, a drift radius to reject drive-by cursor passes, and a proximity
+        // keep-alive poll inside the panel. All of it is gone, along with the panel itself.
         //
-        // Fix wave (reviewer, Important): TrayMouseMove fires only while the cursor is
-        // actually over the icon, but nothing previously cancelled the timer on leave —
-        // it just kept counting down. Drive-by scenario: cursor crosses the tray icon
-        // (restarts the timer) and keeps moving on toward, say, the middle of the screen;
-        // 400ms later the Tick fires regardless, GetCursorPos() reads THAT current
-        // (mid-screen) position, and Peek() opens/positions the panel there — nowhere
-        // near the tray. Worse, Peek() then latches that far-away point as the summon
-        // point (summonScreenX/Y), so the proximity keep-alive treats standing at that
-        // unrelated spot as "still hovering" and the panel sticks open mid-screen.
-        // Fix: remember where the cursor was on each TrayMouseMove (lastTrayMoveX/Y —
-        // guaranteed to be ON/near the icon, since that event only fires there), and at
-        // Tick time re-read the cursor and bail out if it wandered more than ~32px from
-        // that last over-icon reading — the cursor didn't linger over the icon, it was
-        // just passing through.
-        const double HoverDriftRadiusPx = 32;
-        double lastTrayMoveX = 0, lastTrayMoveY = 0;
-        var hoverTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-        hoverTimer.Tick += (_, _) =>
-        {
-            hoverTimer.Stop();
-            // Fix round 2 (belt and braces, reviewer): Peek() already no-ops when the
-            // panel is already visible, but check here too — two independent
-            // idempotency layers mean this timer can never re-summon a panel that's
-            // already showing, even if something upstream ever changes.
-            if (switcherPanel is { IsVisible: true }) return;
-            TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
-            // Fix wave: skip the peek entirely if the cursor has drifted away from the
-            // tray icon since the timer was (re)started — see comment above.
-            var dx = cursor.X - lastTrayMoveX;
-            var dy = cursor.Y - lastTrayMoveY;
-            if (dx * dx + dy * dy > HoverDriftRadiusPx * HoverDriftRadiusPx) return;
-            switcherPanel ??= new SwitcherPanel(manager);
-            switcherPanel.Peek(cursor.X, cursor.Y);
-            PinSwitcherPanel();
-        };
-        trayIcon.TrayMouseMove += (_, _) =>
-        {
-            // Record the cursor position on every over-icon move so the Tick above has an
-            // "on the icon" reference point to compare its later reading against.
-            TaskSpaces.Windows.Monitoring.NativeMethods.GetCursorPos(out var cursor);
-            lastTrayMoveX = cursor.X;
-            lastTrayMoveY = cursor.Y;
-            hoverTimer.Start();
-        };
+        // Petre: "no switcher panel required on hover either", "we already have a nice way to
+        // move windows across workspaces". Every job the panel did is now done by a surface
+        // that is permanently on screen or one left-click away:
+        //   see every window across workspaces -> the floating bar
+        //   jump to a window                   -> bar icons
+        //   drag windows between workspaces    -> bar rows, and Manage's Windows tab
+        //   switch workspace                   -> bar row labels, Ctrl+Alt+arrows, Ctrl+Alt+1..9
+        //   rename / pin / restore             -> bar icon right-click, Manage's Windows tab
+        //
+        // The deletion was cheap for one specific reason: the panel and Manage's Windows tab
+        // already shared ONE control (WindowGroupsView), built that way in Task 10 so they
+        // could not drift apart. Removing the panel left that control untouched in Manage, so
+        // grouped drag-and-drop window management survived intact.
 
         // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
         // Gated on !compatibilityMode: CycleWorkspace/SwitchToIndex both call
@@ -293,12 +260,30 @@ public partial class App : Application
             "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
-    void OpenManage() => new ManageWindow(manager!, compatibilityMode).Show();
+    // SINGLE INSTANCE, which matters now that a left-click opens this: the old version built
+    // a new ManageWindow on every call, which was tolerable behind a menu item and would
+    // stack up a pile of identical windows behind an easily-mis-clicked tray icon. A second
+    // click now surfaces the window that is already open instead.
+    void OpenManage()
+    {
+        if (manageWindow is { IsVisible: true })
+        {
+            if (manageWindow.WindowState == WindowState.Minimized) manageWindow.WindowState = WindowState.Normal;
+            manageWindow.Activate();
+            return;
+        }
 
-    // Task 11: tray menu callback for "Show floating bar". Created lazily like
-    // switcherPanel; ShowBar()/HideBar() each call manager.SaveFloatingBar, whose
-    // StateChanged pulse rebuilds the tray menu (see the subscription above) so the
-    // checkmark reflects the new state without this method touching the menu itself.
+        // Manage owns the "Show floating bar" checkbox now that the tray menu is down to
+        // Manage + Exit, so it needs both the toggle and a way to read the live state. The
+        // state is read through a delegate rather than passed by value because the bar can
+        // also be hidden from its OWN right-click menu, which would leave a by-value copy
+        // stale the moment the window reopened.
+        manageWindow = new ManageWindow(manager!, compatibilityMode, ToggleFloatingBar, () => floatingBar is { IsVisible: true });
+        manageWindow.Closed += (_, _) => manageWindow = null;
+        manageWindow.Show();
+    }
+
+    // Toggles the bar. Called from Manage's checkbox (it used to be a tray menu item).
     void ToggleFloatingBar()
     {
         if (floatingBar is { IsVisible: true }) floatingBar.HideBar();
@@ -311,7 +296,7 @@ public partial class App : Application
     }
 
     // Task 11 fix round 4 (Petre: the bar stayed behind on workspace switch): dogfooding
-    // our own Pin support. FloatingBar/SwitcherPanel are ordinary top-level windows --
+    // our own Pin support. The FloatingBar is an ordinary top-level window --
     // without pinning, each belongs to whichever desktop it happened to be showing on
     // and vanishes the instant Petre switches away, defeating the entire point of an
     // "always visible" bar / "peek from anywhere" panel. Pinning makes them omnipresent.
@@ -338,22 +323,6 @@ public partial class App : Application
         desktops!.Pin(new WindowHandle(hwnd))
             .TapError(err => MessageBox.Show(
                 $"TaskSpaces could not pin the floating bar to every workspace:\n{err}\n\nIt will only stay visible on the desktop it was shown on.",
-                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
-    }
-
-    // Same rationale as PinFloatingBar above, for the hover-peeked switcher panel: a
-    // Hide()n window keeps whatever desktop affinity it had, so after a workspace
-    // switch a later Peek() could resurrect it on the PREVIOUS desktop -- invisible on
-    // the one Petre is actually looking at, even though IsVisible would say true.
-    void PinSwitcherPanel()
-    {
-        if (switcherPanelPinned) return;
-        var hwnd = new WindowInteropHelper(switcherPanel!).Handle;
-        if (hwnd == nint.Zero) return;
-        switcherPanelPinned = true;
-        desktops!.Pin(new WindowHandle(hwnd))
-            .TapError(err => MessageBox.Show(
-                $"TaskSpaces could not pin the switcher panel to every workspace:\n{err}\n\nHover-peek may show it on the wrong desktop after switching.",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
     }
 

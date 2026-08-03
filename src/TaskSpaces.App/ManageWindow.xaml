@@ -12,9 +12,15 @@
         <TextBlock x:Name="CompatBanner" DockPanel.Dock="Top" Background="#FFF4CE" Padding="8"
                    Text="⚠ Virtual desktops are unavailable on this Windows build. Workspaces are listed but windows will not be moved."
                    Visibility="Collapsed"/>
-        <CheckBox x:Name="StartWithWindows" DockPanel.Dock="Bottom" Margin="8"
-                  Content="Start TaskSpaces with Windows"
-                  Checked="OnStartupToggled" Unchecked="OnStartupToggled"/>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="8">
+            <CheckBox x:Name="StartWithWindows" Content="Start TaskSpaces with Windows"
+                      Checked="OnStartupToggled" Unchecked="OnStartupToggled"/>
+            <!-- Moved here from the tray menu, which is now Manage + Exit only. It cannot
+                 just be dropped: the bar can hide itself from its own right-click menu, so
+                 without a way back a hidden bar would look like the feature had broken. -->
+            <CheckBox x:Name="ShowFloatingBar" Content="Show floating bar" Margin="24,0,0,0"
+                      Checked="OnFloatingBarToggled" Unchecked="OnFloatingBarToggled"/>
+        </StackPanel>
         <TabControl>
             <TabItem Header="Workspaces">
                 <DockPanel Margin="8">

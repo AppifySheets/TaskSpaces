@@ -209,13 +209,24 @@ public class FloatingBarRebuildTests
     {
         var harness = Harness.Build();
 
-        var manage = new ManageWindow(harness.Manager, compatibilityMode: false);
+        var toggled = 0;
+        var manage = new ManageWindow(harness.Manager, compatibilityMode: false, () => toggled++, () => false);
 
         // Button.Content here is a raw string rather than a TextBlock, so these are collected
         // separately from the text labels.
         var buttons = ButtonLabels(manage);
         Assert.Contains("↑ Up", buttons);
         Assert.Contains("↓ Down", buttons);
+
+        // "Show floating bar" moved here from the tray menu, which is now Manage + Exit only.
+        // Without it a bar hidden from its OWN right-click menu could never be brought back,
+        // so this asserts the way back exists and actually toggles.
+        var showBar = (CheckBox)manage.FindName("ShowFloatingBar")!;
+        Assert.Equal("Show floating bar", (string)showBar.Content);
+        Assert.Equal(0, toggled); // setting IsChecked in the constructor must NOT fire the toggle
+        showBar.IsChecked = true;
+        Assert.Equal(1, toggled);
+
         manage.Close();
     });
 
