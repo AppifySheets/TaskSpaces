@@ -119,8 +119,19 @@ public partial class FloatingBar : Window
         Rows.Children.Clear();
         manager.WindowsByWorkspace().Tap(overview =>
         {
+            // Task 11 fix round 5 (Petre: "the rows are indistinguishable... i want to
+            // tell which workspace i'm going to"): build the rows into a list first
+            // (rather than adding straight to Rows.Children) so a hairline Separator
+            // can be interleaved BETWEEN them below -- none before the first row, none
+            // trailing after the last.
+            var groupRows = new List<UIElement>();
+
             if (overview.Pinned.Count > 0)
-                Rows.Children.Add(GroupRow("Pinned", overview.Pinned));
+                // Visual label is just "📌" (brief) but the icon tooltips below still
+                // say the full word "Pinned" -- a glyph reads fine as a compact row
+                // label, but "Pinned · window title" is a nicer tooltip than "📌 ·
+                // window title".
+                groupRows.Add(GroupRow(visualLabel: "📌", tooltipPrefix: "Pinned", isCurrent: false, workspaceId: null, overview.Pinned));
 
             // Spec: "unbound desktops excluded -- it is a workspace bar" (OtherDesktops
             // is never consulted here). Workspaces with nothing running are skipped
@@ -129,21 +140,87 @@ public partial class FloatingBar : Window
             overview.Workspaces
                 .Where(g => g.Running.Count > 0)
                 .ToList()
-                .ForEach(g => Rows.Children.Add(GroupRow(g.Workspace.Name, g.Running)));
+                .ForEach(g => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent, g.Workspace.Id, g.Running)));
+
+            groupRows
+                .SelectMany((row, i) => i == 0 ? new[] { row } : new[] { Separator(), row })
+                .ToList()
+                .ForEach(el => Rows.Children.Add(el));
         });
         // Overview query failure (e.g. a transient desktop-enumeration hiccup) just
         // leaves whatever the bar last showed -- there's no text area on this surface to
         // report an error into, and the next StateChanged pulse retries for free.
     }
 
-    UIElement GroupRow(string workspaceName, IEnumerable<WindowRow> rows)
+    // Task 11 fix round 5: a 1px, ~20%-opacity hairline between rows so adjacent
+    // workspace groups read as visually distinct at a glance, without adding real
+    // borders/backgrounds that would compete with the icons themselves.
+    static UIElement Separator() => new Border
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-        rows.ToList().ForEach(r => panel.Children.Add(IconButton(workspaceName, r)));
-        return panel;
+        Height = 1,
+        Margin = new Thickness(0, 3, 0, 3),
+        Background = Brushes.White,
+        Opacity = 0.2,
+    };
+
+    UIElement GroupRow(string visualLabel, string tooltipPrefix, bool isCurrent, Guid? workspaceId, IEnumerable<WindowRow> rows)
+    {
+        var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        container.Children.Add(RowLabel(visualLabel, isCurrent, workspaceId));
+
+        var icons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        rows.ToList().ForEach(r => icons.Children.Add(IconButton(tooltipPrefix, r)));
+        container.Children.Add(icons);
+
+        return container;
     }
 
-    UIElement IconButton(string workspaceName, WindowRow row)
+    // Task 11 fix round 5 (Petre: "separated nicely, so i can tell which workspace i'm
+    // going to"): tiny, dim label to the LEFT of each row's icons, vertically centered
+    // so the row's height stays governed by the 20px icons, not the label. Current
+    // workspace gets SemiBold (Overview.WorkspaceGroup.IsCurrent) so it stands out from
+    // the rest without shouting -- everything here stays at 55% opacity regardless, this
+    // is a glance-only surface, not a reading surface.
+    UIElement RowLabel(string text, bool isCurrent, Guid? workspaceId)
+    {
+        var textBlock = new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            Opacity = 0.55,
+            FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0, 6, 0),
+        };
+
+        if (workspaceId is not { } id)
+            // The Pinned row's "📌" label is deliberately NOT a click target: pinned
+            // windows are, by definition, already on every workspace, so there is no
+            // single destination a click here could switch to -- a Button would be
+            // dead chrome pretending to do something.
+            return textBlock;
+
+        // Brief: "if it's trivial to make it switch to the workspace via
+        // manager.Switch, DO make it switch -- that's an obvious affordance." It is
+        // trivial (manager.Switch already takes exactly this Guid), and a label that
+        // reads as "this is workspace X" inviting a click to go there is the expected
+        // behavior, not a surprise -- so unlike the icon buttons (transparent, no
+        // visible chrome) this one keeps the same borderless/transparent styling for
+        // visual consistency but wires Click straight to Switch.
+        var button = new Button
+        {
+            Content = textBlock,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = $"Switch to {text}",
+        };
+        button.Click += (_, _) => Report(manager.Switch(id));
+        return button;
+    }
+
+    UIElement IconButton(string tooltipPrefix, WindowRow row)
     {
         var button = new Button
         {
@@ -151,7 +228,7 @@ public partial class FloatingBar : Window
             Margin = new Thickness(2),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            ToolTip = $"{workspaceName} · {row.Window.Title}",
+            ToolTip = $"{tooltipPrefix} · {row.Window.Title}",
         };
         var icon = IconCache.For(row.Window.ProcessPath);
         if (icon is not null)
