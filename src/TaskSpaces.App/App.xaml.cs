@@ -25,7 +25,11 @@ public partial class App : Application
     bool compatibilityMode;
     ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
-    FloatingBar? floatingBar; // Task 11: created lazily on first show, same as switcherPanel
+    FloatingBar? floatingBar; // Task 11: created lazily on first show
+
+    // Held for the whole process lifetime, in a FIELD so the GC cannot collect it and quietly
+    // release the lock while we are still running. See OnStartup for why it exists.
+    System.Threading.Mutex? singleInstance;
     IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
     bool floatingBarPinned; // Task 11 fix round 4: pin the bar's real hwnd to all desktops exactly once (see PinFloatingBar)
 
@@ -41,6 +45,36 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // SINGLE INSTANCE, and it must be the very first thing that happens.
+        //
+        // Petre hit the visible symptom: "TaskSpaces could not register these keyboard
+        // shortcuts (another app already owns them)" listing ALL of them. RegisterHotKey is
+        // exclusive per chord, and the only thing that would own exactly OUR set is another
+        // copy of TaskSpaces. The failed hotkeys were the least of it though. A second
+        // instance also means two tray icons, two rename sweeps fighting over the same
+        // windows, two startup placement sweeps, and two processes writing state.json with
+        // last-writer-wins -- i.e. silent loss of workspaces or renames.
+        //
+        // This matters more now than it would have a week ago: the app ships as a portable
+        // exe with no installer, so double-clicking it twice is the ordinary mistake rather
+        // than an unusual one.
+        //
+        // "Local\" scopes the mutex to the login SESSION, not the machine: two users on one
+        // PC should each get their own instance, since every piece of state this app touches
+        // (state.json under %APPDATA%, the HKCU Run key, the user's own desktops) is per-user.
+        singleInstance = new System.Threading.Mutex(initiallyOwned: true, @"Local\TaskSpaces.SingleInstance", out var isOnlyInstance);
+        if (!isOnlyInstance)
+        {
+            // Told, not silently exited: a portable exe that appears to do nothing when
+            // double-clicked reads as broken, and the icon is easy to miss in a full tray.
+            MessageBox.Show(
+                "TaskSpaces is already running.\n\nLook for the tiled icon in the notification area, and click it to open Manage.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Information);
+            singleInstance = null; // not ours to release
+            Shutdown();
+            return;
+        }
 
         // Reviewer (fix round 1, Critical, last-ditch backstop): an unhandled exception on
         // the dispatcher thread — e.g. the ArgumentException a duplicate-name dictionary
@@ -332,6 +366,15 @@ public partial class App : Application
         monitor?.Dispose();
         hotkeys?.Dispose(); // unregisters RegisterHotKey chords before the process exits
         trayIcon?.Dispose();
+        // Released explicitly on the orderly exit path so a relaunch a moment later is never
+        // refused. Windows would release it at process death anyway; being deterministic here
+        // costs one line and removes any doubt about ordering.
+        if (singleInstance is { } held)
+        {
+            held.ReleaseMutex();
+            held.Dispose();
+            singleInstance = null;
+        }
         Shutdown();
     }
 }
