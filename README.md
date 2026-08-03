@@ -96,9 +96,8 @@ tools and people. Workers spent roughly **three minutes on a single event** befo
 switching, and a little over two minutes on any one document or tool.
 
 A taskbar shows you windows. Your head is organised by spheres. That mismatch is the gap.
-[Mark's twenty-year follow-up](https://ics.uci.edu/~gmark/CHI2005.pdf) found the
-fragmentation getting finer — average time on a single screen fell from about **2.5
-minutes in 2004 to roughly 47 seconds**.
+Mark's later work found the fragmentation getting finer still: average time on a single
+screen fell from about **2.5 minutes in 2004 to roughly 47 seconds**.
 
 ### Resuming is the costly half, and it is mostly *searching*
 
@@ -152,22 +151,6 @@ finished. **Stated honestly:** Leroy studied cognitive residue, not taskbars. Th
 visible unfinished work sustains residue is a reasonable inference, not a measured
 finding.
 
-### One number you should distrust
-
-You will see everywhere that it takes **"23 minutes and 15 seconds"** to recover from an
-interruption, usually credited to Mark's
-[*The Cost of Interrupted Work*](https://ics.uci.edu/~gmark/chi08-mark.pdf). That paper
-does not contain the figure. It reports closer to the opposite: participants spent *less*
-time on the original task when interrupted (20.31 and 20.60 minutes) than when not
-(22.77 minutes) — they worked faster, at the cost of significantly **higher stress,
-frustration, time pressure and effort**. The 23-minute figure appears to originate in
-interviews and press coverage rather than any published result, and
-[has become self-perpetuating folk wisdom](https://blog.oberien.de/2023/11/05/23-minutes-15-seconds.html).
-
-It is not used to sell this app. The real finding is more interesting anyway:
-interruption does not necessarily make you slower, it makes you more stressed and more
-error-prone.
-
 ### How that maps onto what the app does
 
 | The research says | What TaskSpaces does |
@@ -208,14 +191,12 @@ you do not have.
 
 ### Sources
 
-- Victor M. González and Gloria Mark, ["Constant, constant, multi-tasking craziness": Managing multiple working spheres](https://dl.acm.org/doi/10.1145/985692.985707), CHI 2004.
-- Gloria Mark, Victor M. González and Justin Harris, [No Task Left Behind? Examining the Nature of Fragmented Work](https://ics.uci.edu/~gmark/CHI2005.pdf), CHI 2005.
-- Gloria Mark, Daniela Gudith and Ulrich Klocke, [The Cost of Interrupted Work: More Speed and Stress](https://ics.uci.edu/~gmark/chi08-mark.pdf), CHI 2008.
+- Victor M. González and Gloria Mark, ["Constant, constant, multi-tasking craziness": Managing multiple working spheres](https://dl.acm.org/doi/10.1145/985692.985707), CHI 2004 — working spheres, and the ~3-minutes-per-event figure.
+- Gloria Mark, Victor M. González and Justin Harris, [No Task Left Behind? Examining the Nature of Fragmented Work](https://ics.uci.edu/~gmark/CHI2005.pdf), CHI 2005 — the fragmentation of knowledge work.
 - Gloria Mark, *Attention Span* (Hanover Square Press, 2023) — the 2.5-minutes-to-47-seconds figure.
-- Chris Parnin and Spencer Rugaber, [Resumption strategies for interrupted programming tasks](https://link.springer.com/article/10.1007/s11219-010-9104-9), Software Quality Journal 19(1), 2011 ([PDF](http://www.chrisparnin.me/pdf/parnin-sqj11.pdf)).
-- D. Austin Henderson and Stuart K. Card, [Rooms: the use of multiple virtual workspaces to reduce space contention in a window-based graphical user interface](https://dl.acm.org/doi/10.1145/24054.24056), ACM Transactions on Graphics 5(3), 1986 ([PDF](http://rivcons.com/wp-content/uploads/1987/Rooms-TOG.pdf)).
-- Sophie Leroy, [Why is it so hard to do my work? The challenge of attention residue when switching between work tasks](https://ideas.repec.org/a/eee/jobhdp/v109y2009i2p168-181.html), Organizational Behavior and Human Decision Processes 109(2), 2009.
-- oberien, [Interruptions cost 23 minutes 15 seconds, right?](https://blog.oberien.de/2023/11/05/23-minutes-15-seconds.html) — traces the figure and finds no published source.
+- Chris Parnin and Spencer Rugaber, [Resumption strategies for interrupted programming tasks](https://link.springer.com/article/10.1007/s11219-010-9104-9), Software Quality Journal 19(1), 2011 ([PDF](http://www.chrisparnin.me/pdf/parnin-sqj11.pdf)) — the 10% / 7% resumption figures and cue priming.
+- D. Austin Henderson and Stuart K. Card, [Rooms: the use of multiple virtual workspaces to reduce space contention in a window-based graphical user interface](https://dl.acm.org/doi/10.1145/24054.24056), ACM Transactions on Graphics 5(3), 1986 ([PDF](http://rivcons.com/wp-content/uploads/1987/Rooms-TOG.pdf)) — window thrashing.
+- Sophie Leroy, [Why is it so hard to do my work? The challenge of attention residue when switching between work tasks](https://ideas.repec.org/a/eee/jobhdp/v109y2009i2p168-181.html), Organizational Behavior and Human Decision Processes 109(2), 2009 — attention residue.
 
 ## How it works
 
