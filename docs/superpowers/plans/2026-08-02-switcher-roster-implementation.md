@@ -2145,8 +2145,43 @@ Spec section "Floating icon bar". Icon-only, translucent, always-on-top, click-t
 - [ ] **Step 4 — manual script items** (pending human execution): 34. floating bar shows icon rows per workspace, translucent, always on top; click icon → lands on that window. 35. drag bar → position survives app restart; tray toggle hides/shows it, state survives restart. 36. windows opening/closing update the bar live.
 - [ ] **Step 5 — verify + smoke:** build 0 warnings; suite green (106 + new); stop app, rebuild Release, relaunch, alive, LEAVE RUNNING. Commit (`feat: floating icon bar` + trailer).
 
+### Task 12: Bar cleanups — per-icon rename menu, always-visible 📌 row, Unplaced off the bar (added 2026-08-03, fifth testing round)
+
+Spec section "Startup redistribution, per-icon rename & bar cleanups". Three small changes, one task: all three live in `FloatingBar.RebuildCore` and its icon construction.
+
+Context: the doubled-rows defect from this same round is ALREADY FIXED (re-entrancy guard in `FloatingBar` + `WindowGroupsView`, pinned by `FloatingBarRebuildTests`) — see the spec's "a rebuild must never be re-entered" invariant. That fix is what made `tests/TaskSpaces.Windows.Tests` able to test WPF surfaces at all, which Steps 1–2 below now exploit.
+
+**Files:**
+- Modify: `src/TaskSpaces.App/FloatingBar.xaml.cs` (drop the `overview.Pinned.Count > 0` condition; skip the `Guid.Empty` group; per-icon `ContextMenu` in `IconButton`)
+- Test: `tests/TaskSpaces.Windows.Tests/FloatingBarRebuildTests.cs` (extend — the STA/stub harness already exists there)
+
+**Interfaces:** Consumes `manager.RenameWindow` / `RestoreTitle` / `Overview` — nothing new produced. `PromptDialog` is reused verbatim for text entry.
+
+- [ ] **Step 1 (TDD):** three failing tests in the existing harness — (a) the 📌 row renders when `Overview.Pinned` is EMPTY (currently it does not); (b) a window whose `DesktopOf` fails produces NO row on the bar (currently it produces an "Unplaced" row); (c) that same window still produces a group in `WindowGroupsView` (guards against "fixed" by deleting the catch-all). → FAIL → implement → PASS.
+- [ ] **Step 2 — implement:** delete the `Count > 0` guard around the Pinned `GroupRow` (comment: it is the ONLY way to pin the first window, so hiding it when empty made the drop target unreachable — same round-6 reasoning that stopped skipping empty workspaces). In the `OtherDesktops` loop, skip `g.DesktopId == Guid.Empty` (comment: bar = actionable, panel = complete; the catch-all itself stays for the Task 10 invisible-window defect).
+- [ ] **Step 3 — per-icon context menu:** in `IconButton`, attach a `ContextMenu` with exactly **Rename…** → `PromptDialog` seeded with the current short name, then `Report(manager.RenameWindow(handle, name))`; and **Restore title** → `Report(manager.RestoreTitle(handle))`, added ONLY when `row.OriginalTitle.HasValue`. Nothing else: Send-to and Pin/Unpin were explicitly rejected by Petre as redundant with drag (record the rule in a comment — drag moves and pins, right-click names). The dialog must be owned so it cannot hide behind the topmost bar (reuse the panel's `RunChildDialog` rationale; verify the bar does not need the panel's `childDialogOpen` guard, since the bar has no hover-hide behaviour to suppress — state the finding either way).
+- [ ] **Step 4 — manual script items** (pending human execution): 41. right-click a bar icon → Rename… → the taskbar name changes, the bar's icon tooltip/info line follows, and it survives an app restart. 42. right-click a renamed icon → Restore title returns the original; the entry is absent for never-renamed windows. 43. the 📌 row is visible with nothing pinned, and dragging an icon onto it pins that window to all workspaces; dragging it back out onto a workspace row unpins. 44. no "Unplaced" row on the bar, while the tray panel still lists it.
+- [ ] **Step 5 — verify + smoke:** build 0 warnings; suite green (120 + new); stop app, rebuild, relaunch, alive, LEAVE RUNNING. Commit (`feat: per-icon rename menu, always-visible pinned row, Unplaced off the bar` + trailer).
+
+### Task 13: Startup redistribution of already-running windows (added 2026-08-03, fifth testing round)
+
+Spec section "Startup redistribution of already-running windows". Petre: "when starting up, all those apps, when started, should be redistributed to the correct workspaces, is that already in place?" — it was not: `Start()` only records the snapshot, and placement lives exclusively in `OnAppeared`.
+
+**Files:**
+- Create: `src/TaskSpaces.Core/Rehydration/StartupPlacement.cs` — pure, no COM, same "every OS fact arrives as data" shape as `OverviewBuilder`
+- Modify: `src/TaskSpaces.Core/WorkspaceManager.cs` (`Start()` applies the sweep after `Reconcile`)
+- Test: `tests/TaskSpaces.Core.Tests/StartupPlacementTests.cs` (the pure rules) + `WorkspaceManagerTests.cs` (Start() actually moves the windows the sweep returns, and pulses once)
+
+**Interfaces:** Produces `StartupPlacement.Plan(windows, desktopOf, pinned, workspaces, inventory, rules, claimedDesktopIds) : IReadOnlyList<(WindowHandle, Guid)>`. Consumes the existing `RosterIdentity` and `RulesEngine.MatchWorkspace`.
+
+- [ ] **Step 1 (TDD — the rulings ARE the tests):** failing tests, one per spec ruling — (a) a window on an UNBOUND desktop whose roster identity matches exactly one workspace is moved there; (b) a window already on a workspace-bound desktop is NEVER moved, even when some other workspace's roster claims it (this is the mid-session-restart protection); (c) a rule match WINS over a conflicting roster match; (d) an identity present in two workspaces' rosters yields NO move; (e) a pinned window is never moved; (f) a window matching nothing is left alone; (g) two VS Code windows with different `--profile`/solution args go to different workspaces (identity, not process name). → FAIL → implement → PASS.
+- [ ] **Step 2 — implement the pure function:** rules first (`RulesEngine.MatchWorkspace`), then roster identity via `RosterIdentity.Of(path, commandLine)` matched against each workspace's `Inventory` entries; skip pinned, skip windows whose current desktop is in `claimedDesktopIds`, skip ambiguous identities. Return moves only — the function performs nothing.
+- [ ] **Step 3 — wire into `Start()`:** after `Reconcile` and the snapshot, gather the facts (pinned state + `DesktopOf` per known window, `GetDesktops`, workspaces, inventory, rules), call `Plan`, then apply each move through the existing `Place` path so membership bookkeeping and roster upkeep stay identical to a rule-driven placement. Failures are skipped per-window (fire-and-forget, same rationale as `OnAppeared` — nothing is awaiting a Result at startup), and the sweep pulses `StateChanged` **once** at the end rather than per move. Compatibility mode must skip the sweep entirely (no desktop operations when COM is unsupported).
+- [ ] **Step 4 — manual script items** (pending human execution): 45. with Beeper, VS Code (corne-config), Remote Desktop Manager and Teams already running on plain desktops, start TaskSpaces → each lands in the workspace its roster names, with no rules configured. 46. hand-place a window into a workspace, restart TaskSpaces → it stays where it was put (not yanked by the sweep). 47. after a real reboot with Windows auto-starting those apps, the workspaces populate themselves.
+- [ ] **Step 5 — verify + smoke:** build 0 warnings; full suite green; stop app, rebuild, relaunch, confirm the sweep ran (windows redistributed), LEAVE RUNNING. Commit (`feat: startup redistribution of running windows by roster identity` + trailer).
+
 ## After this plan
 
-- Petre executes manual-test-script items 15–36 (plus any remaining 1–14).
+- Petre executes manual-test-script items 15–47 (plus any remaining 1–14).
 - PR remains ON HOLD until Petre says otherwise.
 - Future (spec'd, not planned): UIA rule kind (browser URL / document path) — spike first.
