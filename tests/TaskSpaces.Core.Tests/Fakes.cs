@@ -54,9 +54,14 @@ public sealed class FakeMonitor : IWindowMonitor
 {
     public Subject<WindowEvent> Subject { get; } = new();
     public List<WindowInfo> InitialWindows { get; } = [];
+
+    // Lets a test say "this window already had focus when TaskSpaces started".
+    public Maybe<WindowHandle> ForegroundWindow { get; set; } = Maybe<WindowHandle>.None;
+
     public Result Start() => Result.Success();
     public IObservable<WindowEvent> Events => Subject.AsObservable();
     public IReadOnlyList<WindowInfo> Snapshot() => InitialWindows.ToList();
+    public Maybe<WindowHandle> Foreground() => ForegroundWindow;
 }
 
 public sealed class FakeTitles : IWindowTitles

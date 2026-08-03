@@ -25,6 +25,8 @@ public sealed class JsonPersistenceStoreTests : IDisposable
         {
             PersistedRenames = [new PersistedRename("chrome", "Home - Google Chrome", "Home")],
             FloatingBar = new FloatingBarState(120.5, 40.25, true),
+            PinnedApps = [new InventoryEntry(@"C:\Programs\Beeper.exe", @"""C:\Programs\Beeper.exe"" ", "Beeper")],
+            DetachedApps = [new InventoryEntry(@"C:\Programs\obs.exe", null, "OBS")],
         };
     }
 
@@ -44,6 +46,33 @@ public sealed class JsonPersistenceStoreTests : IDisposable
         Assert.Equal(state.Inventory.Values.Single(), loaded.Inventory.Values.Single());
         Assert.Equal(state.PersistedRenames, loaded.PersistedRenames);
         Assert.Equal(state.FloatingBar, loaded.FloatingBar);
+        // A pin that does not survive a save/load is the whole reported defect, so both new
+        // placement lists are asserted explicitly rather than trusted to the record's shape.
+        Assert.Equal(state.PinnedApps, loaded.PinnedApps);
+        Assert.Equal(state.DetachedApps, loaded.DetachedApps);
+    }
+
+    [Fact]
+    public void Old_state_file_without_placement_lists_loads_them_empty()
+    {
+        // Same back-compat contract as PersistedRenames and FloatingBar: every state.json
+        // written before this change has no such keys, and must load as empty rather than
+        // throwing or inventing a pinned app.
+        Directory.CreateDirectory(dir);
+        var oldState = new
+        {
+            Workspaces = Array.Empty<object>(),
+            WorkspaceRules = Array.Empty<object>(),
+            RenameRules = Array.Empty<object>(),
+            Inventory = new Dictionary<string, object[]>(),
+        };
+        File.WriteAllText(Path.Combine(dir, "state.json"), System.Text.Json.JsonSerializer.Serialize(oldState));
+
+        var loaded = new JsonPersistenceStore(dir).Load();
+
+        Assert.True(loaded.IsSuccess);
+        Assert.Empty(loaded.Value.PinnedApps);
+        Assert.Empty(loaded.Value.DetachedApps);
     }
 
     [Fact]

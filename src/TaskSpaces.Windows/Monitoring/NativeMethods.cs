@@ -15,6 +15,9 @@ public static class NativeMethods
     [DllImport("user32.dll")] public static extern bool UnhookWinEvent(nint hook);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, nint lparam);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(nint hwnd);
+    // Seeds the active-window highlight at startup; EVENT_SYSTEM_FOREGROUND alone only
+    // reports CHANGES, so without this nothing is highlighted until the user switches window.
+    [DllImport("user32.dll")] public static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] public static extern nint GetAncestor(nint hwnd, uint flags);
     [DllImport("user32.dll")] public static extern int GetWindowTextLength(nint hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(nint hwnd, StringBuilder text, int maxCount);
@@ -25,6 +28,11 @@ public static class NativeMethods
     public static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wparam, string lparam, uint flags, uint timeoutMs, out nint result);
 
     public const uint EVENT_OBJECT_DESTROY = 0x8001, EVENT_OBJECT_SHOW = 0x8002, EVENT_OBJECT_HIDE = 0x8003, EVENT_OBJECT_NAMECHANGE = 0x800C;
+    // Petre: "active window should be highlighted in the floating window". Note this one is
+    // in the SYSTEM range (0x0003), far below the OBJECT events above, so it needs its own
+    // hook rather than widening an existing range — a single hook spanning 0x0003..0x800C
+    // would subscribe us to every event in between.
+    public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000, WINEVENT_SKIPOWNPROCESS = 0x0002;
     public const int OBJID_WINDOW = 0, CHILDID_SELF = 0;
     public const uint GA_ROOT = 2;

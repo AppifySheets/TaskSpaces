@@ -22,6 +22,21 @@ public sealed record AppState(
     // default bottom-right position (spec: "older files load with it hidden/default").
     public FloatingBarState? FloatingBar { get; init; }
 
+    // The two placements the Inventory above cannot express (Petre: "last placement IS the
+    // rule"). Inventory already records identity -> workspace on every Place(), but a
+    // PINNED window belongs to no single workspace and a DETACHED one belongs to none at
+    // all, so both needed somewhere to live. Without this, Windows' HWND-keyed pin was
+    // simply lost whenever an app recycled its window — an Electron app closing to tray
+    // does that routinely, which is exactly how Petre's pinned Beeper reappeared inside a
+    // workspace after a restart.
+    //
+    // InventoryEntry rather than a bare identity string: identical shape to Inventory's
+    // values, human-readable in state.json, and RosterIdentity.Of(entry) derives the
+    // identity anyway. Init properties with empty defaults, so older state.json files load
+    // without migration (same pattern as PersistedRenames and FloatingBar).
+    public IReadOnlyList<InventoryEntry> PinnedApps { get; init; } = [];
+    public IReadOnlyList<InventoryEntry> DetachedApps { get; init; } = [];
+
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }
 

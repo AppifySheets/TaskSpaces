@@ -17,9 +17,13 @@ public static class OverviewBuilder
         ISet<WindowHandle> pinned,
         IReadOnlyDictionary<WindowHandle, Guid> desktopOf,
         IReadOnlyList<DesktopInfo> desktops,
-        Guid currentDesktopId)
+        Guid currentDesktopId,
+        // Optional and last so every pre-existing caller and test compiles unchanged; None
+        // simply means "nothing is highlighted".
+        Maybe<WindowHandle> activeWindow = default)
     {
-        WindowRow Row(WindowInfo w) => new(w, originalTitleOf(w.Handle));
+        WindowRow Row(WindowInfo w) =>
+            new(w, originalTitleOf(w.Handle), activeWindow.Map(active => active == w.Handle).GetValueOrDefault(false));
 
         var pinnedRows = windows.Where(w => pinned.Contains(w.Handle)).Select(Row).ToList();
 

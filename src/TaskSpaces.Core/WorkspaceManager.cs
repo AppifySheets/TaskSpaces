@@ -43,6 +43,9 @@ public sealed class WorkspaceManager(
     // just dragged it out of. Live-only, exactly like `memberships`: a restart re-derives
     // placement from the OS, and rules legitimately own a window again next launch.
     readonly HashSet<WindowHandle> detached = [];
+    // The focused window, for the active-row highlight. Live-only: focus is a fact about
+    // right now, so there is nothing to persist or reconcile.
+    Maybe<WindowHandle> activeWindow = Maybe<WindowHandle>.None;
     RenameLedger ledger = RenameLedger.Empty;
     PendingPlacements pending = PendingPlacements.Empty;      // rehydration (Task 9)
     IDisposable? subscription;
@@ -57,8 +60,13 @@ public sealed class WorkspaceManager(
             .Tap(() =>
             {
                 monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
+                // Seeded before the first UI build: foreground events only report CHANGES, so
+                // without this the active-window highlight would stay blank from launch until
+                // Petre next switched windows -- indistinguishable from the feature not working.
+                activeWindow = monitor.Foreground();
                 subscription = monitor.Events.Subscribe(OnWindowEvent);
                 ReapplyRenames();
+                RestorePlacements();
             });
 
     // Finding 1 (reviewer, Critical): split out of Start() so the composition root can
@@ -108,6 +116,7 @@ public sealed class WorkspaceManager(
             case WindowEventKind.TitleChanged: OnTitleChanged(e.Window); break;
             case WindowEventKind.Hidden: OnHidden(e.Window); break;
             case WindowEventKind.Disappeared: OnDisappeared(e.Window); break;
+            case WindowEventKind.Activated: OnActivated(e.Window); break;
         }
     }
 
@@ -122,9 +131,20 @@ public sealed class WorkspaceManager(
         // failed auto-placement (e.g. stale workspace, desktop move rejected) has
         // nowhere to surface here — it's silently skipped, unlike the UI-facing
         // AssignWindow, which must propagate the same failure to the caller.
+        // Precedence (Petre: "last placement beats rules, last placement IS the rule"):
+        //   1. pending launch  — we started this app for a workspace, so we KNOW.
+        //   2. last placement  — an explicit act by Petre, keyed by identity. Beats rules:
+        //                        a standing guess must never yank back a window he moved
+        //                        by hand. This is also what re-pins an app whose window
+        //                        was destroyed and recreated (Electron closing to tray),
+        //                        which the OS pin cannot survive since it is HWND-keyed.
+        //   3. rule            — first sight only: the one case memory cannot cover, since
+        //                        a never-seen window has no placement to remember.
         if (AutoPlaceable(window.Handle))
-            placement.Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules))
-                .Tap(workspaceId => { Place(window, workspaceId); });
+            placement.Map(Placement.In)
+                .Or(PlacementMemory.For(window, State))
+                .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
+                .Tap(remembered => ApplyPlacement(window, remembered));
 
         // Fire-and-forget for the same reason as above.
         RulesEngine.MatchRename(window, State.RenameRules)
@@ -136,6 +156,22 @@ public sealed class WorkspaceManager(
         // triggered by StateChanged is a cheap, idempotent re-read of current state. What
         // it fixes: an open panel/Windows tab must learn a new window appeared even when
         // nothing about it was auto-placed or renamed, or its row never shows up.
+        stateChanged.OnNext(Unit.Default);
+    }
+
+    // Purely presentational: remember which window has focus so WindowsByWorkspace can mark
+    // its row active. Deliberately does NOT place, rename or inventory anything -- focus
+    // moving is not a statement about where a window belongs.
+    //
+    // Guarded on CHANGE: alt-tabbing fires foreground events continuously, and every pulse
+    // makes each open surface rebuild, which costs one DesktopOf COM call per known window.
+    // Pulsing only when the active window actually differs keeps a burst of alt-tabs from
+    // turning into a burst of COM sweeps.
+    void OnActivated(WindowInfo window)
+    {
+        knownWindows[window.Handle] = window;
+        if (activeWindow.Equals(Maybe<WindowHandle>.From(window.Handle))) return;
+        activeWindow = window.Handle;
         stateChanged.OnNext(Unit.Default);
     }
 
@@ -297,6 +333,28 @@ public sealed class WorkspaceManager(
                 Workspaces = State.Workspaces.Select(x => x.Id == id ? x with { Name = name } : x).ToList(),
             }));
 
+    // Petre: "i need to be able to move workspaces up or down in the manage window".
+    // delta is -1 (up) or +1 (down). Order is NOT cosmetic -- this one list drives the
+    // floating bar's row order, the switcher panel's group order and which workspace
+    // Ctrl+Alt+1..9 selects -- so persisting it here is all the other surfaces need.
+    //
+    // Out-of-range moves SUCCEED as no-ops rather than failing: the Up button on the first
+    // row should do nothing, not raise an error dialog at someone who clicked it.
+    public Result MoveWorkspace(Guid id, int delta) =>
+        State.Workspaces.ToList().FindIndex(w => w.Id == id) switch
+        {
+            < 0 => Result.Failure("Workspace no longer exists."),
+            var from when from + delta < 0 || from + delta >= State.Workspaces.Count => Result.Success(),
+            var from => Result.Success().Tap(() => Persist(State with { Workspaces = Swapped(from, from + delta) })),
+        };
+
+    IReadOnlyList<Workspace> Swapped(int from, int to)
+    {
+        var reordered = State.Workspaces.ToList();
+        (reordered[from], reordered[to]) = (reordered[to], reordered[from]);
+        return reordered;
+    }
+
     // Case-insensitive, trim-tolerant name collision check. `excluding` lets
     // RenameWorkspace allow renaming a workspace to (a variant of) its own current name —
     // it must only reject collisions with *other* workspaces.
@@ -367,7 +425,11 @@ public sealed class WorkspaceManager(
             {
                 memberships.Remove(window);
                 detached.Add(window);
-                stateChanged.OnNext(Unit.Default); // no Persist() on this path — pulse the UI ourselves
+                // Persisted too, for the same reason pinning is: `detached` is live-only, so
+                // without this a restart would let a rule (or the roster) reclaim a window
+                // Petre deliberately dragged out onto a plain desktop. RememberPlacement
+                // persists and pulses, replacing the bare pulse this path used to do.
+                RememberPlacement(window, pinned: false);
             });
 
     // Rules (and late placement) only touch windows that are neither placed, pinned, nor
@@ -482,14 +544,20 @@ public sealed class WorkspaceManager(
                 .Select(w => (w.Handle, Desktop: desktops.DesktopOf(w.Handle)))
                 .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);
-            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current);
+            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow);
         }));
 
+    // Both now RECORD the placement as well as performing it. Petre's defect: "move Beeper
+    // to pinned, close the app, open again, it is incorrectly placed in GEPHA workspace" --
+    // Windows' pin is keyed to the HWND, and Beeper (Electron) destroys and recreates its
+    // window when closed to tray, so the pin died with the handle and the fresh window
+    // surfaced on whatever desktop was current. Remembering the pin by IDENTITY is what
+    // makes it survive that, here and across app restarts.
     public Result PinWindow(WindowHandle window) =>
-        desktops.Pin(window).Tap(() => stateChanged.OnNext(Unit.Default));
+        desktops.Pin(window).Tap(() => RememberPlacement(window, pinned: true));
 
     public Result UnpinWindow(WindowHandle window) =>
-        desktops.Unpin(window).Tap(() => stateChanged.OnNext(Unit.Default));
+        desktops.Unpin(window).Tap(() => ForgetPlacement(window));
 
     // Jump = what clicking a taskbar button does, but across workspaces: land on the
     // window's desktop (skip the no-op switch), then bring it to the foreground.
@@ -548,8 +616,87 @@ public sealed class WorkspaceManager(
             kv => kv.Key,
             kv => (IReadOnlyList<InventoryEntry>)kv.Value.Where(e => RosterIdentity.Of(e) != identity).ToList());
         inventory[workspaceId] = [.. inventory.GetValueOrDefault(workspaceId, []), entry];
-        Persist(State with { Inventory = inventory });
+        // Belonging to a workspace is mutually exclusive with being pinned to all of them or
+        // detached from all of them, so claiming an identity here clears the other two --
+        // in the SAME Persist, so one placement is one write and one pulse.
+        Persist(State with
+        {
+            Inventory = inventory,
+            PinnedApps = Forget(State.PinnedApps, identity),
+            DetachedApps = Forget(State.DetachedApps, identity),
+        });
     }
+
+    // --- placement memory (identity-keyed, so it outlives any single window handle) ------
+
+    // Records "Petre put this app HERE": pinned to every workspace, or detached onto a plain
+    // desktop. The workspace case needs nothing extra — Place() -> RosterAdd() -> AddEntry()
+    // already writes identity -> workspace into Inventory.
+    void RememberPlacement(WindowHandle window, bool pinned) =>
+        EntryFor(window).Match(
+            entry => Persist(State with
+            {
+                PinnedApps = pinned ? [.. Forget(State.PinnedApps, RosterIdentity.Of(entry)), entry] : Forget(State.PinnedApps, RosterIdentity.Of(entry)),
+                DetachedApps = pinned ? Forget(State.DetachedApps, RosterIdentity.Of(entry)) : [.. Forget(State.DetachedApps, RosterIdentity.Of(entry)), entry],
+            }),
+            // No readable process path (elevated): nothing identifiable to remember, but the
+            // OS-level pin/move DID happen, so the UI still needs telling.
+            () => stateChanged.OnNext(Unit.Default));
+
+    void ForgetPlacement(WindowHandle window) =>
+        EntryFor(window).Match(
+            entry => Persist(State with
+            {
+                PinnedApps = Forget(State.PinnedApps, RosterIdentity.Of(entry)),
+                DetachedApps = Forget(State.DetachedApps, RosterIdentity.Of(entry)),
+            }),
+            () => stateChanged.OnNext(Unit.Default));
+
+    // The roster-shaped record of a live window: original title where we renamed it, so
+    // state.json keeps showing what Petre would recognise rather than our short name.
+    Maybe<InventoryEntry> EntryFor(WindowHandle window) =>
+        knownWindows.TryGetValue(window, out var info) && info.ProcessPath is not null
+            ? new InventoryEntry(info.ProcessPath, info.CommandLine, ledger.OriginalTitle(window).GetValueOrDefault(info.Title))
+            : Maybe<InventoryEntry>.None;
+
+    static IReadOnlyList<InventoryEntry> Forget(IReadOnlyList<InventoryEntry> apps, string identity) =>
+        apps.Where(entry => RosterIdentity.Of(entry) != identity).ToList();
+
+    Result ApplyPlacement(WindowInfo window, Placement placement) => placement.Kind switch
+    {
+        PlacementKind.Workspace => Place(window, placement.WorkspaceId),
+        // Pin the OS window only: memory ALREADY says pinned, so re-persisting would be a
+        // pointless write on every tray-restore of an Electron app.
+        PlacementKind.Pinned => desktops.Pin(window.Handle),
+        // Live-only flag; the persisted DetachedApps entry is what survives restarts.
+        _ => Result.Success().Tap(() => detached.Add(window.Handle)),
+    };
+
+    // Windows already open when TaskSpaces starts never pass through OnAppeared -- Start()
+    // only recorded them into knownWindows -- so nothing had ever placed them. That was two
+    // gaps at once: rules never touched pre-existing windows, and the roster (which is the
+    // workspace half of placement memory) was never consulted at all. Petre: "when starting
+    // up, all those apps, when started, should be redistributed to the correct workspaces."
+    void RestorePlacements() =>
+        knownWindows.Values
+            .Where(window => AutoPlaceable(window.Handle))
+            .ToList()
+            .ForEach(window => PlacementMemory.For(window, State)
+                .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
+                .Where(remembered => SafeToRestore(window, remembered))
+                .Tap(remembered => ApplyPlacement(window, remembered)));
+
+    // A pin is ADDITIVE (it makes a window appear everywhere; it does not move it) and
+    // detaching is just a flag, so both are always safe to re-apply. A WORKSPACE placement is
+    // a real move, so it only happens when the window currently sits on a desktop no
+    // workspace owns: Petre may have moved it there with Windows' own Task View, which we
+    // never saw, and a restart must not undo that. A window whose desktop cannot be resolved
+    // at all is fair game -- it is the "Unplaced" case, where placing it can only help.
+    bool SafeToRestore(WindowInfo window, Placement placement) =>
+        placement.Kind != PlacementKind.Workspace
+        || desktops.DesktopOf(window.Handle)
+            .Map(current => !State.Workspaces.Any(w => w.DesktopId == current))
+            .GetValueOrDefault(true);
 
     public Result<InventoryEntry> AddRosterEntry(Guid workspaceId, string exePath, string? arguments) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(exePath), "Executable path required")

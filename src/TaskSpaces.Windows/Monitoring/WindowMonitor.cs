@@ -39,6 +39,10 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
             // One hook per range: SHOW..HIDE+DESTROY lifecycle, NAMECHANGE for renames.
             hooks.Add(Hook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE));
             hooks.Add(Hook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE));
+            // Its own hook, not a widened range: EVENT_SYSTEM_FOREGROUND sits at 0x0003
+            // while the object events are at 0x800x, so one hook covering both would
+            // subscribe us to every accessibility event in between.
+            hooks.Add(Hook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND));
             if (hooks.Any(h => h == 0)) throw new InvalidOperationException("SetWinEventHook failed");
             Snapshot().ToList().ForEach(w => known[w.Handle.Value] = w); // seed before events flow
         }, e => $"Window monitoring unavailable: {e.Message}");
@@ -50,6 +54,14 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
             .Select(h => WindowInfoFactory.FromHwnd(h, commandLines))
             .Where(m => m.HasValue).Select(m => m.Value)
             .ToList();
+    }
+
+    // Only reports a window we actually track, so the highlight can never point at something
+    // that has no row (the shell, a tooltip, a non-taskbar helper window).
+    public Maybe<WindowHandle> Foreground()
+    {
+        var hwnd = GetForegroundWindow();
+        return hwnd != 0 && known.ContainsKey(hwnd) ? new WindowHandle(hwnd) : Maybe<WindowHandle>.None;
     }
 
     nint Hook(uint min, uint max) =>
@@ -107,6 +119,16 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                 // A window can become taskbar-worthy late (title set only after SHOW).
                 case EVENT_OBJECT_NAMECHANGE:
                     TryAppear(hwnd);
+                    break;
+
+                // Focus moved to a window we track. Only tracked windows qualify: foreground
+                // also lands on things that are not taskbar candidates at all, and WE are
+                // excluded anyway by WINEVENT_SKIPOWNPROCESS, so clicking the bar itself
+                // never clears the highlight. Focus moving to an UNtracked window emits
+                // nothing, deliberately — the highlight then stays on the last real window,
+                // which is the useful answer to "which window am I in".
+                case EVENT_SYSTEM_FOREGROUND when known.TryGetValue(hwnd, out var activated):
+                    events.OnNext(new WindowEvent(WindowEventKind.Activated, activated));
                     break;
             }
         }

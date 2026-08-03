@@ -6,7 +6,10 @@ namespace TaskSpaces.Core.Overview;
 
 // One row per live window. OriginalTitle is present when WE renamed it — the UI shows
 // both names (Petre: "show me what the new name is vs the original title").
-public sealed record WindowRow(WindowInfo Window, Maybe<string> OriginalTitle);
+// IsActive marks the focused window so the surfaces can highlight it (Petre: "active window
+// should be highlighted in the floating window"). Defaulted, so the many existing
+// constructions that predate it stay valid and simply read "not active".
+public sealed record WindowRow(WindowInfo Window, Maybe<string> OriginalTitle, bool IsActive = false);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);
