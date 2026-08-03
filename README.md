@@ -1,4 +1,10 @@
-# TaskSpaces
+<p align="center">
+  <img src="docs/branding/taskspaces-mark-256.png" width="128" alt="TaskSpaces" />
+</p>
+
+<h1 align="center">TaskSpaces</h1>
+
+<p align="center"><em>One click switches context — the taskbar follows.</em></p>
 
 Named workspaces for the Windows taskbar. Group your running apps into contexts —
 **Work**, **Personal**, **YouTube** — and switch between them with one click.
