@@ -4,24 +4,36 @@
 
 <h1 align="center">TaskSpaces</h1>
 
-<p align="center"><em>One click switches context — the taskbar follows.</em></p>
+<p align="center"><em>One click switches context. The taskbar follows.</em></p>
 
-Named workspaces for the Windows taskbar. Group your running apps into contexts —
-**Work**, **Personal**, **YouTube** — and switch between them with one click.
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20x64-0078D4" alt="Platform: Windows 11, x64" />
+  <img src="https://img.shields.io/github/v/release/AppifySheets/TaskSpaces" alt="Latest release" />
+  <img src="https://img.shields.io/badge/.NET-10-512BD4" alt=".NET 10" />
+</p>
+
+> **Windows only, by design rather than by omission.** TaskSpaces is built directly on
+> Windows' virtual-desktop COM API, the taskbar's native per-desktop window filtering, and
+> WinEvent hooks. macOS and Linux organise windows on fundamentally different models, so
+> there is no port waiting to be written. If you are not on Windows 11, this is not the tool
+> for you.
+
+Named workspaces for the Windows taskbar. Group your running apps into contexts
+(**Work**, **Personal**, **YouTube**) and switch between them with one click.
 Switch to a workspace and the taskbar shows only that group's windows; everything
 else keeps running out of sight. Workspaces survive reboots.
 
 ## Install
 
-**Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else — the
+**Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
 1. Download `TaskSpaces-1.0.0-win-x64.exe` from the
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
-2. Put it somewhere permanent — `C:\Users\<you>\Programs\TaskSpaces\` is a good
+2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
-3. Double-click it. Nothing appears to happen — TaskSpaces opens no window at
-   startup, it goes straight to the notification area (the tray). Look for the
+3. Double-click it. Nothing appears to happen, because TaskSpaces opens no window at
+   startup; it goes straight to the notification area (the tray). Look for the
    tiled icon there. (It does have windows: **Manage** and the switcher panel open
    when you ask for them.)
 4. Right- or left-click the tray icon to open the menu, then **Manage…** to create
@@ -42,7 +54,7 @@ nothing outside your own user profile:
 > Pick a home for it before enabling that option.
 
 **To uninstall:** untick "Start with Windows", exit from the tray menu, delete the
-exe, and — if you want your settings gone too — delete `%APPDATA%\TaskSpaces`.
+exe, and, if you want your settings gone too, delete `%APPDATA%\TaskSpaces`.
 
 ### "Windows protected your PC"
 
@@ -64,27 +76,27 @@ single ~74 MB exe in `artifacts/publish`.
 
 ## Using it
 
-- **Tray icon** — hover it to peek at every window across every workspace; click for
+- **Tray icon.** Hover it to peek at every window across every workspace; click for
   the menu.
-- **Switcher panel** — click a row to jump straight to that window, wherever it
+- **Switcher panel.** Click a row to jump straight to that window, wherever it
   lives. Drag rows between workspaces. Right-click for pin, send-to, rename and
   restore-title.
-- **Floating bar** — an always-on-top, icon-only strip with one row per workspace.
+- **Floating bar.** An always-on-top, icon-only strip with one row per workspace.
   Click an icon to jump to that window, drag icons between rows to move windows,
   right-click an icon to rename it, hover to see what it actually is. The focused
   window's icon is highlighted. Toggle it from the tray menu.
-- **Hotkeys** — `Ctrl+Alt+←/→` cycles workspaces, `Ctrl+Alt+1…9` jumps to one
+- **Hotkeys.** `Ctrl+Alt+←/→` cycles workspaces, `Ctrl+Alt+1…9` jumps to one
   directly.
-- **Renaming** — give a window a short name so the taskbar shows `RDP` instead of
+- **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of
   `Remote Desktop Manager [_Richard - fhd]`. Names persist across restarts and are
   re-applied when an app rewrites its own title.
-- **Rosters** — a workspace remembers which apps belong to it even when they are
+- **Rosters.** A workspace remembers which apps belong to it even when they are
   closed, so ▶ Start relaunches them all.
 
 ## Why this matters
 
-Switching between projects is expensive, and the expensive part is not the switch —
-it is **rebuilding the context you had before**. Here is what the research actually
+Switching between projects is expensive, and the expensive part is not the switch.
+It is **rebuilding the context you had before**. Here is what the research actually
 says about that, including the parts that argue against this app.
 
 ### The unit people think in is the project, not the window
@@ -114,14 +126,14 @@ That is the cost a workspace tool can actually attack.
 
 ### Your windows are external memory, not clutter
 
-The same study names the strategy developers invent for themselves: **cue priming** —
+The same study names the strategy developers invent for themselves, **cue priming**:
 deliberately leaving the last edited window open, or highlighting the relevant lines, so
 that returning to the task triggers recall.
 
 This is the crux of the whole argument. **A window arrangement is externalised mental
 state.** Every open window is a deliberate cue about where you were. So anything that
 scatters the arrangement destroys the cue, and anything that preserves it preserves the
-context for free. TaskSpaces does not help you rebuild context — it stops the context
+context for free. TaskSpaces does not help you rebuild context; it stops the context
 being demolished.
 
 ### Which is what virtual desktops were invented for, in 1986
@@ -134,8 +146,8 @@ access clusters by task.
 
 Forty years on, Windows ships virtual desktops that solve the *space* problem and barely
 touch the *context* problem: no visible names, no memory of what belongs where, and
-nothing survives a reboot. Existing tools each cover a slice — PowerToys Workspaces
-relaunches layouts, Groupy tabs windows, TaskbarGroups groups shortcuts — but none does
+nothing survives a reboot. Existing tools each cover a slice (PowerToys Workspaces
+relaunches layouts, Groupy tabs windows, TaskbarGroups groups shortcuts), but none does
 *live context switching with persistence*.
 
 ### Attention residue: why unfinished work keeps charging you
@@ -156,7 +168,7 @@ finding.
 | The research says | What TaskSpaces does |
 |---|---|
 | Work is organised in *spheres*, not windows | Workspaces are named, first-class things you switch between |
-| Only 10% of resumptions are fast; the rest are re-finding | A switch restores an entire context at once — nothing to re-find |
+| Only 10% of resumptions are fast; the rest are re-finding | A switch restores an entire context at once, with nothing to re-find |
 | People leave windows open as recall cues | The cue *is* the workspace, preserved and persisted |
 | Window thrashing wastes effort keeping the right windows visible | Other contexts' windows are on another desktop, natively filtered out of the taskbar |
 | Unfinished work stays costly while it is in view | Other projects are genuinely out of sight, not merely minimised |
@@ -166,8 +178,8 @@ And the features that exist because manual organisation decays the moment it nee
 upkeep: **placement memory** (where you last put a window is where it goes next time,
 keyed to what the app *is* rather than to a window handle), **rosters and rehydration**
 (a workspace remembers its apps even when they are closed), and **renaming** (`RDP` is
-parsed faster than `Remote Desktop Manager [_Richard - fhd]` — retrieval cues work better
-when they are legible).
+parsed faster than `Remote Desktop Manager [_Richard - fhd]`, and retrieval cues work
+better when they are legible).
 
 ### Who it is for, and who it is not
 
@@ -191,17 +203,17 @@ you do not have.
 
 ### Sources
 
-- Victor M. González and Gloria Mark, ["Constant, constant, multi-tasking craziness": Managing multiple working spheres](https://dl.acm.org/doi/10.1145/985692.985707), CHI 2004 — working spheres, and the ~3-minutes-per-event figure.
-- Gloria Mark, Victor M. González and Justin Harris, [No Task Left Behind? Examining the Nature of Fragmented Work](https://ics.uci.edu/~gmark/CHI2005.pdf), CHI 2005 — the fragmentation of knowledge work.
-- Gloria Mark, *Attention Span* (Hanover Square Press, 2023) — the 2.5-minutes-to-47-seconds figure.
-- Chris Parnin and Spencer Rugaber, [Resumption strategies for interrupted programming tasks](https://link.springer.com/article/10.1007/s11219-010-9104-9), Software Quality Journal 19(1), 2011 ([PDF](http://www.chrisparnin.me/pdf/parnin-sqj11.pdf)) — the 10% / 7% resumption figures and cue priming.
-- D. Austin Henderson and Stuart K. Card, [Rooms: the use of multiple virtual workspaces to reduce space contention in a window-based graphical user interface](https://dl.acm.org/doi/10.1145/24054.24056), ACM Transactions on Graphics 5(3), 1986 ([PDF](http://rivcons.com/wp-content/uploads/1987/Rooms-TOG.pdf)) — window thrashing.
-- Sophie Leroy, [Why is it so hard to do my work? The challenge of attention residue when switching between work tasks](https://ideas.repec.org/a/eee/jobhdp/v109y2009i2p168-181.html), Organizational Behavior and Human Decision Processes 109(2), 2009 — attention residue.
+- Victor M. González and Gloria Mark, ["Constant, constant, multi-tasking craziness": Managing multiple working spheres](https://dl.acm.org/doi/10.1145/985692.985707), CHI 2004. Working spheres, and the ~3-minutes-per-event figure.
+- Gloria Mark, Victor M. González and Justin Harris, [No Task Left Behind? Examining the Nature of Fragmented Work](https://ics.uci.edu/~gmark/CHI2005.pdf), CHI 2005. The fragmentation of knowledge work.
+- Gloria Mark, *Attention Span* (Hanover Square Press, 2023). The 2.5-minutes-to-47-seconds figure.
+- Chris Parnin and Spencer Rugaber, [Resumption strategies for interrupted programming tasks](https://link.springer.com/article/10.1007/s11219-010-9104-9), Software Quality Journal 19(1), 2011 ([PDF](http://www.chrisparnin.me/pdf/parnin-sqj11.pdf)). The 10% and 7% resumption figures, and cue priming.
+- D. Austin Henderson and Stuart K. Card, [Rooms: the use of multiple virtual workspaces to reduce space contention in a window-based graphical user interface](https://dl.acm.org/doi/10.1145/24054.24056), ACM Transactions on Graphics 5(3), 1986 ([PDF](http://rivcons.com/wp-content/uploads/1987/Rooms-TOG.pdf)). Window thrashing.
+- Sophie Leroy, [Why is it so hard to do my work? The challenge of attention residue when switching between work tasks](https://ideas.repec.org/a/eee/jobhdp/v109y2009i2p168-181.html), Organizational Behavior and Human Decision Processes 109(2), 2009. Attention residue.
 
 ## How it works
 
 - Each workspace is backed by a real Windows virtual desktop, so taskbar filtering
-  is native — no shell hacks, and a crash can never lose a window. (Hiding windows
+  is native, with no shell hacks, and a crash can never lose a window. (Hiding windows
   with `ShowWindow` was considered and rejected for exactly that reason.)
 - Where a window belongs is remembered by **what it is**, not by its window handle:
   identity is its executable path plus arguments, so `rider64 A.sln` and
@@ -220,7 +232,7 @@ mode), the Windows virtual desktop COM API via Slions.VirtualDesktop, WinEvent h
 plus RX for window lifecycle events, and CSharpFunctionalExtensions for
 railway-style error handling.
 
-The domain is deliberately COM-free and fully unit-tested — 186 tests, of which 179
+The domain is deliberately COM-free and fully unit-tested: 186 tests, of which 179
 run without touching Windows at all.
 
 ## Development
