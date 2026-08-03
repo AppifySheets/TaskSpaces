@@ -441,7 +441,50 @@ public sealed class WorkspaceManager(
         && !detached.Contains(handle)
         && !desktops.IsPinned(handle).GetValueOrDefault(false);
 
-    public Result RenameWindow(WindowHandle window, string shortName) =>
+    // Petre: "i want to have the ability to specify a wildcard instead of the full window
+    // name... 'beeper *' would match all beepers and still rename to beeper".
+    //
+    // Branching HERE rather than in each surface is deliberate: the floating bar's icon menu
+    // and Manage's row menu both call RenameWindow, so wildcard support arrives in both from
+    // one place and cannot end up implemented twice with different rules.
+    //
+    // A wildcard produces a durable RenameRule instead of a PersistedRename. That difference
+    // is the whole point: a PersistedRename is keyed on the exact title at the moment of
+    // renaming, so it lapses as soon as the app rewrites its title (Beeper carries the current
+    // chat, RDM the session), whereas a rule keeps matching. Everything downstream already
+    // applies rename rules on Appeared and on TitleChanged, so nothing else needed changing.
+    public Result RenameWindow(WindowHandle window, string input) =>
+        RenamePattern.IsWildcard(input)
+            ? AddRenameRule(input)
+            : RenameExactly(window, input);
+
+    // Prepended, not appended: rules are matched first-hit-wins in list order, so the newest
+    // and most specific intent should win over an older broader pattern.
+    public Result AddRenameRule(string input) =>
+        Result.FailureIf(RenamePattern.ShortNameOf(input).Length == 0,
+                "A wildcard rename still needs a name: \"*\" on its own matches everything and names it nothing.")
+            .Tap(() => Persist(State with
+            {
+                RenameRules = [new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(input), RenamePattern.ShortNameOf(input)), .. State.RenameRules],
+            }))
+            // Apply it immediately to everything already open, so the rename is visible now
+            // rather than only on the next Appeared or TitleChanged.
+            //
+            // NOT ReapplyRenames(): that sweep refreshes titles for windows ALREADY in the
+            // ledger and adopts persisted renames after a restart. It never evaluates rules,
+            // so a brand-new rule would have left the very window Petre was renaming
+            // untouched until its title happened to change.
+            //
+            // Skips windows we have already renamed, for the same reason OnTitleChanged does:
+            // ApplyRename records the current title as the ORIGINAL, so applying twice would
+            // capture our own short name as the thing to restore later.
+            .Tap(() => knownWindows.Values
+                .Where(w => ledger.AppliedName(w.Handle).HasNoValue)
+                .ToList()
+                .ForEach(w => RulesEngine.MatchRename(w, State.RenameRules)
+                    .Tap(shortName => { ApplyRename(w, shortName); })));
+
+    Result RenameExactly(WindowHandle window, string shortName) =>
         knownWindows.TryGetValue(window, out var info)
             ? ApplyRename(info, shortName)
                 // Manual renames persist (spec: survive restarts). Rule-based renames never
