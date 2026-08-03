@@ -198,8 +198,7 @@ public class FloatingBarRebuildTests
     {
         var harness = Harness.Build();
 
-        var toggled = 0;
-        var manage = new ManageWindow(harness.Manager, compatibilityMode: false, () => toggled++, () => false);
+        var manage = new ManageWindow(harness.Manager, compatibilityMode: false);
 
         // Button.Content here is a raw string rather than a TextBlock, so these are collected
         // separately from the text labels.
@@ -207,14 +206,10 @@ public class FloatingBarRebuildTests
         Assert.Contains("↑ Up", buttons);
         Assert.Contains("↓ Down", buttons);
 
-        // "Show floating bar" moved here from the tray menu, which is now Manage + Exit only.
-        // Without it a bar hidden from its OWN right-click menu could never be brought back,
-        // so this asserts the way back exists and actually toggles.
-        var showBar = (CheckBox)manage.FindName("ShowFloatingBar")!;
-        Assert.Equal("Show floating bar", (string)showBar.Content);
-        Assert.Equal(0, toggled); // setting IsChecked in the constructor must NOT fire the toggle
-        showBar.IsChecked = true;
-        Assert.Equal(1, toggled);
+        // There must be NO "Show floating bar" checkbox. Petre: "show floating bar doesn't make
+        // sense anymore, it's crucial for the app's design" -- the bar is the only surface that
+        // lists windows, so offering to switch it off both made no sense and left no way back.
+        Assert.Null(manage.FindName("ShowFloatingBar"));
 
         manage.Close();
     });

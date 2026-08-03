@@ -20,13 +20,10 @@
          almost nothing to grab. See FloatingBar.xaml.cs for the press/move/threshold
          logic; this Border no longer has its own MouseLeftButtonDown handler. -->
     <Border x:Name="Root" CornerRadius="8" Background="#99202020" Padding="6">
-        <!-- Right-click anywhere on the bar's background (not consumed by an icon
-             Button, which handles its own input): hide. -->
-        <Border.ContextMenu>
-            <ContextMenu>
-                <MenuItem Header="Hide floating bar" Click="OnHideClick"/>
-            </ContextMenu>
-        </Border.ContextMenu>
+        <!-- No "Hide floating bar" menu any more. Petre: "show floating bar doesn't make
+             sense anymore, it's crucial for the app's design." Once the switcher panel and the
+             Windows tab were gone this bar became the only surface that lists windows and
+             jumps to them, so hiding it left no way to reach your own windows. Always on. -->
         <StackPanel>
             <!-- One horizontal row per group (Pinned first, then every workspace, then
                  unbound desktops with windows), populated in code-behind (Rebuild). -->
@@ -46,7 +43,15 @@
                  text keeps SizeToContent from re-sizing (and thus re-positioning) the
                  whole bar every time a longer or shorter title is hovered. -->
             <Border Height="1" Margin="0,4,0,3" Background="White" Opacity="0.2"/>
-            <TextBlock x:Name="Info" Width="340" FontSize="11" Foreground="White"
+            <!-- Petre: "that floating window width can be half of what it is now... maybe even
+                 less, 3 icons wide by default, can grow on demand."
+                 This TextBlock is what dictated the bar's width: at 340 it was wider than any
+                 row of icons, so the bar was always that wide no matter how little was in it.
+                 Narrowed to roughly three icons plus a row label. A FIXED width is still the
+                 point (see the comment above): it stops a hover from resizing, and therefore
+                 repositioning, a SizeToContent window. Rows wider than this still grow the bar,
+                 which is the "grow on demand" half. -->
+            <TextBlock x:Name="Info" Width="150" FontSize="11" Foreground="White"
                        TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
         </StackPanel>
     </Border>

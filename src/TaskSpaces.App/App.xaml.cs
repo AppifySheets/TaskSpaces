@@ -183,7 +183,14 @@ public partial class App : Application
         // restarts. Gated on !compatibilityMode for the same reason hotkeys/rehydration
         // are below -- every icon click calls JumpTo, which needs a real desktop to
         // switch to, and compatibility mode has none.
-        if (!compatibilityMode && manager.State.FloatingBar is { Visible: true })
+        // Always shown, no longer conditional on the persisted Visible flag. Petre: "show
+        // floating bar doesn't make sense anymore, it's crucial for the app's design." The bar
+        // is the only surface that lists windows and jumps to them now, so it starts with the
+        // app. AppState.FloatingBar is still read for its POSITION; Visible is retained in the
+        // record only so older state.json files keep deserialising, and is ignored.
+        // Still gated on compatibility mode: every icon click calls JumpTo, which needs real
+        // desktops to switch between.
+        if (!compatibilityMode)
         {
             floatingBar = new FloatingBar(manager);
             floatingBar.ShowBar();
@@ -307,27 +314,11 @@ public partial class App : Application
             return;
         }
 
-        // Manage owns the "Show floating bar" checkbox now that the tray menu is down to
-        // Manage + Exit, so it needs both the toggle and a way to read the live state. The
-        // state is read through a delegate rather than passed by value because the bar can
-        // also be hidden from its OWN right-click menu, which would leave a by-value copy
-        // stale the moment the window reopened.
-        manageWindow = new ManageWindow(manager!, compatibilityMode, ToggleFloatingBar, () => floatingBar is { IsVisible: true });
+        manageWindow = new ManageWindow(manager!, compatibilityMode);
         manageWindow.Closed += (_, _) => manageWindow = null;
         manageWindow.Show();
     }
 
-    // Toggles the bar. Called from Manage's checkbox (it used to be a tray menu item).
-    void ToggleFloatingBar()
-    {
-        if (floatingBar is { IsVisible: true }) floatingBar.HideBar();
-        else
-        {
-            floatingBar ??= new FloatingBar(manager!);
-            floatingBar.ShowBar();
-            PinFloatingBar(); // no-op after the first successful/attempted pin (see PinFloatingBar)
-        }
-    }
 
     // Task 11 fix round 4 (Petre: the bar stayed behind on workspace switch): dogfooding
     // our own Pin support. The FloatingBar is an ordinary top-level window --
