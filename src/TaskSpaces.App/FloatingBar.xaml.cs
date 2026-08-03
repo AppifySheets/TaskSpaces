@@ -233,11 +233,15 @@ public partial class FloatingBar : Window
             // switch target rather than dead chrome.
             overview.Workspaces
                 .ToList()
-                .ForEach(g => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent,
+                // Index carries the workspace's position so WorkspacePalette can colour by
+                // ORDER: renaming a workspace must not recolour it, and reordering should move
+                // its colour with it.
+                .ForEach((g) => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent,
                     switchTo: () => manager.Switch(g.Workspace.Id),
                     groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
                     onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
-                    g.Running)));
+                    g.Running,
+                    tint: LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)))));
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
             // ones) get rows too, labeled with the desktop's actual name; label click
@@ -295,13 +299,20 @@ public partial class FloatingBar : Window
     // too terse. groupKey/onDrop mirror WindowGroupsView.AddGroup: a null onDrop means
     // "rows here drag FROM this group, but nothing can be dropped ONTO it" (the Unplaced
     // catch-all).
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows)
+    // tint (Petre: "i also want different colors for different workspaces in the lanes") is the
+    // lane's own colour, or null for the rows that are not workspaces -- pinned, unbound
+    // desktops, Unplaced -- which stay neutral so a coloured lane always means "a workspace".
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
-        // DragOver, making drops land unpredictably. Transparent is the standard fix, and
-        // it doubles as the base value the drag highlight below toggles.
-        var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent };
+        // DragOver, making drops land unpredictably. Transparent is the standard fix.
+        //
+        // `idle` rather than a literal Transparent everywhere below: the drag highlight
+        // replaces this Background and has to put the LANE COLOUR back on leave, not
+        // transparent, or dragging over a workspace would permanently strip its tint.
+        var idle = tint ?? Brushes.Transparent;
+        var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Background = idle };
         container.Children.Add(RowLabel(visualLabel, isCurrent, switchTo));
 
         var icons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -324,10 +335,10 @@ public partial class FloatingBar : Window
                 Info.Text = $"→ move to {groupLabel}";
                 DnDTrace.LogTargetChange(groupKey, e.Effects.ToString());
             };
-            container.DragLeave += (_, _) => { container.Background = Brushes.Transparent; ClearInfo(); };
+            container.DragLeave += (_, _) => { container.Background = idle; ClearInfo(); };
             container.Drop += (_, e) =>
             {
-                container.Background = Brushes.Transparent;
+                container.Background = idle;
                 ClearInfo();
                 DnDTrace.ResetTarget();
                 if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) { DnDTrace.Log($"bar drop on '{groupKey}': no drag payload present"); return; }
@@ -361,6 +372,36 @@ public partial class FloatingBar : Window
     // to any future surface built off the UI thread. Freezing also lets WPF skip
     // change-tracking on a value that never changes. Same reasoning as IconCache's frozen
     // bitmaps.
+    // A workspace's lane colour, heavily diluted. WorkspacePalette gives an opaque "#RRGGBB";
+    // painted at full strength behind app icons on a translucent bar it would drown them, so the
+    // alpha is dropped to ~0x38. The result still separates lanes at a glance, which is the
+    // request, without competing with the icons or with the active-window highlight.
+    //
+    // Frozen for the same thread-affinity reason every other brush here is (see Frozen below),
+    // and cached per colour because Rebuild runs on every window event: an unbounded number of
+    // new brushes per rebuild would be wasteful, and the set of workspace colours is tiny.
+    static readonly Dictionary<string, Brush> LaneTints = [];
+
+    static Brush? LaneTint(Workspace workspace, int index)
+    {
+        var hex = WorkspacePalette.For(workspace, index < 0 ? 0 : index);
+        if (LaneTints.TryGetValue(hex, out var cached)) return cached;
+        try
+        {
+            var solid = (Color)ColorConverter.ConvertFromString(hex);
+            var brush = new SolidColorBrush(Color.FromArgb(0x38, solid.R, solid.G, solid.B));
+            brush.Freeze();
+            LaneTints[hex] = brush;
+            return brush;
+        }
+        catch (FormatException)
+        {
+            // A hand-edited state.json can hold anything. An unreadable colour means "no tint",
+            // never a crash on every rebuild.
+            return null;
+        }
+    }
+
     static Brush Frozen(byte a, byte r, byte g, byte b)
     {
         var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
