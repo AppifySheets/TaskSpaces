@@ -35,6 +35,14 @@ public sealed class WorkspaceManager(
     readonly Subject<Unit> stateChanged = new();
     readonly Dictionary<WindowHandle, WindowInfo> knownWindows = [];
     readonly Dictionary<WindowHandle, Guid> memberships = []; // window -> workspace
+
+    // Windows Petre deliberately dragged OUT of every workspace onto a plain OS desktop
+    // (MoveToDesktop). Without this, removing the membership alone would make the window
+    // auto-placeable again, so the very next rule evaluation — for a browser, its next
+    // title change, i.e. seconds later — would yank it straight back to the workspace he
+    // just dragged it out of. Live-only, exactly like `memberships`: a restart re-derives
+    // placement from the OS, and rules legitimately own a window again next launch.
+    readonly HashSet<WindowHandle> detached = [];
     RenameLedger ledger = RenameLedger.Empty;
     PendingPlacements pending = PendingPlacements.Empty;      // rehydration (Task 9)
     IDisposable? subscription;
@@ -192,6 +200,10 @@ public sealed class WorkspaceManager(
         knownWindows.Remove(window.Handle);
         ledger = ledger.Remove(window.Handle);
         memberships.Remove(window.Handle); // roster entry stays — ▶ Start relaunches it
+        // A closed window's hwnd can be recycled by Windows for an entirely different
+        // window later; a stale "detached" entry would silently exempt that new window
+        // from rules. Cleared here for the same reason memberships is.
+        detached.Remove(window.Handle);
 
         // Fix wave (reviewer, Important): same rationale as OnHidden above — a closed
         // window's running-row must disappear from any open panel/Windows tab, and a
@@ -211,6 +223,7 @@ public sealed class WorkspaceManager(
             .Tap(() =>
             {
                 memberships[window.Handle] = workspaceId;
+                detached.Remove(window.Handle); // a workspace claims it again
                 RosterAdd(window, workspaceId);
             });
 
@@ -336,11 +349,34 @@ public sealed class WorkspaceManager(
                 .Bind(() => Place(info, workspaceId))
             : Result.Failure("Window no longer exists.");
 
-    // Rules (and late placement) only touch windows that are neither placed nor pinned:
-    // pinned windows live on ALL desktops — moving one to a workspace desktop would
-    // silently defeat the pin Petre set by hand.
+    // Drag-and-drop onto a plain OS desktop row (e.g. Petre's unbound "Main"): the
+    // counterpart to AssignWindow for destinations that aren't workspaces. Same shape —
+    // unpin first, because putting a window on ONE desktop contradicts "on all of
+    // them" — then move it and drop the workspace membership.
+    //
+    // The workspace's ROSTER entry is deliberately left alone: a roster lists what
+    // BELONGS to a workspace even when it isn't running there (spec), and it has its own
+    // explicit editing UI ("Add app…" / "Remove from workspace"). A drag says where this
+    // window should be right now, not what the workspace is made of — so ▶ Start still
+    // relaunches the app later, exactly as before the drag.
+    public Result MoveToDesktop(WindowHandle window, Guid desktopId) =>
+        desktops.IsPinned(window)
+            .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
+            .Bind(() => desktops.MoveWindow(window, desktopId))
+            .Tap(() =>
+            {
+                memberships.Remove(window);
+                detached.Add(window);
+                stateChanged.OnNext(Unit.Default); // no Persist() on this path — pulse the UI ourselves
+            });
+
+    // Rules (and late placement) only touch windows that are neither placed, pinned, nor
+    // deliberately detached: pinned windows live on ALL desktops — moving one to a
+    // workspace desktop would silently defeat the pin Petre set by hand — and a detached
+    // window is one he dragged out of every workspace by hand (see `detached`).
     bool AutoPlaceable(WindowHandle handle) =>
         !memberships.ContainsKey(handle)
+        && !detached.Contains(handle)
         && !desktops.IsPinned(handle).GetValueOrDefault(false);
 
     public Result RenameWindow(WindowHandle window, string shortName) =>

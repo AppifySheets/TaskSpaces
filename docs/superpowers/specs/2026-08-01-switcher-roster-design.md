@@ -189,7 +189,14 @@ space, and let me drag and drop them, similar to the [hover panel]".
   reachable via the workspace header's right-click menu — one entry, out of the way).
 - **Window rows are draggable** — drop onto a workspace group moves the window there
   (AssignWindow semantics, incl. unpin-first); drop onto the 📌 Pinned group pins it.
-  Unbound-desktop groups are not drop targets in v1.
+  *(Amended, fourth testing round:)* dropping onto an **unbound-desktop group** (e.g.
+  "Main") also works — `MoveToDesktop`: unpin first, move to that desktop, drop the
+  workspace membership, and mark the window **detached** so rules don't drag it back on
+  its next title change (a browser retitles constantly, so without this the drag would
+  undo itself within seconds). Detachment is live-only state, like every other
+  membership fact; the workspace's roster entry is untouched (▶ Start still relaunches
+  the app). The "Unplaced" catch-all group is never a drop target — it is not a real
+  desktop.
 - The Manage window's **Windows tab is restructured to the same grouped view** as the
   panel: workspace/desktop headers with their windows underneath, same drag-and-drop,
   same right-click menu (Pin/Unpin · Send to · Rename… · Restore title). One shared
@@ -215,13 +222,33 @@ is a workspace bar" rule collapsed the bar to a single row on Petre's machine, w
 most windows live on the unbound "Main" desktop; he asked to "show tabs from all
 workspaces". The "Unplaced" catch-all group keeps a plain, non-clickable label — it
 is not a real desktop.)* Clicking an icon **jumps to that window**
-(switch workspace if needed + focus — existing JumpTo). Hover tooltip:
-"Workspace · window title". Dragging the bar's background moves it; its position and
+(switch workspace if needed + focus — existing JumpTo). Its position and
 visibility persist in state.json (`FloatingBar` init-property on AppState — older
 files load with it hidden/default, no migration). Toggled from the tray menu
 ("Show floating bar", checkable). Right-click on the bar → small menu (Hide bar).
-Live-refreshes via StateChanged like the other surfaces. No text, no roster entries,
-no drag-and-drop on the bar in v1 — it is a glanceable jump surface, not a manager.
+Live-refreshes via StateChanged like the other surfaces. No roster (not-running)
+entries — it is a jump-and-arrange surface for live windows.
+
+*Fourth testing round, both asked for by Petre after living with the bar:*
+
+- **Hover info line** ("add a small panel, when i hover over any icon, i want to see
+  what it is"): a reserved single line at the bottom of the bar showing the hovered
+  window's full title plus, dimmed, its process, its group, and the original title when
+  we renamed it. It is part of the bar's own window rather than a popup or tooltip —
+  this window is topmost, layered (`AllowsTransparency`) and pinned to all desktops,
+  the setup where separate-HWND popups misbehave most — with height reserved (a hint
+  when nothing is hovered) and a fixed text width, so a hover never resizes or moves a
+  bar that sits in the bottom-right corner. During a drag the same line reads out the
+  drop target ("→ move to GEPHA").
+- **Icons are drag sources** ("i also want to be able to drag them around across
+  tabs"): dragging an icon onto another row moves the window through the same
+  AssignWindow / PinWindow / MoveToDesktop paths as the switcher panel, sharing the drag
+  payload format so a drag can even cross between the two surfaces. The row under the
+  cursor highlights. One consequence, deliberate: a left-drag that starts **on an icon**
+  now moves the window, so the bar itself is moved by dragging anywhere else — its row
+  labels, the padding, the info line (the earlier "drag from anywhere" fix, narrowed by
+  exactly the icon area). The idle info line names both gestures, since neither is
+  discoverable on an icon-only surface.
 
 ## Non-goals
 

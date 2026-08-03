@@ -27,8 +27,27 @@
                 <MenuItem Header="Hide floating bar" Click="OnHideClick"/>
             </ContextMenu>
         </Border.ContextMenu>
-        <!-- One horizontal row per group (Pinned first, then workspaces in order),
-             populated in code-behind (Rebuild); see FloatingBar.xaml.cs. -->
-        <StackPanel x:Name="Rows"/>
+        <StackPanel>
+            <!-- One horizontal row per group (Pinned first, then every workspace, then
+                 unbound desktops with windows), populated in code-behind (Rebuild). -->
+            <StackPanel x:Name="Rows"/>
+
+            <!-- Hover info line (Petre: "add a small panel, when i hover over any icon,
+                 i want to see what it is"). Deliberately part of THIS window rather than
+                 a Popup or ToolTip: those live in their own HWNDs, and this window is a
+                 topmost + AllowsTransparency layered window pinned to all virtual
+                 desktops, the class of setup where separate-HWND popups are most prone
+                 to landing behind the bar or on the wrong desktop. In-window text cannot
+                 have that problem.
+                 Height is RESERVED (the line is always present, showing a hint when
+                 nothing is hovered) instead of appearing on demand: the bar's default
+                 position is the bottom-right corner, where a grow-on-hover panel would
+                 expand straight off the bottom of the work area. A fixed Width on the
+                 text keeps SizeToContent from re-sizing (and thus re-positioning) the
+                 whole bar every time a longer or shorter title is hovered. -->
+            <Border Height="1" Margin="0,4,0,3" Background="White" Opacity="0.2"/>
+            <TextBlock x:Name="Info" Width="340" FontSize="11" Foreground="White"
+                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+        </StackPanel>
     </Border>
 </Window>

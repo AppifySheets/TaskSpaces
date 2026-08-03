@@ -1,10 +1,12 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
+using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Geometry;
 using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
@@ -85,10 +87,35 @@ public partial class FloatingBar : Window
     // the window-level mechanism already covers the Border's own bare-background case
     // too, so a second, narrower mechanism would be pure redundancy.
     //
-    // Records the press point but does NOT set e.Handled -- an icon Button must still
-    // arm normally on press (matches WindowGroupsView.SetupDragSource's
-    // PreviewMouseLeftButtonDown, which does the same for row-drag).
-    void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => dragStart = PointToScreen(e.GetPosition(this));
+    // Records the press point but does NOT set e.Handled -- a row LABEL button must still
+    // arm normally on press (matches WindowDragSource's PreviewMouseLeftButtonDown, which
+    // does the same for row-drag).
+    //
+    // ...EXCEPT on icons. Once icons became drag sources for MOVING WINDOWS between rows
+    // (Petre: "i also want to be able to drag them around across tabs"), one left-drag
+    // gesture could no longer mean both "move the bar" and "move this window" -- so the
+    // gesture is split by WHERE it starts: on an icon it drags the window; anywhere else
+    // (row labels, the padding around them, the separators, the info line) it still drags
+    // the bar, which is what made round 3's "drag from anywhere" fix work in the first
+    // place. Ignoring the press here is what keeps OnPreviewMouseMove below from starting
+    // a bar-move that would fight the icon's own DoDragDrop for the same mouse.
+    void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
+        dragStart = StartedOnIcon(e.OriginalSource) ? null : PointToScreen(e.GetPosition(this));
+
+    // Walks up from whatever element the press actually hit (an Image inside a Button
+    // template, usually) looking for one of our tagged icon buttons. VisualTreeHelper
+    // rather than the logical tree: the press lands on template-generated visuals, which
+    // the logical tree does not connect to the Button.
+    static bool StartedOnIcon(object source)
+    {
+        for (var node = source as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+            if (node is FrameworkElement { Tag: IconTag }) return true;
+        return false;
+    }
+
+    // Marks an icon Button for StartedOnIcon above. A private const string compared by
+    // value (pattern-matched, so a null Tag can never match).
+    const string IconTag = "icon";
 
     // Clears a finished press so a later, unrelated move never measures distance from
     // a stale point -- same hardening WindowGroupsView.SetupDragSource applies to its
@@ -119,6 +146,7 @@ public partial class FloatingBar : Window
     void Rebuild()
     {
         Rows.Children.Clear();
+        ClearInfo();
         manager.WindowsByWorkspace().Tap(overview =>
         {
             // Task 11 fix round 5 (Petre: "the rows are indistinguishable... i want to
@@ -133,7 +161,10 @@ public partial class FloatingBar : Window
                 // say the full word "Pinned" -- a glyph reads fine as a compact row
                 // label, but "Pinned · window title" is a nicer tooltip than "📌 ·
                 // window title".
-                groupRows.Add(GroupRow(visualLabel: "📌", tooltipPrefix: "Pinned", isCurrent: false, switchTo: null, overview.Pinned));
+                groupRows.Add(GroupRow(visualLabel: "📌", groupLabel: "Pinned", isCurrent: false, switchTo: null,
+                    groupKey: DraggedWindow.PinnedGroupKey,
+                    onDrop: h => Report(manager.PinWindow(h)),
+                    overview.Pinned));
 
             // Fix round 6 (Petre, screenshot showing ONE "Sparrow" row: "it does follow
             // across every workspace, but not showw all workspace tabs"). The original
@@ -145,7 +176,11 @@ public partial class FloatingBar : Window
             // switch target rather than dead chrome.
             overview.Workspaces
                 .ToList()
-                .ForEach(g => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent, () => manager.Switch(g.Workspace.Id), g.Running)));
+                .ForEach(g => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent,
+                    switchTo: () => manager.Switch(g.Workspace.Id),
+                    groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
+                    onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
+                    g.Running)));
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
             // ones) get rows too, labeled with the desktop's actual name; label click
@@ -155,7 +190,13 @@ public partial class FloatingBar : Window
             overview.OtherDesktops
                 .ToList()
                 .ForEach(g => groupRows.Add(GroupRow(g.Name, g.Name, g.IsCurrent,
-                    g.DesktopId == Guid.Empty ? null : () => manager.SwitchToDesktop(g.DesktopId), g.Windows)));
+                    // Guid.Empty == the "Unplaced" catch-all: not a real desktop, so
+                    // neither a switch destination nor a drop target (same rule as the
+                    // switcher panel's grouped view).
+                    switchTo: g.DesktopId == Guid.Empty ? null : () => manager.SwitchToDesktop(g.DesktopId),
+                    groupKey: DraggedWindow.DesktopGroupKey(g.DesktopId),
+                    onDrop: g.DesktopId == Guid.Empty ? null : h => Report(manager.MoveToDesktop(h, g.DesktopId)),
+                    g.Windows)));
 
             groupRows
                 .SelectMany((row, i) => i == 0 ? new[] { row } : new[] { Separator(), row })
@@ -178,17 +219,88 @@ public partial class FloatingBar : Window
         Opacity = 0.2,
     };
 
-    UIElement GroupRow(string visualLabel, string tooltipPrefix, bool isCurrent, Func<Result>? switchTo, IEnumerable<WindowRow> rows)
+    // groupLabel is the group's full human name ("Pinned", "GEPHA", "Main") — used in the
+    // hover info line and as the drop-target readout, where the visualLabel "📌" would be
+    // too terse. groupKey/onDrop mirror WindowGroupsView.AddGroup: a null onDrop means
+    // "rows here drag FROM this group, but nothing can be dropped ONTO it" (the Unplaced
+    // catch-all).
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows)
     {
-        var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        // Background MUST be non-null for a panel to take part in hit testing at all --
+        // a null Background leaves gaps between icons that swallow nothing and report no
+        // DragOver, making drops land unpredictably. Transparent is the standard fix, and
+        // it doubles as the base value the drag highlight below toggles.
+        var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent };
         container.Children.Add(RowLabel(visualLabel, isCurrent, switchTo));
 
         var icons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        rows.ToList().ForEach(r => icons.Children.Add(IconButton(tooltipPrefix, r)));
+        rows.ToList().ForEach(r => icons.Children.Add(IconButton(groupLabel, groupKey, r)));
         container.Children.Add(icons);
+
+        if (onDrop is not null)
+        {
+            container.AllowDrop = true;
+            container.DragOver += (_, e) =>
+            {
+                var accepted = e.Data.GetDataPresent(DraggedWindow.DragFormat);
+                e.Effects = accepted ? DragDropEffects.Move : DragDropEffects.None;
+                e.Handled = true;
+                if (!accepted) return;
+                // The reserved info line doubles as the drop-target readout: on a bar this
+                // small, "where will this land?" is otherwise pure guesswork -- rows are
+                // ~28px tall and adjacent.
+                container.Background = DropHighlight;
+                Info.Text = $"→ move to {groupLabel}";
+                DnDTrace.LogTargetChange(groupKey, e.Effects.ToString());
+            };
+            container.DragLeave += (_, _) => { container.Background = Brushes.Transparent; ClearInfo(); };
+            container.Drop += (_, e) =>
+            {
+                container.Background = Brushes.Transparent;
+                ClearInfo();
+                DnDTrace.ResetTarget();
+                if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) { DnDTrace.Log($"bar drop on '{groupKey}': no drag payload present"); return; }
+                if (dragged.SourceGroupKey == groupKey) { DnDTrace.Log($"bar drop '{dragged.Handle}' on '{groupKey}': no-op (own group)"); return; }
+                DnDTrace.Log($"bar drop '{dragged.Handle}': '{dragged.SourceGroupKey}' -> '{groupKey}'");
+                onDrop(dragged.Handle);
+            };
+        }
 
         return container;
     }
+
+    // ~20% white: enough to read as "this row is armed" against the bar's #99202020
+    // background without washing the icons out mid-drag.
+    static readonly Brush DropHighlight = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+
+    // --- hover info line ------------------------------------------------------------
+
+    // Petre: "add a small panel, when i hover over any icon, i want to see what it is."
+    // Shows the window's full title plus, dimmed, its process and which group it is in --
+    // enough to answer "what IS that icon", which is exactly how the mystery "Unplaced"
+    // browser window got noticed in the first place. Renamed windows also show the
+    // original title, since our own short name is precisely what makes a window hard to
+    // identify from the icon alone.
+    void ShowInfo(string groupLabel, WindowRow row)
+    {
+        Info.Inlines.Clear();
+        Info.Inlines.Add(new Run(row.Window.Title));
+        var detail = row.OriginalTitle.HasValue
+            ? $"  —  {row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
+            : $"  —  {row.Window.ProcessName} · {groupLabel}";
+        Info.Inlines.Add(new Run(detail) { Foreground = DimForeground });
+    }
+
+    // The idle state: a hint, not blank. It names both gestures the bar answers to --
+    // hovering for identification and dragging icons between rows -- because neither is
+    // discoverable from an icon-only surface, and it costs a line that is reserved anyway.
+    void ClearInfo()
+    {
+        Info.Inlines.Clear();
+        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · drag labels to move") { Foreground = DimForeground });
+    }
+
+    static readonly Brush DimForeground = new SolidColorBrush(Color.FromArgb(0x8C, 0xFF, 0xFF, 0xFF));
 
     // Task 11 fix round 5 (Petre: "separated nicely, so i can tell which workspace i'm
     // going to"): tiny, dim label to the LEFT of each row's icons, vertically centered
@@ -236,7 +348,7 @@ public partial class FloatingBar : Window
         return button;
     }
 
-    UIElement IconButton(string tooltipPrefix, WindowRow row)
+    UIElement IconButton(string groupLabel, string groupKey, WindowRow row)
     {
         var button = new Button
         {
@@ -244,8 +356,16 @@ public partial class FloatingBar : Window
             Margin = new Thickness(2),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            ToolTip = $"{tooltipPrefix} · {row.Window.Title}",
+            ToolTip = $"{groupLabel} · {row.Window.Title}",
+            Tag = IconTag, // marks this as an icon: press-drag moves the WINDOW, not the bar
         };
+
+        // Hover -> identify (the info line above). MouseEnter/Leave rather than the
+        // ToolTip alone: the tooltip stays (harmless, and it survives a hover that starts
+        // outside the window), but it needs a dwell delay, disappears on its own timer,
+        // and lives in a separate HWND -- see the Info panel comment in FloatingBar.xaml.
+        button.MouseEnter += (_, _) => ShowInfo(groupLabel, row);
+        button.MouseLeave += (_, _) => ClearInfo();
         var icon = IconCache.For(row.Window.ProcessPath);
         if (icon is not null)
             // IconCache freezes icons at a fixed 16px source (shared with the switcher
@@ -266,6 +386,15 @@ public partial class FloatingBar : Window
         // privilege on to the target window. Same rationale as SwitcherPanel's
         // running-row click.
         button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator));
+
+        // Petre: "i also want to be able to drag them around across tabs" -- the same drag
+        // source the switcher panel's rows use, so an icon dragged onto another row lands
+        // through the identical AssignWindow/PinWindow/MoveToDesktop path. Sharing the
+        // payload FORMAT with WindowGroupsView also means a drag started on the bar can be
+        // dropped on the switcher panel (and vice versa) if both happen to be open.
+        // onDragStarting clears the info line: the icon under the cursor never raises
+        // MouseLeave once the modal drag loop owns the mouse, so nothing else would.
+        WindowDragSource.Attach(button, row.Window.Handle, groupKey, row.Window.Title, onDragStarting: ClearInfo);
         return button;
     }
 

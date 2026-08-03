@@ -38,14 +38,8 @@ public partial class WindowGroupsView : UserControl
     Action? afterAction;
     IDisposable? subscription;
 
-    // Drag payload: the handle plus the GROUP the row is currently in. Carrying the
-    // source group alongside the handle (rather than just "windowHandle-as-data" per the
-    // spec's literal phrasing) lets the drop guard below do "dropping a row onto its own
-    // group is a no-op" with a plain string comparison, no extra query needed.
-    sealed record DraggedWindow(WindowHandle Handle, string SourceGroupKey);
-    const string DragFormat = "TaskSpaces.WindowGroupsView.DraggedWindow";
-    const string PinnedGroupKey = "pinned";
-    static string WorkspaceGroupKey(Guid workspaceId) => $"workspace:{workspaceId}";
+    // Drag payload + group-key vocabulary live in DraggedWindow.cs — shared with
+    // FloatingBar so drags interoperate across surfaces (see that file's comment).
 
     public WindowGroupsView()
     {
@@ -86,7 +80,7 @@ public partial class WindowGroupsView : UserControl
 
     void OnAutoScrollDragOver(object sender, DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DragFormat)) return;
+        if (!e.Data.GetDataPresent(DraggedWindow.DragFormat)) return;
         var y = e.GetPosition(Scroller).Y;
         if (y < AutoScrollEdgeDip)
             Scroller.ScrollToVerticalOffset(Scroller.VerticalOffset - AutoScrollStepDip);
@@ -121,13 +115,13 @@ public partial class WindowGroupsView : UserControl
             {
                 if (overview.Pinned.Count > 0)
                     AddGroup("📌 Pinned", isCurrent: false, header: null,
-                        overview.Pinned.Select(r => RunningRow(r, pinned: true, groupKey: PinnedGroupKey)),
-                        groupKey: PinnedGroupKey,
+                        overview.Pinned.Select(r => RunningRow(r, pinned: true, groupKey: DraggedWindow.PinnedGroupKey)),
+                        groupKey: DraggedWindow.PinnedGroupKey,
                         onDrop: h => Report(manager.PinWindow(h)));
 
                 overview.Workspaces.ToList().ForEach(g =>
                 {
-                    var key = WorkspaceGroupKey(g.Workspace.Id);
+                    var key = DraggedWindow.WorkspaceGroupKey(g.Workspace.Id);
                     AddGroup($"{g.Workspace.Name} ({g.Running.Count})", g.IsCurrent, WorkspaceHeader(g),
                         g.Running.Select(r => RunningRow(r, pinned: false, groupKey: key))
                             .Concat(g.NotRunning.Select(e => RosterRow(g.Workspace.Id, e))),
@@ -135,15 +129,20 @@ public partial class WindowGroupsView : UserControl
                         onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)));
                 });
 
-                // Unbound-desktop groups (including the "Unplaced" catch-all, Task 10's
-                // bug fix) are NOT drop targets: WorkspaceManager has no operation to move
-                // a window onto a plain OS desktop that isn't a workspace — only
-                // AssignWindow (-> a workspace) and PinWindow exist. groupKey is still set
-                // on their rows (as a drag SOURCE) so dragging FROM one of these groups
-                // onto a real target works identically to dragging from anywhere else.
-                overview.OtherDesktops.ToList().ForEach(g => AddGroup(
-                    $"{g.Name} ({g.Windows.Count})", g.IsCurrent, header: null,
-                    g.Windows.Select(r => RunningRow(r, pinned: false, groupKey: $"desktop:{g.DesktopId}"))));
+                // Unbound-desktop groups (e.g. Petre's "Main") ARE drop targets now, via
+                // MoveToDesktop — dragging a window OUT of a workspace has to be possible,
+                // or drag-and-drop is a one-way street into workspaces. The exception is
+                // the "Unplaced" catch-all (Task 10's bug fix, DesktopId == Guid.Empty):
+                // it is not a real desktop, so there is nowhere to move a window TO.
+                // Its rows still carry a groupKey and stay draggable as SOURCES.
+                overview.OtherDesktops.ToList().ForEach(g =>
+                {
+                    var key = DraggedWindow.DesktopGroupKey(g.DesktopId);
+                    AddGroup($"{g.Name} ({g.Windows.Count})", g.IsCurrent, header: null,
+                        g.Windows.Select(r => RunningRow(r, pinned: false, groupKey: key)),
+                        groupKey: key,
+                        onDrop: g.DesktopId == Guid.Empty ? null : h => Report(manager.MoveToDesktop(h, g.DesktopId)));
+                });
             })
             .TapError(err => GroupsHost.Children.Add(new TextBlock { Text = err, Margin = new Thickness(4) }));
     }
@@ -165,14 +164,14 @@ public partial class WindowGroupsView : UserControl
             panel.AllowDrop = true;
             panel.DragOver += (_, e) =>
             {
-                e.Effects = e.Data.GetDataPresent(DragFormat) ? DragDropEffects.Move : DragDropEffects.None;
+                e.Effects = e.Data.GetDataPresent(DraggedWindow.DragFormat) ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
                 DnDTrace.LogTargetChange(key, e.Effects.ToString());
             };
             panel.Drop += (_, e) =>
             {
                 DnDTrace.ResetTarget();
-                if (e.Data.GetData(DragFormat) is not DraggedWindow dragged) { DnDTrace.Log($"drop on '{key}': no drag payload present"); return; }
+                if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) { DnDTrace.Log($"drop on '{key}': no drag payload present"); return; }
                 if (dragged.SourceGroupKey == groupKey) { DnDTrace.Log($"drop '{dragged.Handle}' on '{key}': no-op (own group)"); return; } // no-op: dropped onto its own group
                 DnDTrace.Log($"drop '{dragged.Handle}': '{dragged.SourceGroupKey}' -> '{key}'");
                 onDrop(dragged.Handle);
@@ -222,80 +221,10 @@ public partial class WindowGroupsView : UserControl
         var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(16, 2, 4, 2), ToolTip = row.Window.Title };
         button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator)).Tap(() => afterAction?.Invoke());
         button.ContextMenu = RunningMenu(row, pinned);
-        SetupDragSource(button, row.Window.Handle, groupKey, row.Window.Title);
+        // Shared with FloatingBar's icons — see WindowDragSource.cs for the press/
+        // threshold/capture logic (extracted from this file, unchanged).
+        WindowDragSource.Attach(button, row.Window.Handle, groupKey, row.Window.Title);
         return button;
-    }
-
-    // Drag-and-drop (spec §Drag-and-drop window management): press-drag beyond the
-    // system's minimum drag distance starts an OLE drag carrying this row's handle + its
-    // current group. Hooked on the PREVIEW (tunneling) events rather than the bubbling
-    // MouseMove/MouseLeftButtonDown: ButtonBase does its own internal press-tracking on
-    // the bubbling route, so tunneling guarantees this handler still sees every move.
-    // (Confirms pitfall #3 from the debugging brief: this reliance on tunneling — not on
-    // ButtonBase's own capture — is exactly why the threshold check below keeps
-    // receiving moves right up to the point DoDragDrop takes over, even for a fast
-    // flick that would otherwise carry the cursor clean off a ~24px-tall row before any
-    // MouseMove fired on the bubbling route.)
-    //
-    // A drag never also fires this row's Click: once DoDragDrop hands the mouse to its
-    // own modal OLE drag loop, the Button never observes the MouseLeftButtonUp it needs
-    // in order to raise Click for the same press — documented WPF behavior, verified by
-    // reasoning about ButtonBase's capture model (no UI test exists to click-and-drag in
-    // this codebase; per the task brief, none was added — "no UI unit tests"). The
-    // ReleaseMouseCapture() call added below does NOT change this: DoDragDrop's OLE loop
-    // intercepts the terminating mouse-up as a native message before WPF's input system
-    // ever turns it into a routed MouseLeftButtonUp, with or without capture already
-    // released — releasing only prevents capture from OUTLIVING the drag (see below), it
-    // doesn't resurrect the Click.
-    static void SetupDragSource(Button button, WindowHandle handle, string groupKey, string title)
-    {
-        Point? dragStart = null;
-
-        button.PreviewMouseLeftButtonDown += (_, e) =>
-        {
-            dragStart = e.GetPosition(null);
-            DnDTrace.Log($"press '{title}' in '{groupKey}'");
-        };
-
-        // Root-cause hardening, pitfall #2 (debugging brief): a plain click used to
-        // leave dragStart set FOREVER — nothing ever cleared it. Any later
-        // press-and-move that reaches this same button's handlers (a legitimate later
-        // click on this row, or a move mis-routed here by leftover capture — see the
-        // ReleaseMouseCapture note below) would then measure distance from that STALE
-        // point instead of the new press, which can misfire a drag using the wrong
-        // start position. Clearing on release and on a leave-while-not-pressed keeps a
-        // finished interaction from bleeding into whatever happens next on this row.
-        button.PreviewMouseLeftButtonUp += (_, _) => dragStart = null;
-        button.MouseLeave += (_, e) => { if (e.LeftButton != MouseButtonState.Pressed) dragStart = null; };
-
-        button.PreviewMouseMove += (_, e) =>
-        {
-            if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
-            var pos = e.GetPosition(null);
-            if (Math.Abs(pos.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
-                && Math.Abs(pos.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
-            dragStart = null;
-
-            // Root-cause hardening, pitfall #1 (debugging brief): ButtonBase.
-            // OnMouseLeftButtonDown calls CaptureMouse() on press. Because DoDragDrop's
-            // modal OLE loop swallows the matching mouse-up itself (see the Click note
-            // above), ButtonBase's OWN OnMouseLeftButtonUp override — the one that would
-            // normally call ReleaseMouseCapture() — never runs for a press that turns
-            // into a drag. Without this explicit release, THIS row's button keeps WPF
-            // mouse capture for the rest of the app's life: capture redirects ALL
-            // subsequent mouse input in the window to the captured element regardless
-            // of where the cursor physically is, so the very NEXT press-and-move
-            // anywhere in the roster would tunnel through THIS row's handlers with
-            // THIS row's stale dragStart/handle/groupKey closed over — a "drag fires
-            // from the wrong row" failure mode that has nothing to do with direction
-            // and everything to do with which row happened to start a drag first.
-            button.ReleaseMouseCapture();
-
-            DnDTrace.Log($"drag-start '{title}' from '{groupKey}'");
-            DnDTrace.ResetTarget();
-            var effect = DragDrop.DoDragDrop(button, new DataObject(DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
-            DnDTrace.Log($"DoDragDrop returned {effect} for '{title}'");
-        };
     }
 
     ContextMenu RunningMenu(WindowRow row, bool pinned)

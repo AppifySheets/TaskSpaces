@@ -78,19 +78,35 @@ Setup: build + run TaskSpaces.App; open Task View to observe desktops.
 33. The old ＋ button is gone from the workspace header; adding an app to a workspace
     is done via "Add app…" in the workspace header's right-click context menu.
 34. Tray menu -> "Show floating bar" -> a small translucent, always-on-top bar appears
-    showing icon rows, one per workspace with running windows (Pinned row first if any
-    windows are pinned; workspaces with nothing running show no row at all); click an
+    with one icon row per group: Pinned first if anything is pinned, then EVERY
+    workspace (an empty one shows just its label), then each unbound desktop that has
+    windows, then "Unplaced" if any window's desktop can't be resolved; click an
     icon -> lands on that window (switches workspace if needed, focuses it); the bar
-    stays open after the click.
-35. Drag the bar's background (not an icon) to a new spot -> it moves with the cursor;
-    restart the app -> the bar reappears in that same spot. Toggle it off/on from the
-    tray menu (checkmark reflects state) -> restart the app -> it stays hidden/shown
-    exactly as last left. Right-click the bar -> "Hide floating bar" also hides it and
-    persists that.
+    stays open after the click. Click a row's dim LABEL -> switches to that
+    workspace/desktop (the 📌 Pinned and "Unplaced" labels are not clickable).
+35. Drag the bar somewhere else by pressing a row LABEL or the padding/info line (not
+    an icon) -> it moves with the cursor; restart the app -> the bar reappears in that
+    same spot. Toggle it off/on from the tray menu (checkmark reflects state) ->
+    restart the app -> it stays hidden/shown exactly as last left. Right-click the bar
+    -> "Hide floating bar" also hides it and persists that.
 36. With the bar showing, open a new app that belongs to a workspace -> its icon
     appears in that workspace's row live, without reopening the bar; close it -> the
-    icon disappears (and the whole row disappears if that was the workspace's last
-    running window).
+    icon disappears.
+37. Hover any bar icon -> the info line at the bottom of the bar names that window:
+    full title, then dimmed process · group (· "was: <original title>" if TaskSpaces
+    renamed it). Move off the icon -> the line returns to its hint text. The bar must
+    NOT resize or jump position while hovering different icons.
+38. Drag a bar icon onto another row -> the row highlights and the info line reads
+    "→ move to <group>" while hovering it; dropping moves that window there (workspace
+    row = move + unpin if pinned; 📌 row = pin; unbound-desktop row = move out of every
+    workspace). Dropping onto its own row does nothing. The "Unplaced" row never
+    highlights and never accepts a drop.
+39. Drag a rule-matched browser window out of its workspace onto the "Main" (unbound)
+    row, then browse to a different page so its title changes -> it STAYS on Main
+    (rules must not drag it back). Its app still appears in the old workspace's
+    not-running roster / ▶ Start list.
+40. A single CLICK on a bar icon (no movement) still jumps to that window — the new
+    drag behavior must not swallow plain clicks.
 
 ## Results (2026-08-01)
 

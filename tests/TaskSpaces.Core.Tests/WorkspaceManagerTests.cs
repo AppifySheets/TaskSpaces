@@ -123,6 +123,74 @@ public class WorkspaceManagerTests
         Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
     }
 
+    // --- MoveToDesktop: dragging a window OUT of every workspace onto a plain desktop ---
+
+    [Fact]
+    public void MoveToDesktop_moves_window_and_drops_its_workspace_membership()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        Assert.True(manager.AssignWindow(new WindowHandle(0x10), work.Id).IsSuccess);
+
+        var main = desktops.Create("Main").Value;
+        Assert.True(manager.MoveToDesktop(new WindowHandle(0x10), main.Id).IsSuccess);
+
+        Assert.Equal(main.Id, desktops.WindowPlacements[new WindowHandle(0x10)]);
+        // The ROSTER entry deliberately survives — the app still belongs to the workspace
+        // (▶ Start relaunches it); only the live placement changed.
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+    }
+
+    [Fact]
+    public void MoveToDesktop_unpins_first()
+    {
+        var (manager, _) = StartedWithWorkWorkspace();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        Assert.True(manager.PinWindow(new WindowHandle(0x10)).IsSuccess);
+
+        var main = desktops.Create("Main").Value;
+        Assert.True(manager.MoveToDesktop(new WindowHandle(0x10), main.Id).IsSuccess);
+
+        // "On one desktop" contradicts "on all desktops" — same rule AssignWindow follows.
+        Assert.DoesNotContain(new WindowHandle(0x10), desktops.PinnedWindows);
+        Assert.Equal(main.Id, desktops.WindowPlacements[new WindowHandle(0x10)]);
+    }
+
+    [Fact]
+    public void MoveToDesktop_keeps_rules_from_dragging_the_window_straight_back()
+    {
+        // The bounce-back this guards against is not hypothetical: a browser's title
+        // changes constantly, and every change re-evaluates rules. Without the detached
+        // guard, dragging Chrome out of a rule-matched workspace would undo itself
+        // seconds later, on the next title change.
+        var (manager, work) = StartedWithWorkWorkspace();
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
+
+        var main = desktops.Create("Main").Value;
+        Assert.True(manager.MoveToDesktop(new WindowHandle(0x10), main.Id).IsSuccess);
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, Chrome(title: "Another Page - Chrome")));
+
+        Assert.Equal(main.Id, desktops.WindowPlacements[new WindowHandle(0x10)]); // stayed put
+    }
+
+    [Fact]
+    public void Assigning_a_detached_window_to_a_workspace_makes_rules_apply_again()
+    {
+        var (manager, work) = StartedWithWorkWorkspace();
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+
+        var main = desktops.Create("Main").Value;
+        Assert.True(manager.MoveToDesktop(new WindowHandle(0x10), main.Id).IsSuccess);
+        // Dragging it back into a workspace is a fresh statement of intent: the "leave
+        // this one alone" exemption must not outlive it.
+        Assert.True(manager.AssignWindow(new WindowHandle(0x10), work.Id).IsSuccess);
+        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
+    }
+
     [Fact]
     public void Switch_delegates_to_desktop_service()
     {
