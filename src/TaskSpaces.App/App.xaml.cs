@@ -221,6 +221,19 @@ public partial class App : Application
             // rather than inside the bar because the monitor is the composition root's to hand
             // out, and the bar has no business knowing what a WinEvent hook is.
             monitor.ForegroundChanged.Subscribe(_ => floatingBar.ReclaimTopmost());
+
+            // ...and a 1s timer, because the event alone is not enough. Petre: "taskbar makes
+            // its way over the floating window if i click the taskbar twice, so maybe you could
+            // be resetting the topmost position of the float every second or so". Exactly right:
+            // the SECOND click changes no foreground window, so no event fires, while the shell
+            // still re-raises the taskbar within the band.
+            //
+            // Its own timer rather than a job on the 5s sweep: the sweep also enumerates every
+            // window and re-asserts every drifted title, and none of that wants to run five
+            // times more often just to keep one z-order claim fresh.
+            var topmost = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            topmost.Tick += (_, _) => floatingBar.ReclaimTopmost();
+            topmost.Start();
         }
 
         // The hover-to-peek switcher panel USED to be summoned from here, with a 400ms
@@ -298,9 +311,7 @@ public partial class App : Application
             {
                 monitor.Resync();
                 manager.ReapplyRenames();
-                // Backstop for the topmost-band fix above: an activation that somehow fires no
-                // foreground event would otherwise leave the bar buried until the next one.
-                floatingBar?.ReclaimTopmost();
+                // No ReclaimTopmost here any more -- the dedicated 1s timer above supersedes it.
             };
             sweep.Start();
         }

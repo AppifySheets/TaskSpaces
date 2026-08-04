@@ -79,14 +79,24 @@ public partial class FloatingBar : Window
     // higher z-bands need uiAccess, which needs a signed exe installed to a secure location --
     // impossible for a portable unsigned build, and far too much to pay for this.
     //
-    // So the bar simply reclaims the top of the band whenever the foreground changes. Driven
-    // by WindowMonitor.ForegroundChanged rather than a poll, because we already hook
-    // EVENT_SYSTEM_FOREGROUND and re-asserting exactly when something else was activated is
-    // both the cheapest and the most precise moment to do it. The 5s sweep calls this too, as
-    // a backstop for any activation that fires no foreground event.
+    // So the bar reclaims the top of the band, on two triggers.
+    //
+    // WindowMonitor.ForegroundChanged is the fast one: we already hook
+    // EVENT_SYSTEM_FOREGROUND, and the instant something else is activated is the most precise
+    // moment to re-assert. But it is not sufficient, and Petre found exactly how: "taskbar
+    // makes its way over the floating window if i click the taskbar twice". The SECOND click
+    // does not change the foreground window -- the taskbar already had it -- so no event fires
+    // at all, while the shell still re-raises the taskbar inside the band.
+    //
+    // Hence a 1s timer as well (his suggestion). The event-driven alternative would be
+    // EVENT_OBJECT_REORDER, and it is worse: it fires constantly on a busy desktop, and our own
+    // SetWindowPos changes z-order, so we would be feeding our own hook. One SetWindowPos per
+    // second is both cheaper and impossible to make loop.
     public void ReclaimTopmost()
     {
-        if (!IsVisible) return;
+        // Not while the user is dragging the bar: DragMove's native loop owns the window's
+        // position, and a SetWindowPos arriving mid-drag fights it.
+        if (!IsVisible || moving) return;
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == nint.Zero) return;
         // SWP_NOACTIVATE is the load-bearing flag: without it this would yank focus off
@@ -167,9 +177,22 @@ public partial class FloatingBar : Window
         // for this press. That IS the desired split: press-and-drag moves the bar;
         // press-and-release-in-place still reaches the icon's Click normally.
         Mouse.Capture(null);
-        DragMove(); // blocks until the mouse button is released
+        // `moving` suppresses ReclaimTopmost for the duration. DragMove runs a NATIVE move
+        // loop that pumps messages, so the 1s topmost timer does keep ticking inside it, and a
+        // SetWindowPos landing mid-drag would be fighting that loop for the same window.
+        moving = true;
+        try
+        {
+            DragMove(); // blocks until the mouse button is released
+        }
+        finally
+        {
+            moving = false;
+        }
         manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)); // only draggable while shown
     }
+
+    bool moving;
 
     // Petre's screenshot: EVERY row rendered twice (GEPHA / Sparrow / Main / Unplaced,
     // then all four again). RebuildCore below clears Rows.Children at its top and adds the
