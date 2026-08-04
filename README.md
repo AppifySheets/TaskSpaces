@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/branding/taskspaces-mark-256.png" width="128" alt="TaskSpaces" />
 </p>
 
@@ -214,8 +214,9 @@ finding.
 
 And the features that exist because manual organisation decays the moment it needs
 upkeep: **placement memory** (where you last put a window is where it goes next time,
-keyed to what the app *is* rather than to a window handle), **rosters and rehydration**
-(a workspace remembers its apps even when they are closed), and **renaming** (`RDP` is
+keyed to what the app *is* rather than to a window handle), **rosters** (a workspace
+remembers which apps belong to it even when they are closed, which is what makes that
+memory outlive any single window), and **renaming** (`RDP` is
 parsed faster than `Remote Desktop Manager [server-01 - fhd]`, and retrieval cues work
 better when they are legible).
 

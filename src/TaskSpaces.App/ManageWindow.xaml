@@ -1,7 +1,7 @@
-<!-- Icon uses an ABSOLUTE pack URI naming the assembly, not the short "/Assets/..." form:
+﻿<!-- Icon uses an ABSOLUTE pack URI naming the assembly, not the short "/Assets/..." form:
      the short form resolves against Application.ResourceAssembly, which a WPF exe's generated
      Main sets but a test host does not, so it made this window unconstructable under test
-     with "Cannot locate resource". Same form in PromptDialog, RehydratePrompt and App.AppIcon. -->
+     with "Cannot locate resource". Same form in PromptDialog and App.AppIcon. -->
 <Window x:Class="TaskSpaces.App.ManageWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"

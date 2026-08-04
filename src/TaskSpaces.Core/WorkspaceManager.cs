@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -57,7 +57,6 @@ public sealed class WorkspaceManager(
     // "where I was a moment ago" is a fact about this session.
     WorkspaceMru mru = WorkspaceMru.Empty;
     RenameLedger ledger = RenameLedger.Empty;
-    PendingPlacements pending = PendingPlacements.Empty;      // rehydration (Task 9)
     IDisposable? subscription;
     // Separate from `subscription` above: window events and desktop-change events are two
     // different sources, and one must be disposable without the other.
@@ -65,25 +64,14 @@ public sealed class WorkspaceManager(
 
     public AppState State { get; private set; } = AppState.Empty;
 
-    // When the PREVIOUS run started, captured during Start() before this run overwrites it.
-    // The composition root compares it against the machine's boot time to decide whether the
-    // post-reboot restore prompt is warranted -- see RestoreOffer. Exposed rather than acted on
-    // here because "what time did this machine boot" is an OS question, and Core does not ask
-    // those.
-    public DateTimeOffset? PreviousRunAt { get; private set; }
     public IObservable<Unit> StateChanged => stateChanged.AsObservable();
     public IReadOnlyList<WindowInfo> KnownWindows => knownWindows.Values.ToList();
 
     public Result Start() =>
         LoadState()
-            // Captured BEFORE Reconcile persists anything, because this run is about to
-            // overwrite it and the composition root needs the previous value to tell an app
-            // restart from a fresh boot (see PreviousRunAt / RestoreOffer).
-            .Tap(() => PreviousRunAt = State.LastRunAt)
             .Bind(Reconcile)
             .Tap(() =>
             {
-                Persist(State with { LastRunAt = now() });
                 monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
                 // Seeded before the first UI build: foreground events only report CHANGES, so
                 // without this the active-window highlight would stay blank from launch until
@@ -173,25 +161,24 @@ public sealed class WorkspaceManager(
     {
         knownWindows[window.Handle] = window;
 
-        // Rehydrated launches win over rules: we KNOW where that app belongs.
-        var (remaining, placement) = pending.Match(window, now());
-        pending = remaining;
         // Fire-and-forget: the event pipeline has no caller waiting on a Result, and a
         // failed auto-placement (e.g. stale workspace, desktop move rejected) has
         // nowhere to surface here — it's silently skipped, unlike the UI-facing
         // AssignWindow, which must propagate the same failure to the caller.
         // Precedence (Petre: "last placement beats rules, last placement IS the rule"):
-        //   1. pending launch  — we started this app for a workspace, so we KNOW.
-        //   2. last placement  — an explicit act by Petre, keyed by identity. Beats rules:
+        //   1. last placement  — an explicit act by Petre, keyed by identity. Beats rules:
         //                        a standing guess must never yank back a window he moved
         //                        by hand. This is also what re-pins an app whose window
         //                        was destroyed and recreated (Electron closing to tray),
         //                        which the OS pin cannot survive since it is HWND-keyed.
-        //   3. rule            — first sight only: the one case memory cannot cover, since
+        //   2. rule            — first sight only: the one case memory cannot cover, since
         //                        a never-seen window has no placement to remember.
+        //
+        // There used to be a tier above both: a pending LAUNCH ("we started this app for
+        // workspace W, expect its window"). It went with the restore prompt, the only thing
+        // that ever launched anything.
         if (AutoPlaceable(window.Handle))
-            placement.Map(Placement.In)
-                .Or(Remembered(window))
+            Remembered(window)
                 .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
                 .Tap(remembered => ApplyPlacement(window, remembered));
 
@@ -749,11 +736,6 @@ public sealed class WorkspaceManager(
                 .Tap(r => { ApplyRename(w, r.ShortName); }));
     }
 
-    // Rehydrator/StartWorkspace tell us "pid X (path Y, args Z) belongs to workspace W,
-    // expect it soon". The command line lets two same-exe launches route separately.
-    public void RegisterPendingLaunch(int processId, string processPath, Guid workspaceId, string? commandLine = null) =>
-        pending = pending.Add(processId, processPath, workspaceId, now(), commandLine);
-
     // --- overview / switcher-facing operations -----------------------------------
 
     // Ground truth for "which workspace is this window in": ASK THE OS which desktop
@@ -796,28 +778,17 @@ public sealed class WorkspaceManager(
                     .Bind(current => desktopId == current ? Result.Success() : desktops.Switch(desktopId)))
                 .Bind(() => activator.Activate(window)));
 
-    // "Not running" checks ALL known windows, not just this workspace's — Rider-on-X
-    // sitting in another workspace still means Start must not launch a duplicate.
+    // Which of a workspace's roster apps are not currently running anywhere. Checks ALL
+    // known windows rather than just this workspace's, because Rider-on-X sitting in another
+    // workspace still counts as running.
+    //
+    // Kept even though nothing LAUNCHES any more (the ▶ Start surfaces are gone): this is how
+    // the roster is inspected, and a future surface that lists "belongs here but closed" wants
+    // exactly this. It is also the one place the roster's own contents are queryable.
     public IReadOnlyList<InventoryEntry> NotRunningRoster(Guid workspaceId) =>
         State.Inventory.GetValueOrDefault(workspaceId, [])
             .Where(e => !RosterIdentity.IsRunning(e, knownWindows.Values))
             .ToList();
-
-    public Result StartRosterEntry(Guid workspaceId, InventoryEntry entry, IAppLauncher launcher) =>
-        launcher.Launch(entry)
-            .ToResult($"Could not launch {entry.ProcessPath} (moved or uninstalled?)")
-            .Tap(pid => RegisterPendingLaunch(pid, entry.ProcessPath, workspaceId, entry.CommandLine))
-            .Bind(_ => Result.Success());
-
-    // ▶ Start: launch everything missing (best-effort per entry — one bad exe never
-    // aborts the batch, v1 rehydrator rule), then take Petre there.
-    public Result StartWorkspace(Guid workspaceId, IAppLauncher launcher) =>
-        Workspace(workspaceId).Bind(_ =>
-        {
-            foreach (var entry in NotRunningRoster(workspaceId))
-                StartRosterEntry(workspaceId, entry, launcher); // per-entry Result deliberately dropped
-            return Switch(workspaceId);
-        });
 
     // --- persistence helpers -----------------------------------------------------
 

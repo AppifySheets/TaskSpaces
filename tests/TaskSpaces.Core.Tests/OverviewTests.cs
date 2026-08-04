@@ -1,4 +1,4 @@
-using TaskSpaces.Core.Abstractions;
+﻿using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
@@ -12,7 +12,6 @@ public class OverviewTests
     readonly FakeTitles titles = new();
     readonly FakeStore store = new();
     readonly FakeActivator activator = new();
-    readonly FakeLauncher launcher = new();
 
     (WorkspaceManager Manager, Workspace Work) Started()
     {
@@ -81,25 +80,10 @@ public class OverviewTests
         Assert.Contains("Y.sln", notRunning.Single().CommandLine);
     }
 
-    [Fact]
-    public void StartWorkspace_launches_only_missing_registers_pending_and_switches()
-    {
-        var (manager, work) = Started();
-        manager.AddRosterEntry(work.Id, @"C:\Tools\gitextensions.exe", "browse");
-        Appear(App(0x10, name: "devenv", path: @"C:\devenv.exe"));
-        manager.AddRosterEntry(work.Id, @"C:\devenv.exe", null); // this identity is bare-devenv...
-        // ...but the live window's command line is also bare "C:\devenv.exe" -> running.
-
-        Assert.True(manager.StartWorkspace(work.Id, launcher).IsSuccess);
-
-        Assert.Equal(@"C:\Tools\gitextensions.exe", launcher.Launched.Single().ProcessPath);
-        Assert.Equal([work.DesktopId!.Value], desktops.Switches.TakeLast(1).ToArray());
-
-        // The launched app's window arrives -> pending placement routes it to Work,
-        // even though no rule matches it.
-        Appear(new WindowInfo(new WindowHandle(0x30), 9000, "gitextensions", @"C:\Tools\gitextensions.exe", "GE", "\"C:\\Tools\\gitextensions.exe\" browse"));
-        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x30)]);
-    }
+    // StartWorkspace's test lived here. It went with the launch path itself, which became
+    // unreachable once the restore prompt was removed (Petre: "no, bad, don't want this") --
+    // Manage's ▶ Start had already gone with the Windows tab. NotRunningRoster, the roster
+    // query that test also exercised, is still covered by RosterTests.
 
     [Fact]
     public void JumpTo_switches_to_the_windows_desktop_then_activates()

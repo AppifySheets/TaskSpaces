@@ -1,10 +1,12 @@
-using TaskSpaces.Core.Domain;
+﻿using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Persistence;
 
 // The single unit of persistence — everything under %APPDATA%\TaskSpaces\state.json.
-// Inventory maps workspace id -> windows last seen in it (for rehydration prompts).
+// Inventory maps workspace id -> the apps that belong to it. It is the workspace half of
+// placement memory: identity -> workspace, written on every placement, read to put a window
+// back where you last had it.
 public sealed record AppState(
     IReadOnlyList<Workspace> Workspaces,
     IReadOnlyList<WorkspaceRule> WorkspaceRules,
@@ -71,11 +73,6 @@ public sealed record AppState(
     // successful registration.
     public const string DefaultSwitcherShortcut = "Win+Ctrl+Tab";
 
-    // When TaskSpaces last started. Its only job is to answer "have we already run since this
-    // machine booted?", which is what stops the post-reboot restore prompt appearing on every
-    // ordinary app restart (Petre: "this seems like an overkill"). See RestoreOffer.
-    // Null in files written before this existed, which RestoreOffer treats as "offer".
-    public DateTimeOffset? LastRunAt { get; init; }
 
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }

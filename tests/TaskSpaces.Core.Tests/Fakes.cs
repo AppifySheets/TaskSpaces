@@ -1,4 +1,4 @@
-using System.Reactive.Linq;
+﻿using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
@@ -100,9 +100,3 @@ public sealed class FakeActivator : IWindowActivator
     public Result Activate(WindowHandle w) { Activated.Add(w); return Result.Success(); }
 }
 
-public sealed class FakeLauncher : IAppLauncher
-{
-    public List<InventoryEntry> Launched { get; } = [];
-    int nextPid = 9000;
-    public Maybe<int> Launch(InventoryEntry entry) { Launched.Add(entry); return nextPid++; }
-}

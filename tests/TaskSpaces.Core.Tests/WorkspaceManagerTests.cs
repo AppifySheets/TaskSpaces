@@ -1,4 +1,4 @@
-using TaskSpaces.Core.Domain;
+﻿using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
 
@@ -358,20 +358,9 @@ public class WorkspaceManagerTests
         Assert.Contains(store.Stored.Workspaces, w => w.Id == work.Id && w.Name == "Work"); // unchanged
     }
 
-    // --- Task 9: rehydration — pending launch placement beats rule matching --------
-
-    [Fact]
-    public void Pending_launch_placement_beats_rules()
-    {
-        var (manager, work) = StartedWithWorkWorkspace();
-        var other = manager.AddWorkspace("Other").Value;
-        manager.SetRules([new WorkspaceRule(other.Id, RuleMatchKind.ProcessName, "chrome")], []);
-
-        manager.RegisterPendingLaunch(100, @"C:\chrome.exe", work.Id);
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
-
-        Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
-    }
+    // "Pending launch placement beats rules" was tested here. That tier no longer exists:
+    // nothing launches anything now that the restore prompt is gone, so placement precedence is
+    // just last-placement then rule -- covered by PlacementMemoryTests and RulesEngineTests.
 
     // --- Finding 1 (reviewer, Critical): corrupt state.json must never be silently
     // overwritten. Start()/LoadState() must FAIL (not quietly fall back to empty state)

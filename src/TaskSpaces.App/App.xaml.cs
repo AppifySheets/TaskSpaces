@@ -9,7 +9,6 @@ using TaskSpaces.Core;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
-using TaskSpaces.Core.Rehydration;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Monitoring;
 using TaskSpaces.Windows.Renaming;
@@ -183,7 +182,7 @@ public partial class App : Application
         // to change. One fewer thing reacting to every window event.
 
         // Task 11 (spec §Floating icon bar): restore the bar's own on/off state across
-        // restarts. Gated on !compatibilityMode for the same reason hotkeys/rehydration
+        // restarts. Gated on !compatibilityMode for the same reason the hotkey is
         // are below -- every icon click calls JumpTo, which needs a real desktop to
         // switch to, and compatibility mode has none.
         // Always shown, no longer conditional on the persisted Visible flag. Petre: "show
@@ -306,30 +305,22 @@ public partial class App : Application
             sweep.Start();
         }
 
-        // Task 9: post-reboot rehydration. state.json's inventory survives a reboot even
-        // though the desktops/windows it describes don't — offer to relaunch each
-        // workspace's remembered apps. Compatibility mode has no desktops to place
-        // windows onto, so skip it there; HasAnythingToRestore also skips the prompt
-        // entirely on a clean start with an empty inventory (nothing to offer).
-        // Gated on "first run since this machine booted" as well as "there is something to
-        // restore". Petre, on seeing it for the fifteenth time in an afternoon: "this seems like
-        // an overkill" -- it was, because the only condition used to be that some app was not
-        // running, which is true the moment you close anything. A reboot is the case this
-        // feature exists for: desktops do not survive one, so state.json is the only record of
-        // what was where. An app restart within the same session is not that case, since the
-        // windows are still sitting on their desktops.
+        // The "Restore workspaces?" prompt USED to appear here. Petre: "this seems like an
+        // overkill", then "no, bad, don't want this". Gating it to first-run-after-reboot was
+        // my first answer and it was the wrong one -- he did not want a better-timed prompt, he
+        // did not want the prompt.
         //
-        // Boot time from TickCount64 (uptime) rather than a WMI query: it needs no round trip
-        // and cannot fail, and a few seconds of imprecision cannot change the answer to "was
-        // the last run before or after the machine started".
-        var bootedAt = DateTimeOffset.Now - TimeSpan.FromMilliseconds(Environment.TickCount64);
-        if (!compatibilityMode
-            && RestoreOffer.ShouldOffer(manager.PreviousRunAt, bootedAt)
-            && RehydratePrompt.HasAnythingToRestore(manager))
-            new RehydratePrompt(manager).Show();
+        // Removing it left the whole LAUNCH path unreachable, because Manage's Windows tab (the
+        // other ▶ Start surface) had already gone: StartWorkspace, StartRosterEntry,
+        // RegisterPendingLaunch, PendingPlacements, IAppLauncher and AppLauncher are all deleted
+        // with it, and placement precedence drops from three tiers to two.
+        //
+        // The ROSTER itself stays and is untouched. It is the workspace half of placement
+        // memory (identity -> workspace, written on every Place), which is what puts a window
+        // back where you last had it. Only the ability to relaunch a closed app is gone.
 
         // OS shutdown/logoff: every window is about to close, and each close would fire
-        // Disappeared and ERASE the inventory that rehydration needs. Unhook the monitor
+        // Disappeared and ERASE the inventory placement memory needs. Unhook the monitor
         // FIRST so state.json keeps its last-known contents, then put titles back.
         //
         // Fix round 1 (reviewer, minor): deliberately does NOT call hotkeys?.Dispose()
