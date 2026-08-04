@@ -49,6 +49,9 @@ public sealed class WorkspaceManager(
     RenameLedger ledger = RenameLedger.Empty;
     PendingPlacements pending = PendingPlacements.Empty;      // rehydration (Task 9)
     IDisposable? subscription;
+    // Separate from `subscription` above: window events and desktop-change events are two
+    // different sources, and one must be disposable without the other.
+    IDisposable? currentDesktop;
 
     public AppState State { get; private set; } = AppState.Empty;
     public IObservable<Unit> StateChanged => stateChanged.AsObservable();
@@ -65,6 +68,18 @@ public sealed class WorkspaceManager(
                 // Petre next switched windows -- indistinguishable from the feature not working.
                 activeWindow = monitor.Foreground();
                 subscription = monitor.Events.Subscribe(OnWindowEvent);
+
+                // Petre: "when i press the shortcut, it shows me the previous workspace which
+                // was active." The switch was working; the UI was stale. Switch() changes the
+                // desktop and pulses NOTHING, so every surface kept rendering the overview it
+                // last built -- old workspace still bold as current, windows still grouped by
+                // where they were before -- until some unrelated window event happened to pulse.
+                //
+                // Subscribed HERE rather than adding a pulse inside Switch() because that would
+                // only cover switches WE perform. CurrentChanged fires for any means at all:
+                // this app, Win+Ctrl+arrows, Task View. That is what the observable was declared
+                // for, and until now nothing in the app consumed it.
+                currentDesktop = desktops.CurrentChanged.Subscribe(_ => stateChanged.OnNext(Unit.Default));
                 ReapplyRenames();
                 RestorePlacements();
             });
