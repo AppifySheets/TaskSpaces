@@ -4,7 +4,7 @@
 
 <h1 align="center">TaskSpaces</h1>
 
-<p align="center"><em>One click switches context. The taskbar follows.</em></p>
+<p align="center"><em>Switch project in one click. Every window is exactly where you left it.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20x64-0078D4" alt="Platform: Windows 11, x64" />
@@ -12,29 +12,25 @@
   <img src="https://img.shields.io/badge/.NET-10-512BD4" alt=".NET 10" />
 </p>
 
+<p align="center">
+  <img src="docs/images/floating-bar.png" width="243" alt="The floating bar: seven rows, one per workspace, each tinted its own colour, showing the icons of every window in it. The current workspace's label is bold and the focused window's icon is outlined." />
+</p>
+
+<p align="center"><em>Everything you have open, grouped by project. One row per workspace, the
+current one in bold, the focused window outlined. Click any icon to jump straight to that
+window from anywhere; drag it to another row to move it there. Shown at life size.</em></p>
+
 > **Windows only, by design rather than by omission.** TaskSpaces is built directly on
 > Windows' virtual-desktop COM API, the taskbar's native per-desktop window filtering, and
 > WinEvent hooks. macOS and Linux organise windows on fundamentally different models, so
 > there is no port waiting to be written. If you are not on Windows 11, this is not the tool
 > for you.
 
-Named workspaces for the Windows taskbar. Group your running apps into contexts
-(**Work**, **Personal**, **YouTube**) and switch between them with one click.
-
-Switching does not just filter the taskbar. **You come back to the workspace exactly as
-you left it** — every window still open, still where you put it, still scrolled to where
-you were reading. Nothing was closed and nothing was minimised; the other workspaces'
-windows simply kept running out of sight while you were away. That is the point: the
-expensive part of changing project is not the switch, it is rebuilding the context you
-had before, and here there is nothing to rebuild. Workspaces survive reboots too.
-
-<p align="center">
-  <img src="docs/images/floating-bar.png" width="243" alt="The floating bar: one row per workspace, each tinted its own colour, showing every window's icon across all workspaces" />
-</p>
-
-<p align="center"><em>The floating bar, at life size. One row per workspace, the current one in
-bold, every window in every workspace at a glance. Click an icon to jump to that window;
-drag it to another row to move the window there.</em></p>
+Group your running apps into named contexts — **Work**, **Personal**, **YouTube** — and
+switch between them with one click. Switching does not merely filter the taskbar: you come
+back to everything still open and still where you put it, because nothing was ever closed or
+minimised. The expensive part of changing project is rebuilding the context you had, and
+here there is nothing to rebuild. Workspaces survive reboots.
 
 ## Install
 
