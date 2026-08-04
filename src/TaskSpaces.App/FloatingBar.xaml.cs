@@ -75,9 +75,15 @@ public partial class FloatingBar : Window
     // recently activated sits at its top -- and the taskbar is topmost, as is StartAllBack's
     // menu (and the plain Windows 11 taskbar: same Shell_TrayWnd, same band, so this behaves
     // identically either way). Activating one therefore climbs over the bar, and WPF's
-    // Topmost="True" cannot prevent it; there is no "more topmost" to ask for. The supported
-    // higher z-bands need uiAccess, which needs a signed exe installed to a secure location --
-    // impossible for a portable unsigned build, and far too much to pay for this.
+    // Topmost="True" cannot prevent it; there is no "more topmost" to ask for.
+    //
+    // The START MENU turns out to be in that same band too, which I had claimed it was not.
+    // I told Petre twice that covering it was impossible without uiAccess (a higher z-band,
+    // needing a signed exe in a protected directory) and wrote that into a PR as a known
+    // limitation. Then the 1s timer below shipped and he reported "start menu is now covered".
+    // The band theory was wrong: nothing was stopping us, we simply never re-asserted after the
+    // menu opened. Recorded here because the false version was more plausible than the truth,
+    // and the next person to hit a z-order problem should not go looking for uiAccess.
     //
     // So the bar reclaims the top of the band, on two triggers.
     //
