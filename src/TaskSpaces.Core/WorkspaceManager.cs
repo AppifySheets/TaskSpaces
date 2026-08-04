@@ -64,14 +64,26 @@ public sealed class WorkspaceManager(
     IDisposable? currentDesktop;
 
     public AppState State { get; private set; } = AppState.Empty;
+
+    // When the PREVIOUS run started, captured during Start() before this run overwrites it.
+    // The composition root compares it against the machine's boot time to decide whether the
+    // post-reboot restore prompt is warranted -- see RestoreOffer. Exposed rather than acted on
+    // here because "what time did this machine boot" is an OS question, and Core does not ask
+    // those.
+    public DateTimeOffset? PreviousRunAt { get; private set; }
     public IObservable<Unit> StateChanged => stateChanged.AsObservable();
     public IReadOnlyList<WindowInfo> KnownWindows => knownWindows.Values.ToList();
 
     public Result Start() =>
         LoadState()
+            // Captured BEFORE Reconcile persists anything, because this run is about to
+            // overwrite it and the composition root needs the previous value to tell an app
+            // restart from a fresh boot (see PreviousRunAt / RestoreOffer).
+            .Tap(() => PreviousRunAt = State.LastRunAt)
             .Bind(Reconcile)
             .Tap(() =>
             {
+                Persist(State with { LastRunAt = now() });
                 monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
                 // Seeded before the first UI build: foreground events only report CHANGES, so
                 // without this the active-window highlight would stay blank from launch until

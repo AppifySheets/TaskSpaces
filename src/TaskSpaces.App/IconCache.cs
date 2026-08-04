@@ -43,14 +43,47 @@ public static class IconCache
     // For roster ("not running") rows, which have an app but no window to ask.
     public static ImageSource? For(string? processPath) => FromExe(processPath);
 
+    // How many times an icon-less window is re-probed before we accept that it has no icon.
+    // The bar rebuilds on every window event and at least every 5s, so a few dozen attempts
+    // comfortably spans the second or two a freshly launched app needs.
+    const int MaxProbes = 40;
+
+    // Attempts so far for windows that have not produced an icon yet. Only failures appear
+    // here; a success moves the entry into byWindow and stops all further probing.
+    static readonly Dictionary<(nint Hwnd, string Path), int> attempts = [];
+
     // For live windows. Prefer this everywhere a WindowHandle is in hand.
     public static ImageSource? For(WindowHandle window, string? processPath)
     {
         var key = (window.Value, processPath ?? "");
         if (byWindow.TryGetValue(key, out var hit)) return hit;
+
         var resolved = FromWindow(window.Value) ?? FromExe(processPath);
-        byWindow[key] = resolved;
-        return resolved;
+        if (resolved is not null)
+        {
+            byWindow[key] = resolved;
+            attempts.Remove(key);
+            return resolved;
+        }
+
+        // Petre: "youtube music can't be seen in personal" -- it rendered as a blank
+        // placeholder, on a window that answers WM_GETICON perfectly well. A probe taken while
+        // it was showing that placeholder found IconBig = 0x17321537 and a class icon too, so
+        // there was nothing wrong with the lookup. The bug was CACHING THE FAILURE.
+        //
+        // A window's icon arrives ASYNCHRONOUSLY: a freshly launched PWA answers WM_GETICON
+        // with nothing until it has loaded. The first probe therefore lost, and storing that
+        // null the same way a success is stored meant the window kept a placeholder for its
+        // entire life. (A file's icon is static, which is why the exe cache below still caches
+        // its misses -- the two cases are genuinely different.)
+        //
+        // Bounded rather than unbounded, because re-probing forever would cost up to five
+        // P/Invokes per icon-less window on every rebuild, and a HUNG app makes three of those
+        // wait out the timeout. After MaxProbes the answer really is "no icon".
+        var tried = attempts.GetValueOrDefault(key) + 1;
+        attempts[key] = tried;
+        if (tried >= MaxProbes) byWindow[key] = null; // give up, and stop paying for it
+        return null;
     }
 
     // In preference order. Lazily evaluated by the Select below, so a window that answers

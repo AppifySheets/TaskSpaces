@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using TaskSpaces.Core.Domain;
@@ -38,15 +38,14 @@ static class WindowDragSource
     // the floating bar uses it to dismiss its hover info panel, which would otherwise sit
     // there frozen for the whole drag (the icon under the cursor never raises MouseLeave
     // during a drag, so nothing else would clear it).
-    internal static void Attach(Button button, WindowHandle handle, string groupKey, string title, Action? onDragStarting = null)
+    // `title` used to be a parameter, read only by the DnDTrace calls that have now been
+    // stripped. Removed rather than left in place: a parameter nothing reads is a standing
+    // invitation to wonder what it was for.
+    internal static void Attach(Button button, WindowHandle handle, string groupKey, Action? onDragStarting = null)
     {
         Point? dragStart = null;
 
-        button.PreviewMouseLeftButtonDown += (_, e) =>
-        {
-            dragStart = e.GetPosition(null);
-            DnDTrace.Log($"press '{title}' in '{groupKey}'");
-        };
+        button.PreviewMouseLeftButtonDown += (_, e) => dragStart = e.GetPosition(null);
 
         // Root-cause hardening, pitfall #2 (debugging brief): a plain click used to
         // leave dragStart set FOREVER — nothing ever cleared it. Any later
@@ -83,10 +82,7 @@ static class WindowDragSource
             button.ReleaseMouseCapture();
 
             onDragStarting?.Invoke();
-            DnDTrace.Log($"drag-start '{title}' from '{groupKey}'");
-            DnDTrace.ResetTarget();
-            var effect = DragDrop.DoDragDrop(button, new DataObject(DraggedWindow.DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
-            DnDTrace.Log($"DoDragDrop returned {effect} for '{title}'");
+            DragDrop.DoDragDrop(button, new DataObject(DraggedWindow.DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
         };
     }
 }

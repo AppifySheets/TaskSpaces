@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Controls;
@@ -361,17 +361,14 @@ public partial class FloatingBar : Window
                 // ~28px tall and adjacent.
                 container.Background = DropHighlight;
                 Info.Text = $"→ move to {groupLabel}";
-                DnDTrace.LogTargetChange(groupKey, e.Effects.ToString());
             };
             container.DragLeave += (_, _) => { container.Background = idle; ClearInfo(); };
             container.Drop += (_, e) =>
             {
                 container.Background = idle;
                 ClearInfo();
-                DnDTrace.ResetTarget();
-                if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) { DnDTrace.Log($"bar drop on '{groupKey}': no drag payload present"); return; }
-                if (dragged.SourceGroupKey == groupKey) { DnDTrace.Log($"bar drop '{dragged.Handle}' on '{groupKey}': no-op (own group)"); return; }
-                DnDTrace.Log($"bar drop '{dragged.Handle}': '{dragged.SourceGroupKey}' -> '{groupKey}'");
+                if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) return;
+                if (dragged.SourceGroupKey == groupKey) return; // dropped onto its own group
                 onDrop(dragged.Handle);
             };
         }
@@ -586,7 +583,7 @@ public partial class FloatingBar : Window
         // dropped on the switcher panel (and vice versa) if both happen to be open.
         // onDragStarting clears the info line: the icon under the cursor never raises
         // MouseLeave once the modal drag loop owns the mouse, so nothing else would.
-        WindowDragSource.Attach(button, row.Window.Handle, groupKey, row.Window.Title, onDragStarting: ClearInfo);
+        WindowDragSource.Attach(button, row.Window.Handle, groupKey, onDragStarting: ClearInfo);
         button.ContextMenu = IconMenu(row);
         return button;
     }
@@ -605,8 +602,12 @@ public partial class FloatingBar : Window
         Child = new TextBlock
         {
             Text = FirstLetter(window),
-            Foreground = Brushes.White,
+            // DARK on the light chip. It was white, which is illegible against a 33%-white
+            // background -- the placeholder read as an empty box in Petre's screenshot, which
+            // is how a rendered-but-unidentifiable icon looks exactly like a missing one.
+            Foreground = PlaceholderForeground,
             FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         },
@@ -618,7 +619,9 @@ public partial class FloatingBar : Window
             .Select(text => text.Trim()[..1].ToUpperInvariant())
             .FirstOrDefault() ?? "?";
 
-    static readonly Brush PlaceholderBackground = Frozen(0x55, 0xFF, 0xFF, 0xFF);
+    // Opaque enough for dark text to sit on, since the bar behind it is dark.
+    static readonly Brush PlaceholderBackground = Frozen(0xCC, 0xE8, 0xE8, 0xEC);
+    static readonly Brush PlaceholderForeground = Frozen(0xFF, 0x20, 0x20, 0x24);
 
     // Task 12 (Petre: "right clicking on the icon should give me option to customize that
     // one - tab rename"). Exactly two entries, and the omissions are the point: Petre was

@@ -71,6 +71,12 @@ public sealed record AppState(
     // successful registration.
     public const string DefaultSwitcherShortcut = "Win+Ctrl+Tab";
 
+    // When TaskSpaces last started. Its only job is to answer "have we already run since this
+    // machine booted?", which is what stops the post-reboot restore prompt appearing on every
+    // ordinary app restart (Petre: "this seems like an overkill"). See RestoreOffer.
+    // Null in files written before this existed, which RestoreOffer treats as "offer".
+    public DateTimeOffset? LastRunAt { get; init; }
+
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }
 

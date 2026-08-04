@@ -9,6 +9,7 @@ using TaskSpaces.Core;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
+using TaskSpaces.Core.Rehydration;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Monitoring;
 using TaskSpaces.Windows.Renaming;
@@ -310,7 +311,21 @@ public partial class App : Application
         // workspace's remembered apps. Compatibility mode has no desktops to place
         // windows onto, so skip it there; HasAnythingToRestore also skips the prompt
         // entirely on a clean start with an empty inventory (nothing to offer).
-        if (!compatibilityMode && RehydratePrompt.HasAnythingToRestore(manager))
+        // Gated on "first run since this machine booted" as well as "there is something to
+        // restore". Petre, on seeing it for the fifteenth time in an afternoon: "this seems like
+        // an overkill" -- it was, because the only condition used to be that some app was not
+        // running, which is true the moment you close anything. A reboot is the case this
+        // feature exists for: desktops do not survive one, so state.json is the only record of
+        // what was where. An app restart within the same session is not that case, since the
+        // windows are still sitting on their desktops.
+        //
+        // Boot time from TickCount64 (uptime) rather than a WMI query: it needs no round trip
+        // and cannot fail, and a few seconds of imprecision cannot change the answer to "was
+        // the last run before or after the machine started".
+        var bootedAt = DateTimeOffset.Now - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        if (!compatibilityMode
+            && RestoreOffer.ShouldOffer(manager.PreviousRunAt, bootedAt)
+            && RehydratePrompt.HasAnythingToRestore(manager))
             new RehydratePrompt(manager).Show();
 
         // OS shutdown/logoff: every window is about to close, and each close would fire
