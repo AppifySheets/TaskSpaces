@@ -49,12 +49,19 @@ public sealed record AppState(
     // falls back to the default for anything unusable.
     public string SwitcherShortcut { get; init; } = DefaultSwitcherShortcut;
 
-    // Ctrl+Alt+` and not the more natural Alt+`, deliberately: a global hotkey is EXCLUSIVE,
-    // so registering Alt+` would take it away from every other app on this machine, and
-    // Rider binds Alt+` to its VCS popup. Ctrl+Alt+` also keeps the default inside the chord
-    // family the app already owns (Ctrl+Alt+arrows, Ctrl+Alt+1..9). Anyone who disagrees can
-    // now change it, which is the point.
-    public const string DefaultSwitcherShortcut = "Ctrl+Alt+`";
+    // Petre: "make the default key-combo be Ctrl+Tab, as I set it manually already".
+    //
+    // His call, and it is the better muscle memory by a distance: Alt+Tab switches windows, so
+    // Ctrl+Tab switching workspaces is the obvious neighbour, and the hold-and-tap gesture is
+    // identical.
+    //
+    // What it costs, stated plainly because a global hotkey is EXCLUSIVE and this one is not a
+    // quiet chord: while TaskSpaces runs, Ctrl+Tab and Ctrl+Shift+Tab stop reaching every app
+    // that uses them to move between tabs -- browsers, VS Code, Rider, Explorer. The earlier
+    // default (Ctrl+Alt+`) was chosen to avoid precisely that. Petre set Ctrl+Tab by hand,
+    // used it, and asked for it as the default, so the trade is made knowingly; the Shortcuts
+    // tab is where anyone who disagrees changes it back.
+    public const string DefaultSwitcherShortcut = "Ctrl+Tab";
 
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }

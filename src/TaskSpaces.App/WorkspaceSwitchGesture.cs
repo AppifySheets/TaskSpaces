@@ -65,7 +65,7 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     // appeared. Created before the first Show() so its very first SHOW event is filtered.
     public nint EnsureHandle() => new WindowInteropHelper(picker).EnsureHandle();
 
-    // One tap of Ctrl+Alt+` (direction +1) or Ctrl+Alt+Shift+` (-1).
+    // One tap of the bound chord (direction +1) or that chord plus Shift (-1).
     public void Step(int direction)
     {
         if (!active) Begin(direction);

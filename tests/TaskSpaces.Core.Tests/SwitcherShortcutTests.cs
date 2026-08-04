@@ -16,11 +16,25 @@ public class SwitcherShortcutTests
 
     WorkspaceManager Manager() => new(desktops, new FakeMonitor(), new FakeTitles(), store);
 
+    // Petre: "make the default key-combo be Ctrl+Tab, as I set it manually already." Asserted
+    // literally, not against the constant, so changing the default is a deliberate edit here
+    // rather than something a test silently follows.
     [Fact]
     public void Out_of_the_box_it_is_the_documented_default()
     {
-        Assert.Equal("Ctrl+Alt+`", AppState.DefaultSwitcherShortcut);
-        Assert.Equal("Ctrl+Alt+`", Manager().SwitcherShortcut);
+        Assert.Equal("Ctrl+Tab", AppState.DefaultSwitcherShortcut);
+        Assert.Equal("Ctrl+Tab", Manager().SwitcherShortcut);
+    }
+
+    // The default must be a chord the gesture can actually run: one modifier at minimum, or
+    // there would be nothing to hold and nothing whose release could commit the switch.
+    [Fact]
+    public void The_default_is_a_chord_the_gesture_can_hold()
+    {
+        var chord = Chord.Parse(AppState.DefaultSwitcherShortcut).Value;
+
+        Assert.NotEqual(0u, chord.Modifiers);
+        Assert.Equal(AppState.DefaultSwitcherShortcut, chord.ToString()); // already canonical
     }
 
     [Fact]
