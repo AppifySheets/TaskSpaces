@@ -369,12 +369,38 @@ public partial class FloatingBar : Window
         // replaces this Background and has to put the LANE COLOUR back on leave, not
         // transparent, or dragging over a workspace would permanently strip its tint.
         var idle = tint ?? Brushes.Transparent;
-        var container = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Background = idle };
-        container.Children.Add(RowLabel(visualLabel, isCurrent, switchTo));
 
-        var icons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        // Petre: "do you think it would make more sense if the captions for the spaces were on
+        // the right and icons started from the left edge?"
+        //
+        // Yes, and for a reason worth writing down. Labels differ in width -- "Messaging" against
+        // "Work" -- so with the label first, the ICONS started at a different x on every row: a
+        // ragged column of the one thing on this surface you aim at and click. Icons are the
+        // content; they get the clean edge. Labels become a right-hand gutter, which suits them,
+        // since they are secondary once every lane carries its own colour and the current one is
+        // bold.
+        //
+        // A Grid rather than the StackPanel this used to be: two columns, icons in a star-width
+        // one pinned left, label in an auto-width one on the right. Because rows stretch to the
+        // bar's full width, that right column lines every label up against the same right edge,
+        // so the raggedness moves to where nothing is aimed at.
+        var container = new Grid { Background = idle };
+        container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var icons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
         rows.ToList().ForEach(r => icons.Children.Add(IconButton(groupLabel, groupKey, r)));
+        Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
+
+        var label = RowLabel(visualLabel, isCurrent, switchTo);
+        Grid.SetColumn(label, 1);
+        container.Children.Add(label);
 
         if (onDrop is not null)
         {
@@ -513,7 +539,7 @@ public partial class FloatingBar : Window
             Opacity = isCurrent ? 0.95 : 0.5,
             FontWeight = isCurrent ? FontWeights.Bold : FontWeights.Normal,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(2, 0, 6, 0),
+            Margin = new Thickness(8, 0, 2, 0),
         };
 
         if (switchTo is null)

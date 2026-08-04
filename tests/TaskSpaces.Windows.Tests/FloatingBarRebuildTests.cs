@@ -1,4 +1,4 @@
-using System.Reactive.Subjects;
+﻿using System.Reactive.Subjects;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -74,9 +74,11 @@ public class FloatingBarRebuildTests
 
         var rows = (StackPanel)bar.FindName("Rows")!;
 
-        // GroupRow builds a StackPanel per group; Separator builds a Border. Counting the
-        // panels counts the groups, independent of separator placement.
-        int GroupCount() => rows.Children.OfType<StackPanel>().Count();
+        // GroupRow builds a Grid per group; Separator builds a Border. Counting the grids
+        // counts the groups, independent of separator placement. (It was a StackPanel until
+        // the labels moved to the right of the icons -- that needed two columns, so the row
+        // container became a Grid.)
+        int GroupCount() => rows.Children.OfType<Grid>().Count();
 
         // 3 = the always-rendered 📌 row (Task 12) + GEPHA + Sparrow.
         Assert.Equal(3, GroupCount()); // baseline from the constructor's own Rebuild
