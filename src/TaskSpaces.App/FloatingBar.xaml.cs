@@ -508,14 +508,30 @@ public partial class FloatingBar : Window
         // and lives in a separate HWND -- see the Info panel comment in FloatingBar.xaml.
         button.MouseEnter += (_, _) => ShowInfo(groupLabel, row);
         button.MouseLeave += (_, _) => ClearInfo();
-        var icon = IconCache.For(row.Window.ProcessPath);
-        if (icon is not null)
-            // IconCache freezes icons at a fixed 16px source (shared with the switcher
-            // panel and Manage window rows). Scaling that 16px bitmap up to the bar's
-            // 20px target here is the simple option called out in the brief -- adding a
-            // size parameter to the cache for this one caller isn't worth it, and a
-            // 16->20px upscale of a small glyph is not visually distinguishable.
-            button.Content = new Image { Source = icon, Width = 20, Height = 20 };
+        // The HANDLE, not just the path: IconCache asks the window itself (WM_GETICON)
+        // before falling back to extracting from the exe. Petre: "i also don't see an icon
+        // for whatsapp app" -- WhatsApp.Root.exe is an MSIX launcher stub carrying no icon,
+        // so the exe-only lookup returned Windows' generic default and there was nothing to
+        // detect as a failure. Asking the window gets the icon the taskbar itself draws.
+        var icon = IconCache.For(row.Window.Handle, row.Window.ProcessPath);
+        // Petre: "something popped up in unplaced, then disappeared, but now i see the
+        // unplaced section" -- with the row looking empty. It was NOT empty. OverviewBuilder
+        // only emits a group that has at least one window, so there was a window there; the
+        // bar just drew it as a Button with no Content at all, which on an icon-only surface
+        // is about 4px of padding and nothing else. Invisible, and therefore unreachable.
+        //
+        // So: never render a window as nothing. A window whose icon cannot be resolved gets
+        // a lettered placeholder, which is hoverable (the info line then says what it is),
+        // clickable and draggable exactly like a real icon.
+        //
+        // This used to be commonplace and silent: the old icon lookup needed a readable exe
+        // path, which is null for every elevated process, so those windows were ALWAYS
+        // invisible here. Asking the window itself (see IconCache) fixes most of them
+        // outright -- WM_GETICON works whether or not we can read the file -- and this
+        // placeholder covers whatever is left.
+        button.Content = icon is not null
+            ? new Image { Source = icon, Width = 20, Height = 20 }
+            : Placeholder(row.Window);
         // Click -> jump, with no Hide() afterwards: unlike the switcher panel, this bar
         // is a persistent surface (spec) -- it stays open across every jump so Petre can
         // click several icons in a row.
@@ -540,6 +556,35 @@ public partial class FloatingBar : Window
         button.ContextMenu = IconMenu(row);
         return button;
     }
+
+    // Stand-in for a window we could not get an icon for. Same 20x20 footprint as a real
+    // icon so a row's height and the bar's overall size do not depend on whether a lookup
+    // succeeded. The letter is the first character of the process name (falling back to the
+    // title, then to "?"), which is usually enough to recognise it at a glance -- and if it
+    // is not, hovering names it in full.
+    static UIElement Placeholder(WindowInfo window) => new Border
+    {
+        Width = 20,
+        Height = 20,
+        CornerRadius = new CornerRadius(3),
+        Background = PlaceholderBackground,
+        Child = new TextBlock
+        {
+            Text = FirstLetter(window),
+            Foreground = Brushes.White,
+            FontSize = 11,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        },
+    };
+
+    static string FirstLetter(WindowInfo window) =>
+        new[] { window.ProcessName, window.Title }
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .Select(text => text.Trim()[..1].ToUpperInvariant())
+            .FirstOrDefault() ?? "?";
+
+    static readonly Brush PlaceholderBackground = Frozen(0x55, 0xFF, 0xFF, 0xFF);
 
     // Task 12 (Petre: "right clicking on the icon should give me option to customize that
     // one - tab rename"). Exactly two entries, and the omissions are the point: Petre was

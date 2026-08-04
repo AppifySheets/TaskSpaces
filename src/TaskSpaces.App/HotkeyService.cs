@@ -12,9 +12,10 @@ namespace TaskSpaces.App;
 // never visible, and never shows up in Alt+Tab or the taskbar.
 public sealed class HotkeyService : IDisposable
 {
-    // Ids 1/2 are the arrow chords; 11..19 are Ctrl+Alt+1..9 (10 + digit) so every
-    // registered id is trivially reversible back to "which chord was this".
-    const int IdCyclePrev = 1, IdCycleNext = 2, IdDigitBase = 10;
+    // Ids 1/2 are the arrow chords; 3/4 the Alt+Tab-style recent-order chords; 11..19 are
+    // Ctrl+Alt+1..9 (10 + digit) so every registered id is trivially reversible back to
+    // "which chord was this".
+    const int IdCyclePrev = 1, IdCycleNext = 2, IdRecentNext = 3, IdRecentPrev = 4, IdDigitBase = 10;
 
     readonly HwndSource source;
     readonly List<int> registeredIds = [];
@@ -29,12 +30,14 @@ public sealed class HotkeyService : IDisposable
     readonly Action cyclePrev;
     readonly Action cycleNext;
     readonly Action<int> switchTo;
+    readonly Action<int> stepRecent;
 
-    public HotkeyService(Action cyclePrev, Action cycleNext, Action<int> switchTo)
+    public HotkeyService(Action cyclePrev, Action cycleNext, Action<int> switchTo, Action<int> stepRecent)
     {
         this.cyclePrev = cyclePrev;
         this.cycleNext = cycleNext;
         this.switchTo = switchTo;
+        this.stepRecent = stepRecent;
 
         source = new HwndSource(new HwndSourceParameters("TaskSpacesHotkeys")
         {
@@ -47,16 +50,30 @@ public sealed class HotkeyService : IDisposable
 
         Register(IdCyclePrev, NativeMethods.VK_LEFT, "Ctrl+Alt+Left");
         Register(IdCycleNext, NativeMethods.VK_RIGHT, "Ctrl+Alt+Right");
+
+        // Alt+Tab-style switching, on the backtick key. WHY Ctrl+Alt+` and not the more
+        // muscle-memory-friendly Alt+`: a global hotkey is EXCLUSIVE, so registering Alt+`
+        // would take it away from every other app on the machine for good, and Rider binds
+        // Alt+` to its VCS popup. Ctrl+Alt+` also keeps the whole feature inside the chord
+        // family this app already owns (Ctrl+Alt+arrows, Ctrl+Alt+1..9).
+        //
+        // Shift is the reverse direction, exactly as Shift+Alt+Tab is. Registered as a
+        // SEPARATE chord because RegisterHotKey matches modifiers exactly -- Ctrl+Alt+`
+        // would not fire at all while Shift is held, so without this the reverse walk would
+        // simply stop responding.
+        Register(IdRecentNext, NativeMethods.VK_OEM_3, "Ctrl+Alt+`");
+        Register(IdRecentPrev, NativeMethods.VK_OEM_3, "Ctrl+Alt+Shift+`", NativeMethods.MOD_SHIFT);
+
         // '1'..'9' virtual-key codes equal their ASCII char codes (0x31..0x39).
         Enumerable.Range(1, 9).ToList()
             .ForEach(digit => Register(IdDigitBase + digit, (uint)('0' + digit), $"Ctrl+Alt+{digit}"));
     }
 
-    void Register(int id, uint vk, string chordName)
+    void Register(int id, uint vk, string chordName, uint extraModifiers = 0)
     {
         // Best-effort: a chord already owned by another app (Intel graphics rotate,
         // another utility, ...) is expected on some machines — never a crash.
-        if (NativeMethods.RegisterHotKey(source.Handle, id, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT, vk))
+        if (NativeMethods.RegisterHotKey(source.Handle, id, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | extraModifiers, vk))
             registeredIds.Add(id);
         else
             failures.Add(chordName);
@@ -72,6 +89,10 @@ public sealed class HotkeyService : IDisposable
         // every keypress that happens to hit a stale/removed workspace.
         if (id == IdCyclePrev) cyclePrev();
         else if (id == IdCycleNext) cycleNext();
+        // Note these do NOT switch: they advance a highlight in the picker, which commits
+        // when Ctrl+Alt is released. See WorkspaceSwitchGesture.
+        else if (id == IdRecentNext) stepRecent(+1);
+        else if (id == IdRecentPrev) stepRecent(-1);
         else if (id is >= IdDigitBase + 1 and <= IdDigitBase + 9) switchTo(id - IdDigitBase - 1); // 0-based index
 
         handled = true;

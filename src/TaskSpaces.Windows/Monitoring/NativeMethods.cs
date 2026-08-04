@@ -29,6 +29,22 @@ public static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wparam, string lparam, uint flags, uint timeoutMs, out nint result);
 
+    // Same export, integer lparam — WM_GETICON takes no string. A separate declaration
+    // rather than a marshalling trick: EntryPoint pins it to the same "W" function the
+    // string overload above resolves to, and the two signatures stay independently readable.
+    //
+    // TIMEOUT, not SendMessage: WM_GETICON is answered by the OWNING process's UI thread,
+    // so a hung app would otherwise block ours indefinitely — and this is called from the
+    // floating bar's rebuild, which runs on the dispatcher thread on every window event.
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
+    public static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wparam, nint lparam, uint flags, uint timeoutMs, out nint result);
+
+    // The class-level icon, the fallback for windows that answer WM_GETICON with nothing.
+    // "Ptr" suffix is real on x64 user32 (on 32-bit it is only a macro for GetClassLongW),
+    // which is fine — this project is x64-only, as the file header already notes.
+    [DllImport("user32.dll", EntryPoint = "GetClassLongPtrW", SetLastError = true)]
+    public static extern nint GetClassLongPtr(nint hwnd, int index);
+
     public const uint EVENT_OBJECT_DESTROY = 0x8001, EVENT_OBJECT_SHOW = 0x8002, EVENT_OBJECT_HIDE = 0x8003, EVENT_OBJECT_NAMECHANGE = 0x800C;
     // Petre: "active window should be highlighted in the floating window". Note this one is
     // in the SYSTEM range (0x0003), far below the OBJECT events above, so it needs its own
@@ -43,6 +59,17 @@ public static class NativeMethods
     public const uint DWMWA_CLOAKED = 14;
     public const uint WM_SETTEXT = 0x000C;
     public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    // Petre: "i also don't see an icon for whatsapp app". WhatsApp is a Store app whose
+    // WhatsApp.Root.exe is a launcher stub with NO embedded icon, so
+    // Icon.ExtractAssociatedIcon does not fail — it quietly hands back the generic Windows
+    // default, which is why the bar showed a blank-looking placeholder rather than nothing.
+    // The fix is to ask the WINDOW what it is displaying instead of asking the file.
+    // ICON_BIG first (usually 32px, so it scales down cleanly to the bar's 20px) then the
+    // small variants, then the window class's own icon.
+    public const uint WM_GETICON = 0x007F;
+    public const nint ICON_SMALL = 0, ICON_BIG = 1, ICON_SMALL2 = 2;
+    public const int GCLP_HICON = -14, GCLP_HICONSM = -34;
 
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(nint hwnd);
     [DllImport("user32.dll")] public static extern bool IsIconic(nint hwnd);
@@ -89,7 +116,25 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint vk);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool UnregisterHotKey(nint hwnd, int id);
 
-    public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2;
+    public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4;
     public const uint WM_HOTKEY = 0x0312;
     public const uint VK_LEFT = 0x25, VK_RIGHT = 0x27;
+
+    // Alt+Tab-style workspace switching (Petre: "maybe an alt-tab like shortcut for me to
+    // switch through workspaces"). VK_OEM_3 is the backtick/tilde key: Ctrl+Alt+` walks the
+    // most-recently-used list, Ctrl+Alt+Shift+` walks it backwards.
+    public const uint VK_OEM_3 = 0xC0;
+
+    // The missing half of that gesture. RegisterHotKey reports a chord being PRESSED and
+    // has no concept of release at all, but "hold the modifiers, tap the key, release to
+    // commit" is the entire point of Alt+Tab. GetAsyncKeyState is how the release is seen:
+    // it reports global key state regardless of which app has focus, so a background tray
+    // app can poll it (briefly, only while the picker is on screen).
+    //
+    // The alternative is a WH_KEYBOARD_LL hook, which would see releases directly but puts
+    // this process in the input path of EVERY keystroke on the machine -- a far bigger
+    // liability than a 30ms poll that only runs during the gesture itself.
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+    public const int VK_CONTROL = 0x11, VK_MENU = 0x12; // VK_MENU is Alt
+    public const int KeyDownBit = 0x8000;               // GetAsyncKeyState's "down right now" bit
 }

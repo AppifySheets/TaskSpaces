@@ -246,7 +246,10 @@ public partial class WindowGroupsView : UserControl
     UIElement RunningRow(WindowRow row, bool pinned, string groupKey)
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal };
-        var icon = IconCache.For(row.Window.ProcessPath);
+        // Handle-first lookup, same as the floating bar: IconCache asks the window before
+        // extracting from the exe, which is the only way Store apps with launcher-stub
+        // exes (WhatsApp) ever show their real icon.
+        var icon = IconCache.For(row.Window.Handle, row.Window.ProcessPath);
         if (icon is not null) content.Children.Add(new Image { Source = icon, Width = 16, Height = 16, Margin = new Thickness(0, 0, 6, 0) });
         content.Children.Add(new TextBlock { Text = row.Window.Title, FontWeight = row.OriginalTitle.HasValue ? FontWeights.SemiBold : FontWeights.Normal });
         // Renamed window: short name prominent, original title dimmed beside it (spec).

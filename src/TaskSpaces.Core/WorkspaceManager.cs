@@ -29,9 +29,16 @@ public sealed class WorkspaceManager(
     IWindowMonitor monitor,
     IWindowTitles titles,
     IPersistenceStore store,
-    Func<DateTimeOffset>? clock = null)
+    Func<DateTimeOffset>? clock = null,
+    // Petre: "why isn't the taskspaces window in the floating window?" -- so WindowMonitor
+    // stopped passing WINEVENT_SKIPOWNPROCESS and our own Manage window now flows through
+    // this pipeline like anyone else's. Which means this class has to know which windows
+    // are OURS, because three things it does to every other window must never happen to
+    // one of ours. See IsOurs below. Injectable purely so tests can name a pid.
+    int? ownProcessId = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
+    readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
     readonly Subject<Unit> stateChanged = new();
     readonly Dictionary<WindowHandle, WindowInfo> knownWindows = [];
     readonly Dictionary<WindowHandle, Guid> memberships = []; // window -> workspace
@@ -46,6 +53,9 @@ public sealed class WorkspaceManager(
     // The focused window, for the active-row highlight. Live-only: focus is a fact about
     // right now, so there is nothing to persist or reconcile.
     Maybe<WindowHandle> activeWindow = Maybe<WindowHandle>.None;
+    // Alt+Tab-style switching order. Live-only for the reason WorkspaceMru documents:
+    // "where I was a moment ago" is a fact about this session.
+    WorkspaceMru mru = WorkspaceMru.Empty;
     RenameLedger ledger = RenameLedger.Empty;
     PendingPlacements pending = PendingPlacements.Empty;      // rehydration (Task 9)
     IDisposable? subscription;
@@ -79,7 +89,19 @@ public sealed class WorkspaceManager(
                 // only cover switches WE perform. CurrentChanged fires for any means at all:
                 // this app, Win+Ctrl+arrows, Task View. That is what the observable was declared
                 // for, and until now nothing in the app consumed it.
-                currentDesktop = desktops.CurrentChanged.Subscribe(_ => stateChanged.OnNext(Unit.Default));
+                //
+                // The same subscription also feeds the MRU, and that is the RIGHT place for
+                // it: switching by Task View or Win+Ctrl+arrows is just as much a visit as
+                // one we performed, and an Alt+Tab-style list that ignored those would send
+                // the first tap somewhere Petre did not expect.
+                currentDesktop = desktops.CurrentChanged.Subscribe(desktopId =>
+                {
+                    RememberVisit(desktopId);
+                    stateChanged.OnNext(Unit.Default);
+                });
+                // Seed it with wherever we started, so the very first Ctrl+Alt+` of a session
+                // already knows which workspace it is leaving.
+                desktops.CurrentDesktop().Tap(RememberVisit);
                 ReapplyRenames();
                 RestorePlacements();
             });
@@ -283,16 +305,48 @@ public sealed class WorkspaceManager(
     // write FIRST, and only update the ledger (which captures the original title) once
     // that succeeds; RenameWindow propagates the failure, OnAppeared/OnTitleChanged
     // discard it deliberately (see comments there).
+    //
+    // Refuses our OWN windows outright (see IsOurs): WPF owns the Manage window's Title, so
+    // our WM_SETTEXT and its own binding would overwrite each other indefinitely. Guarded
+    // HERE rather than at each of the four callers (Appeared, TitleChanged, the rule sweep,
+    // and Petre right-clicking the icon) so the exemption cannot be forgotten by a fifth --
+    // and it is a Failure, not a silent skip, so the one caller with a human waiting on it
+    // says why instead of appearing to do nothing.
     Result ApplyRename(WindowInfo window, string shortName) =>
-        titles.Set(window.Handle, shortName)
-            .Tap(() => ledger = ledger.Apply(window.Handle, window.Title, shortName));
+        IsOurs(window.Handle)
+            ? Result.Failure("TaskSpaces does not rename its own windows.")
+            : titles.Set(window.Handle, shortName)
+                .Tap(() => ledger = ledger.Apply(window.Handle, window.Title, shortName));
 
     // --- UI-facing operations ---------------------------------------------------
 
     public Result Switch(Guid workspaceId) =>
         Workspace(workspaceId).Bind(w => w.DesktopId is { } id
             ? desktops.Switch(id)
-            : Result.Failure("Workspace has no desktop (compatibility mode)."));
+            : Result.Failure("Workspace has no desktop (compatibility mode)."))
+            // Recorded here AS WELL AS in the CurrentChanged subscription above, and the
+            // redundancy is deliberate: Touch is idempotent (it moves an id to the front),
+            // and this path must not depend on the OS raising a change notification we did
+            // not ask for. The subscription covers switches made outside the app; this
+            // covers the ones we make.
+            .Tap(() => mru = mru.Touch(workspaceId));
+
+    // Alt+Tab-style switching (Petre: "maybe an alt-tab like shortcut for me to switch
+    // through workspaces"): the workspaces in most-recently-used order, plus where the
+    // highlight should start. One call rather than two, because the index is only meaningful
+    // against the very list returned alongside it.
+    public RecentWorkspaces ByRecentUse()
+    {
+        var ordered = mru.Order(State.Workspaces);
+        var current = desktops.CurrentDesktop();
+        return new RecentWorkspaces(
+            ordered,
+            current.IsFailure ? -1 : ordered.ToList().FindIndex(w => w.DesktopId == current.Value));
+    }
+
+    // A desktop became current: if it belongs to a workspace, that is a visit.
+    void RememberVisit(Guid desktopId) =>
+        State.Workspaces.TryFirst(w => w.DesktopId == desktopId).Tap(w => mru = mru.Touch(w.Id));
 
     // Floating-bar fix round 6 (Petre: the bar must "show tabs from all workspaces" —
     // including windows on UNBOUND desktops like his "Main"): a desktop group's label
@@ -447,12 +501,36 @@ public sealed class WorkspaceManager(
                 RememberPlacement(window, pinned: false);
             });
 
-    // Rules (and late placement) only touch windows that are neither placed, pinned, nor
-    // deliberately detached: pinned windows live on ALL desktops — moving one to a
+    // TaskSpaces' own windows, now that WindowMonitor reports them (it used to hook with
+    // WINEVENT_SKIPOWNPROCESS, which is why the Manage window was missing from the bar).
+    //
+    // They are shown, jumped to and dragged like any other window. What they are exempt
+    // from is everything the app does BEHIND Petre's back, and there are exactly three such
+    // things, each guarded at its own single choke point:
+    //
+    //   AutoPlaceable  we never move our own window between desktops on our own initiative.
+    //                  Yanking the window someone is currently reading is hostile, and it
+    //                  would happen on every launch via RestorePlacements.
+    //   ApplyRename    we never rewrite our own titles. Our WM_SETTEXT would fight WPF's own
+    //                  Title, and a ledger entry for a window we control is a loop waiting
+    //                  to happen.
+    //   RosterAdd /    we never remember ourselves as an app that BELONGS to a workspace.
+    //   EntryFor       Otherwise "▶ Start" would try to relaunch TaskSpaces and hit its own
+    //                  single-instance guard, and PlacementMemory would try to re-place us
+    //                  at every startup.
+    //
+    // Note this is deliberately NOT a filter on visibility: an exclusion at the monitor
+    // would have put us right back where Petre started.
+    bool IsOurs(WindowHandle handle) =>
+        knownWindows.TryGetValue(handle, out var window) && window.ProcessId == ownProcess;
+
+    // Rules (and late placement) only touch windows that are neither ours, placed, pinned,
+    // nor deliberately detached: pinned windows live on ALL desktops — moving one to a
     // workspace desktop would silently defeat the pin Petre set by hand — and a detached
     // window is one he dragged out of every workspace by hand (see `detached`).
     bool AutoPlaceable(WindowHandle handle) =>
-        !memberships.ContainsKey(handle)
+        !IsOurs(handle)
+        && !memberships.ContainsKey(handle)
         && !detached.Contains(handle)
         && !desktops.IsPinned(handle).GetValueOrDefault(false);
 
@@ -663,6 +741,11 @@ public sealed class WorkspaceManager(
     void RosterAdd(WindowInfo window, Guid workspaceId)
     {
         if (window.ProcessPath is null) return; // elevated/inaccessible: nothing relaunchable to remember
+        // Never roster OURSELVES (see IsOurs). Dragging the Manage window onto a workspace
+        // row is allowed -- it is an explicit act, and moving a window between desktops is
+        // harmless -- but recording TaskSpaces as an app that BELONGS to that workspace
+        // would make "▶ Start" relaunch it into its own "already running" dialog.
+        if (IsOurs(window.Handle)) return;
         AddEntry(workspaceId, new InventoryEntry(window.ProcessPath, window.CommandLine,
             ledger.OriginalTitle(window.Handle).GetValueOrDefault(window.Title)));
     }
@@ -712,8 +795,12 @@ public sealed class WorkspaceManager(
 
     // The roster-shaped record of a live window: original title where we renamed it, so
     // state.json keeps showing what Petre would recognise rather than our short name.
+    //
+    // None for our OWN windows (see IsOurs), which is what keeps TaskSpaces out of
+    // PinnedApps/DetachedApps: pinning the Manage window by hand still pins it in Windows,
+    // it just isn't remembered as a standing instruction to re-pin us at every launch.
     Maybe<InventoryEntry> EntryFor(WindowHandle window) =>
-        knownWindows.TryGetValue(window, out var info) && info.ProcessPath is not null
+        !IsOurs(window) && knownWindows.TryGetValue(window, out var info) && info.ProcessPath is not null
             ? new InventoryEntry(info.ProcessPath, info.CommandLine, ledger.OriginalTitle(window).GetValueOrDefault(info.Title))
             : Maybe<InventoryEntry>.None;
 

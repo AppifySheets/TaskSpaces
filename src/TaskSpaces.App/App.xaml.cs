@@ -25,6 +25,7 @@ public partial class App : Application
     bool compatibilityMode;
     ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
+    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Ctrl+Alt+`)
     FloatingBar? floatingBar; // Task 11: created lazily on first show
 
     // Held for the whole process lifetime, in a FIELD so the GC cannot collect it and quietly
@@ -193,8 +194,24 @@ public partial class App : Application
         if (!compatibilityMode)
         {
             floatingBar = new FloatingBar(manager);
+            // The bar's hwnd is created HERE, before it is ever shown, for two reasons that
+            // both hang off the same handle:
+            //
+            //   1. monitor.Ignore -- WindowMonitor no longer hooks with
+            //      WINEVENT_SKIPOWNPROCESS (Petre: "why isn't the taskspaces window in the
+            //      floating window?"), so without this the bar would list ITSELF, and since
+            //      we pin it below, it would list itself in the pinned row forever. Must
+            //      happen before the first Show(), or that first EVENT_OBJECT_SHOW slips
+            //      through and the bar acquires a permanent row for itself.
+            //   2. PinFloatingBar -- which needed a real handle anyway, and previously had
+            //      to guard against being called too early.
+            //
+            // EnsureHandle() is safe this early: AllowsTransparency/WindowStyle are set in
+            // XAML and applied by InitializeComponent, which the constructor above ran.
+            var barHwnd = new WindowInteropHelper(floatingBar).EnsureHandle();
+            monitor.Ignore(barHwnd);
             floatingBar.ShowBar();
-            PinFloatingBar();
+            PinFloatingBar(barHwnd);
         }
 
         // The hover-to-peek switcher panel USED to be summoned from here, with a 400ms
@@ -223,10 +240,19 @@ public partial class App : Application
         // silent no-op (e.g. Ctrl+Alt+3 with only two workspaces defined).
         if (!compatibilityMode)
         {
+            // Ctrl+Alt+` walks workspaces in most-recently-used order while Ctrl+Alt stays
+            // held, and switches on release -- Alt+Tab's gesture, applied to workspaces.
+            // Ignored by the monitor for the same reason the floating bar is: it is our own
+            // chrome, and now that the hooks see our process it would otherwise appear in
+            // the bar as a window every time it flashed up.
+            switcher = new WorkspaceSwitchGesture(manager);
+            monitor.Ignore(switcher.EnsureHandle());
+
             hotkeys = new HotkeyService(
                 () => manager.CycleWorkspace(-1),
                 () => manager.CycleWorkspace(+1),
-                n => manager.SwitchToIndex(n));
+                n => manager.SwitchToIndex(n),
+                direction => switcher.Step(direction));
             if (hotkeys.Failures.Count > 0)
                 MessageBox.Show(
                     "TaskSpaces could not register these keyboard shortcuts (another app already owns them):\n"
@@ -326,24 +352,20 @@ public partial class App : Application
     // and vanishes the instant Petre switches away, defeating the entire point of an
     // "always visible" bar / "peek from anywhere" panel. Pinning makes them omnipresent.
     //
-    // WindowInteropHelper.Handle is non-zero only once the window has a REAL hwnd (i.e.
-    // after Show()/SourceInitialized) -- both call sites below call this immediately
-    // after ShowBar()/Peek(), which already called Show(). Guarded by the pinned flag
-    // so repeated toggles/peeks attempt the native pin call (and, on failure, show a
-    // MessageBox) at most ONCE per window's lifetime: Windows' pin state lives on the
-    // hwnd itself and survives Hide()/Show() cycles (only Close()+recreate would lose
-    // it), and neither window is ever closed/recreated during the app's lifetime.
+    // The caller passes the handle it already created with EnsureHandle(), so there is no
+    // "is it shown yet" question left to guard. Guarded by the pinned flag so the native
+    // pin call (and, on failure, the MessageBox) happens at most ONCE per window lifetime:
+    // Windows' pin state lives on the hwnd and survives Hide()/Show() cycles, and this
+    // window is never closed or recreated while the app runs.
     //
-    // Sanity check (grep-confirmed): WindowMonitor's hooks are registered with
-    // WINEVENT_SKIPOWNPROCESS (WindowMonitor.cs, Hook()), so our own windows never fire
-    // WinEvents into WorkspaceManager's knownWindows/memberships in the first place --
-    // pinning them cannot pollute the roster or the switcher/bar's own overview
-    // (WorkspaceManager.WindowsByWorkspace/IsPinned only ever look at knownWindows).
-    void PinFloatingBar()
+    // Pinning our own window used to be invisible to the rest of the app because
+    // WindowMonitor hooked with WINEVENT_SKIPOWNPROCESS. That flag is gone (Petre wanted to
+    // see the Manage window in the bar), so the bar would now be a perfectly ordinary
+    // pinned window as far as the overview is concerned -- which is exactly why the caller
+    // registers this handle with monitor.Ignore first.
+    void PinFloatingBar(nint hwnd)
     {
         if (floatingBarPinned) return;
-        var hwnd = new WindowInteropHelper(floatingBar!).Handle;
-        if (hwnd == nint.Zero) return; // not shown yet -- shouldn't happen, called right after ShowBar()
         floatingBarPinned = true;
         desktops!.Pin(new WindowHandle(hwnd))
             .TapError(err => MessageBox.Show(
@@ -356,6 +378,7 @@ public partial class App : Application
         manager?.RestoreAllTitles();  // leave every window as we found it
         monitor?.Dispose();
         hotkeys?.Dispose(); // unregisters RegisterHotKey chords before the process exits
+        switcher?.Dispose(); // stops the release poll and closes the picker window
         trayIcon?.Dispose();
         // Released explicitly on the orderly exit path so a relaunch a moment later is never
         // refused. Windows would release it at process death anyway; being deterministic here

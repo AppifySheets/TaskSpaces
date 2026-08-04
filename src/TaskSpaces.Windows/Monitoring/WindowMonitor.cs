@@ -22,6 +22,8 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     // `known`), and so a later re-SHOW of a hidden window is recognised as "came back"
     // rather than silently deduplicated away.
     readonly HashSet<nint> hidden = [];
+    // OUR OWN chrome, opted out by hwnd (see Ignore below).
+    readonly HashSet<nint> ignored = [];
     // CRITICAL: the delegate must be kept alive in a field. If the GC collects it,
     // the hook silently dies — the classic SetWinEventHook bug.
     readonly WinEventProc callback;
@@ -30,6 +32,27 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     public WindowMonitor() => callback = OnWinEvent;
 
     public IObservable<WindowEvent> Events => events.AsObservable();
+
+    // Petre: "why isn't the taskspaces window in the floating window? it's clearly open and
+    // i can't see it in the floating bar." It wasn't there because Hook() below used to pass
+    // WINEVENT_SKIPOWNPROCESS, which made this monitor structurally blind to every window
+    // TaskSpaces owns. That flag is gone, so our Manage window now behaves like any other
+    // app's window: it appears, it can be jumped to, it can be dragged between workspaces.
+    //
+    // But "see our windows" must NOT mean "see ALL our windows". The floating bar is itself
+    // a top-level window with a title, so without an opt-out the bar would list ITSELF --
+    // and, because App pins the bar to every desktop, it would list itself in the 📌 Pinned
+    // row, permanently. Hence an explicit hwnd allow-list-in-reverse rather than a guess
+    // about window styles: the composition root names the windows that are app CHROME, and
+    // everything else it owns is treated as an ordinary window.
+    //
+    // Call this BEFORE the window is first shown (WindowInteropHelper.EnsureHandle creates
+    // the hwnd without showing it) so its very first EVENT_OBJECT_SHOW is already filtered.
+    public void Ignore(nint hwnd) => ignored.Add(hwnd);
+
+    // The single "do we care about this hwnd" question, so the snapshot and the event path
+    // can never disagree about it.
+    bool IsTracked(nint hwnd) => !ignored.Contains(hwnd) && TopLevelWindows.IsTaskbarCandidate(hwnd);
 
     // Must run on a message-pumping thread (WPF dispatcher): WINEVENT_OUTOFCONTEXT
     // delivers callbacks via the registering thread's message queue.
@@ -51,6 +74,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     {
         var commandLines = WindowInfoFactory.AllCommandLines(); // one WMI query, not one per window
         return TopLevelWindows.Enumerate()
+            .Where(h => !ignored.Contains(h)) // EnumWindows never skipped our own process; only the WinEvent hooks did
             .Select(h => WindowInfoFactory.FromHwnd(h, commandLines))
             .Where(m => m.HasValue).Select(m => m.Value)
             .ToList();
@@ -64,12 +88,21 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         return hwnd != 0 && known.ContainsKey(hwnd) ? new WindowHandle(hwnd) : Maybe<WindowHandle>.None;
     }
 
+    // WINEVENT_SKIPOWNPROCESS is deliberately NOT passed any more -- see Ignore() above for
+    // why (Petre could not see the TaskSpaces window in his own bar). Our chrome opts out by
+    // hwnd instead, which is precise; the flag was a blunt instrument that also hid the one
+    // window he wanted to see.
     nint Hook(uint min, uint max) =>
-        SetWinEventHook(min, max, 0, callback, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        SetWinEventHook(min, max, 0, callback, 0, 0, WINEVENT_OUTOFCONTEXT);
 
     void OnWinEvent(nint hook, uint @event, nint hwnd, int idObject, int idChild, uint thread, uint time)
     {
         if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF || hwnd == 0) return;
+        // Cheapest possible rejection of our own chrome, before any P/Invoke or dictionary
+        // work. Necessary now that the hooks no longer skip our process: the floating bar
+        // repaints and re-titles constantly, and every one of those events would otherwise
+        // walk this switch.
+        if (ignored.Contains(hwnd)) return;
 
         // INVARIANT: no managed exception may ever escape a native callback. OnWinEvent is
         // invoked directly by user32 via the SetWinEventHook out-of-context callback — an
@@ -122,8 +155,8 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                     break;
 
                 // Focus moved to a window we track. Only tracked windows qualify: foreground
-                // also lands on things that are not taskbar candidates at all, and WE are
-                // excluded anyway by WINEVENT_SKIPOWNPROCESS, so clicking the bar itself
+                // also lands on things that are not taskbar candidates at all, and our own
+                // chrome is filtered at the top of this method, so clicking the bar itself
                 // never clears the highlight. Focus moving to an UNtracked window emits
                 // nothing, deliberately — the highlight then stays on the last real window,
                 // which is the useful answer to "which window am I in".
@@ -157,7 +190,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                 });
             return;
         }
-        if (known.ContainsKey(hwnd) || !TopLevelWindows.IsTaskbarCandidate(hwnd)) return;
+        if (known.ContainsKey(hwnd) || !IsTracked(hwnd)) return;
         WindowInfoFactory.FromHwnd(hwnd).Tap(info =>
         {
             known[hwnd] = info;
