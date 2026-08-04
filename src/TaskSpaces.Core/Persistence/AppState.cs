@@ -49,19 +49,27 @@ public sealed record AppState(
     // falls back to the default for anything unusable.
     public string SwitcherShortcut { get; init; } = DefaultSwitcherShortcut;
 
-    // Petre: "make the default key-combo be Ctrl+Tab, as I set it manually already".
+    // Petre: "i think ctrl+tab was commonly used for something, give me other something+tab".
+    // He was right -- Ctrl+Tab moves between tabs in browsers, VS Code, Rider, Explorer and
+    // Office, and a global hotkey is EXCLUSIVE, so binding it takes that away from all of them
+    // for as long as TaskSpaces runs.
     //
-    // His call, and it is the better muscle memory by a distance: Alt+Tab switches windows, so
-    // Ctrl+Tab switching workspaces is the obvious neighbour, and the hold-and-tap gesture is
-    // identical.
+    // Win+Ctrl+Tab was chosen by MEASUREMENT, not by guessing. Every *+Tab candidate was tried
+    // against RegisterHotKey on a real machine, and this was the only one whose forward AND
+    // reverse (+Shift) halves were both free: Alt+Tab, Win+Tab, Ctrl+Alt+Tab and Win+Alt+Tab
+    // are all already owned by the shell or something running.
     //
-    // What it costs, stated plainly because a global hotkey is EXCLUSIVE and this one is not a
-    // quiet chord: while TaskSpaces runs, Ctrl+Tab and Ctrl+Shift+Tab stop reaching every app
-    // that uses them to move between tabs -- browsers, VS Code, Rider, Explorer. The earlier
-    // default (Ctrl+Alt+`) was chosen to avoid precisely that. Petre set Ctrl+Tab by hand,
-    // used it, and asked for it as the default, so the trade is made knowingly; the Shortcuts
-    // tab is where anyone who disagrees changes it back.
-    public const string DefaultSwitcherShortcut = "Ctrl+Tab";
+    // It also turns out to be the mnemonically right answer. Win+Ctrl is Windows' OWN
+    // virtual-desktop prefix -- Win+Ctrl+Left/Right switches desktop, Win+Ctrl+D creates one,
+    // Win+Ctrl+F4 closes one -- and a TaskSpaces workspace IS a virtual desktop. So
+    // Win+Ctrl+Tab ("walk them by recent use") lands directly beside Win+Ctrl+arrows ("walk
+    // them in order"), which is the association a user already has.
+    //
+    // One caveat worth knowing rather than discovering: releasing the Win key on its own opens
+    // Start. Pressing Tab while it is held is what prevents that, so the gesture is safe, but
+    // it is the reason a Win-based chord needs a real key press to confirm rather than just a
+    // successful registration.
+    public const string DefaultSwitcherShortcut = "Win+Ctrl+Tab";
 
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }

@@ -1,4 +1,4 @@
-using System.Drawing;
+﻿using System.Drawing;
 using System.IO;
 using System.Windows;
 using System.Windows.Interop;
@@ -25,7 +25,7 @@ public partial class App : Application
     bool compatibilityMode;
     ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
-    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Ctrl+Tab by default)
+    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Win+Ctrl+Tab by default)
     Chord boundSwitcher;              // the chord the picker and the hotkey are currently registered on
     FloatingBar? floatingBar; // Task 11: created lazily on first show
 
@@ -233,7 +233,7 @@ public partial class App : Application
         //   see every window across workspaces -> the floating bar
         //   jump to a window                   -> bar icons
         //   drag windows between workspaces    -> bar rows, and Manage's Windows tab
-        //   switch workspace                   -> bar row labels, and the Ctrl+Tab switcher
+        //   switch workspace                   -> bar row labels, and the Win+Ctrl+Tab switcher
         //   rename / pin / restore             -> bar icon right-click, Manage's Windows tab
         //
         // The deletion was cheap for one specific reason: the panel and Manage's Windows tab
@@ -241,7 +241,7 @@ public partial class App : Application
         // could not drift apart. Removing the panel left that control untouched in Manage, so
         // grouped drag-and-drop window management survived intact.
 
-        // The app's ONE global chord: the Alt+Tab-style workspace switcher, Ctrl+Tab by
+        // The app's ONE global chord: the Alt+Tab-style workspace switcher, Win+Ctrl+Tab by
         // default. Petre: "i don't think we need ctrl+alt and those, ctrl+tab is good enough" --
         // Ctrl+Alt+arrows and Ctrl+Alt+1..9 are gone, and HotkeyService's header records why.
         //
@@ -249,7 +249,7 @@ public partial class App : Application
         // desktop to switch to, and compatibility mode has none.
         if (!compatibilityMode)
         {
-            // Ctrl+Tab (the configured chord) walks workspaces in most-recently-used order
+            // Win+Ctrl+Tab (the configured chord) walks workspaces in most-recently-used order
             // while the modifiers stay held, and switches on release -- Alt+Tab's gesture,
             // applied to workspaces rather than windows.
             // Ignored by the monitor for the same reason the floating bar is: it is our own

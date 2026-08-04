@@ -4,7 +4,7 @@
 
 <h1 align="center">TaskSpaces</h1>
 
-<p align="center"><em><code>Ctrl+Tab</code> switches project. Every window is exactly where you left it.</em></p>
+<p align="center"><em><code>Win+Ctrl+Tab</code> switches workspace. Every window is exactly where you left it.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20x64-0078D4" alt="Platform: Windows 11, x64" />
@@ -16,25 +16,34 @@
   <img src="docs/images/floating-bar.png" width="243" alt="The floating bar: seven rows, one per workspace, each tinted its own colour, showing the icons of every window in it. The current workspace's label is bold and the focused window's icon is outlined." />
 </p>
 
-<p align="center"><em>Everything you have open, grouped by project. One row per workspace, the
-current one in bold, the focused window outlined. Click any icon to jump straight to that
-window from anywhere; drag it to another row to move it there. Shown at life size.</em></p>
+<p align="center"><em>Everything you have open, grouped by workspace — one row each, the current
+one in bold, the focused window outlined. Click any icon to jump straight to that window from
+anywhere; drag it to another row to move the window there.</em></p>
 
-> **Windows only, by design rather than by omission.** TaskSpaces is built directly on
-> Windows' virtual-desktop COM API, the taskbar's native per-desktop window filtering, and
-> WinEvent hooks. macOS and Linux organise windows on fundamentally different models, so
-> there is no port waiting to be written. If you are not on Windows 11, this is not the tool
-> for you.
+**TaskSpaces is a layer over Windows' own virtual desktops.** Every workspace *is* a real
+virtual desktop, so Windows keeps doing the window management it already does well and
+TaskSpaces adds the parts it never had: names, colours, one chord to switch, rules that put
+new windows where they belong, and the bar above — the thing plain virtual desktops cannot
+give you, a view of *every* desktop's windows at once instead of only the one you are on.
 
-Group your running apps into named contexts — **Work**, **Personal**, **YouTube** — and move
-between them with `Ctrl+Tab`, exactly the way `Alt+Tab` moves between windows: hold `Ctrl`,
-tap `Tab` to walk your workspaces in most-recently-used order, release to land. One tap takes
-you back to wherever you just were. (Or click a row on the bar above.)
+Nothing is hidden by trickery, which is the point. Quit TaskSpaces and your windows are still
+sitting on their desktops, reachable through Task View exactly as before.
 
-Switching does not merely filter the taskbar: you come back to everything still open and
-still where you put it, because nothing was ever closed or minimised. The expensive part of
-changing project is rebuilding the context you had, and here there is nothing to rebuild.
-Workspaces survive reboots.
+> **Windows only, by design rather than by omission.** The whole app is built on Windows'
+> virtual-desktop COM API and the taskbar's native per-desktop filtering. macOS and Linux
+> organise windows on fundamentally different models, so there is no port waiting to be
+> written. If you are not on Windows 11, this is not the tool for you.
+
+Group your running apps into workspaces — one per project, so **Work**, **Personal** and
+**YouTube** each keep their own windows. Move between them with `Win+Ctrl+Tab`, exactly the way
+`Alt+Tab` moves between windows: hold `Win+Ctrl`, tap `Tab` to walk your workspaces in
+most-recently-used order, release to land. One tap takes you back to wherever you just were.
+Or click a row on the bar. The chord deliberately neighbours Windows' own `Win+Ctrl+←/→`.
+
+Switching does not merely filter the taskbar: you come back to a workspace with everything
+still open and still where you put it, because nothing was ever closed or minimised. The
+expensive part of changing task is rebuilding what you had open, and here there is nothing to
+rebuild. Workspaces survive reboots.
 
 ## Install
 
@@ -101,16 +110,17 @@ single ~74 MB exe in `artifacts/publish`.
   nothing to switch off.
 - **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
   patterns. Opened by left-clicking the tray icon.
-- **Switching workspaces, Alt+Tab style.** Hold `Ctrl` and tap `Tab` to walk your
+- **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
   workspaces in **most-recently-used** order; release to switch. Add `Shift` to walk
   backwards. One tap therefore returns you to wherever you just were, however your list
   is arranged — which is the whole reason Alt+Tab is worth using.
 
-  This chord is **exclusive** while TaskSpaces runs: `Ctrl+Tab` and `Ctrl+Shift+Tab`
-  stop reaching apps that use them to move between tabs. Change it on Manage →
-  **Shortcuts** if you would rather keep them — ``Ctrl+Alt+` `` is a quiet alternative.
-  It is the *only* shortcut TaskSpaces registers; everything else is on the bar, one
-  click away.
+  `Win+Ctrl+Tab` was chosen by testing every `*+Tab` chord against Windows: it is the only
+  one left unclaimed, and it neighbours `Win+Ctrl+←/→`, which Windows already uses for
+  desktops. Change it on Manage → **Shortcuts** if you prefer. Whatever you pick becomes
+  **exclusive** while TaskSpaces runs, so avoid chords other apps need — `Ctrl+Tab` would
+  stop reaching browsers, editors and Explorer. It is the *only* shortcut TaskSpaces
+  registers; everything else is on the bar, one click away.
 - **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of
   `Remote Desktop Manager [server-01 - fhd]`. Right-click an icon for either
   **Rename this window** or **Rename all *app* windows** — prefer the second for
@@ -200,7 +210,7 @@ finding.
 | People leave windows open as recall cues | The cue *is* the workspace, preserved and persisted |
 | Window thrashing wastes effort keeping the right windows visible | Other contexts' windows are on another desktop, natively filtered out of the taskbar |
 | Unfinished work stays costly while it is in view | Other projects are genuinely out of sight, not merely minimised |
-| Fragmentation is getting finer | A switch is `Ctrl+Tab`, or one click on the bar |
+| Fragmentation is getting finer | A switch is `Win+Ctrl+Tab`, or one click on the bar |
 
 And the features that exist because manual organisation decays the moment it needs
 upkeep: **placement memory** (where you last put a window is where it goes next time,

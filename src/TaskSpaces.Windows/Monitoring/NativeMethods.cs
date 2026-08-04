@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text;
 
 namespace TaskSpaces.Windows.Monitoring;
@@ -127,7 +127,7 @@ public static class NativeMethods
 
     public const int SW_RESTORE = 9; // NEVER SW_HIDE anywhere in this codebase (spec)
 
-    // The app's one global chord: the Alt+Tab-style workspace switcher (Ctrl+Tab by default).
+    // The app's one global chord: the Alt+Tab-style workspace switcher (Win+Ctrl+Tab by default).
     // RegisterHotKey delivers WM_HOTKEY to the given window's message queue regardless
     // of focus — exactly what a background tray app needs (no window ever has to be
     // foreground for the chord to fire).
@@ -139,7 +139,7 @@ public static class NativeMethods
     public const uint VK_LEFT = 0x25, VK_RIGHT = 0x27;
 
     // Alt+Tab-style workspace switching (Petre: "maybe an alt-tab like shortcut for me to
-    // switch through workspaces"). The chord is configurable and defaults to Ctrl+Tab; this
+    // switch through workspaces"). The chord is configurable and defaults to Win+Ctrl+Tab; this
     // constant remains because VK_OEM_3 (the backtick/tilde key) was the original default and
     // Chord still has to be able to spell it.
     public const uint VK_OEM_3 = 0xC0;

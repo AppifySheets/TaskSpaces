@@ -79,8 +79,13 @@ public readonly record struct Chord(uint Modifiers, uint VirtualKey)
     // the two halves separately ("hold Ctrl+Alt · tap `"), which is why they are exposed
     // apart as well as joined.
 
-    // Conventional Windows order (Ctrl, Alt, Shift, Win) rather than the order they were
-    // typed in, so two spellings of one chord never look like two different chords.
+    // Microsoft's own ordering -- Win, then Ctrl, then Alt, then Shift -- rather than the order
+    // they were typed in, so two spellings of one chord never look like two different chords.
+    // That is the order Windows' documentation uses throughout: "Win+Ctrl+D", "Win+Ctrl+Left",
+    // "Ctrl+Shift+Esc", "Ctrl+Alt+Del". Win leading matters now that the default switcher chord
+    // is Win+Ctrl+Tab, which the previous order rendered "Ctrl+Win+Tab" -- a spelling nobody
+    // writes and which would have shown up in the UI and in state.json.
+    //
     // `held` is a local copy on purpose: a lambda inside a struct cannot touch `this`, so
     // reading Modifiers directly in the Where below does not compile (CS1673).
     public string ModifiersText
@@ -88,7 +93,7 @@ public readonly record struct Chord(uint Modifiers, uint VirtualKey)
         get
         {
             var held = Modifiers;
-            return string.Join("+", new[] { Control, Alt, Shift, Win }
+            return string.Join("+", new[] { Win, Control, Alt, Shift }
                 .Where(bit => (held & bit) != 0)
                 .Select(bit => ModifierNames[bit]));
         }

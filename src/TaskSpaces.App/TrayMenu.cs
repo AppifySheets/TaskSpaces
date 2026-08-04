@@ -1,4 +1,4 @@
-using System.Windows.Controls;
+﻿using System.Windows.Controls;
 
 namespace TaskSpaces.App;
 
@@ -7,7 +7,7 @@ namespace TaskSpaces.App;
 // Petre: "no need for workspace switching on right click", and "right click gives exit and
 // manage". Both removals are because the work moved elsewhere rather than because the
 // features went away:
-//   - switching workspaces is the floating bar's row labels, plus the Ctrl+Tab switcher,
+//   - switching workspaces is the floating bar's row labels, plus the Win+Ctrl+Tab switcher,
 //     so a list of workspaces here was a third way to do the same thing;
 //   - "Show floating bar" moved into Manage, next to "Start with Windows". It could not
 //     simply be deleted: the bar can hide itself from its own right-click menu, and with no

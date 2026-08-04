@@ -16,14 +16,16 @@ public class SwitcherShortcutTests
 
     WorkspaceManager Manager() => new(desktops, new FakeMonitor(), new FakeTitles(), store);
 
-    // Petre: "make the default key-combo be Ctrl+Tab, as I set it manually already." Asserted
-    // literally, not against the constant, so changing the default is a deliberate edit here
+    // Petre: "i think ctrl+tab was commonly used for something, give me other something+tab."
+    // Win+Ctrl+Tab was picked by trying every *+Tab candidate against RegisterHotKey on a real
+    // machine; it was the only one with both its forward and reverse halves free. Asserted
+    // literally, not against the constant, so changing the default stays a deliberate edit here
     // rather than something a test silently follows.
     [Fact]
     public void Out_of_the_box_it_is_the_documented_default()
     {
-        Assert.Equal("Ctrl+Tab", AppState.DefaultSwitcherShortcut);
-        Assert.Equal("Ctrl+Tab", Manager().SwitcherShortcut);
+        Assert.Equal("Win+Ctrl+Tab", AppState.DefaultSwitcherShortcut);
+        Assert.Equal("Win+Ctrl+Tab", Manager().SwitcherShortcut);
     }
 
     // The default must be a chord the gesture can actually run: one modifier at minimum, or
@@ -122,9 +124,12 @@ public class SwitcherShortcutTests
     public void The_backtick_key_can_be_spelled_three_ways(string text) =>
         Assert.Equal(0xC0u, Chord.Parse(text).Value.VirtualKey);
 
+    // Modifier order follows Microsoft's own ("Win+Ctrl+D", "Ctrl+Alt+Del"), so Win leads --
+    // otherwise the default would render as the "Ctrl+Win+Tab" nobody writes.
     [Theory]
     [InlineData("Ctrl+Alt+`", "Ctrl+Alt", "`")]
-    [InlineData("win+shift+tab", "Shift+Win", "Tab")]
+    [InlineData("win+shift+tab", "Win+Shift", "Tab")]
+    [InlineData("ctrl+win+tab", "Win+Ctrl", "Tab")]
     [InlineData("alt+f4", "Alt", "F4")]
     public void A_chord_renders_back_to_canonical_text(string typed, string modifiers, string key)
     {

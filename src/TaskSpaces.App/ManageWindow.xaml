@@ -49,7 +49,7 @@
                     <StackPanel>
                         <TextBlock Text="Switch workspaces, Alt+Tab style" FontWeight="Bold"/>
                         <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,8"
-                                   Text="Hold the modifiers and tap the key to walk workspaces in most-recently-used order; release to switch. Add Shift while walking to go backwards. Type a chord such as Ctrl+Tab, Ctrl+Alt+` or Win+Q. Remember it becomes exclusive: the default Ctrl+Tab stops reaching apps that use it to move between tabs."/>
+                                   Text="Hold the modifiers and tap the key to walk workspaces in most-recently-used order; release to switch. Add Shift while walking to go backwards. The default is Win+Ctrl+Tab, which sits beside Windows' own Win+Ctrl+arrows for desktops and is the only *+Tab chord left unclaimed. Whatever you pick becomes exclusive while TaskSpaces runs, so avoid chords other apps need: Ctrl+Tab would stop reaching browsers, editors and Explorer."/>
                         <StackPanel Orientation="Horizontal">
                             <TextBox x:Name="SwitcherShortcutBox" Width="220" TextChanged="OnSwitcherShortcutTyped"/>
                             <Button Content="Apply" Margin="8,0,0,0" Padding="12,2" Click="OnApplySwitcherShortcut"/>
