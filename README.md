@@ -23,6 +23,14 @@ Named workspaces for the Windows taskbar. Group your running apps into contexts
 Switch to a workspace and the taskbar shows only that group's windows; everything
 else keeps running out of sight. Workspaces survive reboots.
 
+<p align="center">
+  <img src="docs/images/floating-bar.png" width="243" alt="The floating bar: one row per workspace, each tinted its own colour, showing every window's icon across all workspaces" />
+</p>
+
+<p align="center"><em>The floating bar, at life size. One row per workspace, the current one in
+bold, every window in every workspace at a glance. Click an icon to jump to that window;
+drag it to another row to move the window there.</em></p>
+
 ## Install
 
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
@@ -37,8 +45,9 @@ download bundles the .NET runtime, so there is no framework to install first.
    tiled icon there.
 4. **Left-click the tray icon** to open Manage, the main window, and create your first
    workspace. (Right-click gives you just Manage and Exit.)
-5. In Manage, tick **Start TaskSpaces with Windows** if you want it always running,
-   and **Show floating bar** for the always-on-top strip.
+5. In Manage, tick **Start TaskSpaces with Windows** if you want it always running.
+   The floating bar appears on its own and stays; it is not optional, because it is the
+   only surface that lists your windows.
 
 There is no installer yet, and no admin rights are needed. TaskSpaces writes
 nothing outside your own user profile:
@@ -82,14 +91,28 @@ single ~74 MB exe in `artifacts/publish`.
   the surface you will actually live in. Click an icon to jump to that window wherever
   it lives, drag icons between rows to move windows between workspaces, click a row
   label to switch to it, right-click an icon to rename it, hover to see what an icon
-  actually is. The focused window's icon is highlighted. Turn it on and off in Manage.
-- **Manage.** Workspaces (add, rename, remove, reorder) and naming patterns. Opened by
-  left-clicking the tray icon.
-- **Hotkeys.** `Ctrl+Alt+←/→` cycles workspaces, `Ctrl+Alt+1…9` jumps to one
-  directly.
+  actually is. The current workspace's label is bold and the focused window's icon is
+  highlighted. Always on: it is the only surface that lists your windows, so there is
+  nothing to switch off.
+- **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
+  patterns. Opened by left-clicking the tray icon.
+- **Switching workspaces, Alt+Tab style.** Hold `Ctrl` and tap `Tab` to walk your
+  workspaces in **most-recently-used** order; release to switch. Add `Shift` to walk
+  backwards. One tap therefore returns you to wherever you just were, however your list
+  is arranged — which is the whole reason Alt+Tab is worth using.
+
+  This chord is **exclusive** while TaskSpaces runs: `Ctrl+Tab` and `Ctrl+Shift+Tab`
+  stop reaching apps that use them to move between tabs. Change it on Manage →
+  **Shortcuts** if you would rather keep them — ``Ctrl+Alt+` `` is a quiet alternative.
+- **Other hotkeys.** `Ctrl+Alt+←/→` cycles workspaces in *list* order rather than by
+  recent use, and `Ctrl+Alt+1…9` jumps straight to one by its position.
 - **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of
-  `Remote Desktop Manager [server-01 - fhd]`. Names persist across restarts and are
-  re-applied when an app rewrites its own title.
+  `Remote Desktop Manager [server-01 - fhd]`. Right-click an icon for either
+  **Rename this window** or **Rename all *app* windows** — prefer the second for
+  anything that rewrites its own title (browsers, chat apps, editors, Remote Desktop
+  Manager), because a single-window rename is keyed to the exact title it had at the
+  time and lapses the moment the app changes it. App-wide renames are keyed to the
+  process and never lapse. Names persist across restarts.
 - **Rosters.** A workspace remembers which apps belong to it even when they are
   closed, and offers to relaunch them after a reboot.
 
