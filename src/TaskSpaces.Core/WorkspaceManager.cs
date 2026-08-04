@@ -179,7 +179,7 @@ public sealed class WorkspaceManager(
         //                        a never-seen window has no placement to remember.
         if (AutoPlaceable(window.Handle))
             placement.Map(Placement.In)
-                .Or(PlacementMemory.For(window, State))
+                .Or(Remembered(window))
                 .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
                 .Tap(remembered => ApplyPlacement(window, remembered));
 
@@ -545,6 +545,37 @@ public sealed class WorkspaceManager(
     bool IsOurs(WindowHandle handle) =>
         knownWindows.TryGetValue(handle, out var window) && window.ProcessId == ownProcess;
 
+    // Placement memory, but only when the identity it keys on actually identifies THIS window.
+    //
+    // Petre: "i'm starting the edge browser and it immediately goes to personal, i'm starting
+    // it in messaging, why?" Because membership identity for a Chromium browser is the PROFILE
+    // (deliberately -- session args vary run to run and would make every launch a new app), so
+    // all four of his Default-profile Edge windows share one identity. One of them had been
+    // dragged to Personal, AddEntry strips an identity from every other workspace so exactly
+    // one can claim it, and from then on Personal owned every Edge window he would ever open.
+    //
+    // The fix is not a finer identity -- two plain browser windows on one profile are
+    // genuinely indistinguishable by content, which is the whole premise of identity here.
+    // It is recognising what memory is FOR. Memory restores where an app lives when it comes
+    // BACK: Beeper recreating the window it destroyed on close-to-tray, or a post-reboot
+    // relaunch. It was never meant to herd extra windows of an app that is already open. So
+    // when another live window already shares the identity, the identity is not a placement
+    // key for this one, and the new window stays where it was opened.
+    //
+    // Beeper's case is unaffected, which is the test that matters: it closes to tray, so no
+    // other Beeper window is live when the replacement appears, and memory still places it.
+    Maybe<Placement> Remembered(WindowInfo window) =>
+        SharesIdentityWithAnotherLiveWindow(window) ? Maybe<Placement>.None : PlacementMemory.For(window, State);
+
+    bool SharesIdentityWithAnotherLiveWindow(WindowInfo window) =>
+        RosterIdentity.Of(window).Match(
+            identity => knownWindows.Values.Any(other =>
+                other.Handle != window.Handle
+                && RosterIdentity.Of(other).Map(id => id == identity).GetValueOrDefault(false)),
+            // No readable path means no identity at all, so there is nothing to be ambiguous
+            // about -- PlacementMemory will return None for it anyway.
+            () => false);
+
     // Rules (and late placement) only touch windows that are neither ours, placed, pinned,
     // nor deliberately detached: pinned windows live on ALL desktops — moving one to a
     // workspace desktop would silently defeat the pin Petre set by hand — and a detached
@@ -885,7 +916,12 @@ public sealed class WorkspaceManager(
         knownWindows.Values
             .Where(window => AutoPlaceable(window.Handle))
             .ToList()
-            .ForEach(window => PlacementMemory.For(window, State)
+            // Same ambiguity guard as the live path (see Remembered): after a reboot Edge
+            // restores four windows at once, all on whatever desktop is current, and memory
+            // knows one workspace for all four -- so applying it would herd every one of them
+            // into that workspace. Leaving them where the session restored them is the lesser
+            // wrong, and the only honest answer when the key cannot tell them apart.
+            .ForEach(window => Remembered(window)
                 .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
                 .Where(remembered => SafeToRestore(window, remembered))
                 .Tap(remembered => ApplyPlacement(window, remembered)));

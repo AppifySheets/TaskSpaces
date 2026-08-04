@@ -25,10 +25,19 @@ public static class RosterIdentity
     {
         var exe = Path.GetFileNameWithoutExtension(processPath);
         var content = Browsers.Contains(exe)
-            ? BrowserProfile.FromCommandLine(commandLine).Map(p => $"profile:{p}").GetValueOrDefault("")
+            ? BrowserContent(commandLine)
             : CommandLines.ArgumentsOf(commandLine, processPath);
         return $"{processPath.ToLowerInvariant()}|{content.ToLowerInvariant()}";
     }
+
+    // Profile, plus the PWA/app id when there is one. The app id is what stops an installed
+    // web app collapsing into the plain browser: Petre's YouTube Music runs as msedge on the
+    // Default profile, so on profile alone it shared one identity with all four of his
+    // ordinary Edge windows -- and since the roster maps identity -> ONE workspace, whichever
+    // of the five was placed last owned the lot.
+    static string BrowserContent(string? commandLine) =>
+        BrowserProfile.FromCommandLine(commandLine).Map(profile => $"profile:{profile}").GetValueOrDefault("")
+        + BrowserProfile.AppFromCommandLine(commandLine).Map(app => $"|app:{app}").GetValueOrDefault("");
 
     public static string Of(InventoryEntry entry) => Of(entry.ProcessPath, entry.CommandLine);
 
