@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/floating-bar.png" width="243" alt="The floating bar: seven rows, one per workspace, each tinted its own colour, showing the icons of every window in it. The current workspace's label is bold and the focused window's icon is outlined." />
+  <img src="docs/images/floating-bar.png" width="290" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. The current workspace's name is bold and the focused window's icon is outlined." />
 </p>
 
 <p align="center"><em>Everything you have open, grouped by workspace — one row each, the current
