@@ -4,7 +4,7 @@
 
 <h1 align="center">TaskSpaces</h1>
 
-<p align="center"><em>Switch project in one click. Every window is exactly where you left it.</em></p>
+<p align="center"><em><code>Ctrl+Tab</code> switches project. Every window is exactly where you left it.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20x64-0078D4" alt="Platform: Windows 11, x64" />
@@ -26,11 +26,15 @@ window from anywhere; drag it to another row to move it there. Shown at life siz
 > there is no port waiting to be written. If you are not on Windows 11, this is not the tool
 > for you.
 
-Group your running apps into named contexts — **Work**, **Personal**, **YouTube** — and
-switch between them with one click. Switching does not merely filter the taskbar: you come
-back to everything still open and still where you put it, because nothing was ever closed or
-minimised. The expensive part of changing project is rebuilding the context you had, and
-here there is nothing to rebuild. Workspaces survive reboots.
+Group your running apps into named contexts — **Work**, **Personal**, **YouTube** — and move
+between them with `Ctrl+Tab`, exactly the way `Alt+Tab` moves between windows: hold `Ctrl`,
+tap `Tab` to walk your workspaces in most-recently-used order, release to land. One tap takes
+you back to wherever you just were. (Or click a row on the bar above.)
+
+Switching does not merely filter the taskbar: you come back to everything still open and
+still where you put it, because nothing was ever closed or minimised. The expensive part of
+changing project is rebuilding the context you had, and here there is nothing to rebuild.
+Workspaces survive reboots.
 
 ## Install
 
@@ -196,7 +200,7 @@ finding.
 | People leave windows open as recall cues | The cue *is* the workspace, preserved and persisted |
 | Window thrashing wastes effort keeping the right windows visible | Other contexts' windows are on another desktop, natively filtered out of the taskbar |
 | Unfinished work stays costly while it is in view | Other projects are genuinely out of sight, not merely minimised |
-| Fragmentation is getting finer | A switch is one click or one hotkey |
+| Fragmentation is getting finer | A switch is `Ctrl+Tab`, or one click on the bar |
 
 And the features that exist because manual organisation decays the moment it needs
 upkeep: **placement memory** (where you last put a window is where it goes next time,
