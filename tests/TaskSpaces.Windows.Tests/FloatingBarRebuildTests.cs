@@ -141,9 +141,16 @@ public class FloatingBarRebuildTests
         Assert.Contains(Labels(bar.Rows), label => label.StartsWith("Unplaced"));
     });
 
-    // Task 12: the menu is exactly Rename… + Restore title. Petre explicitly rejected
-    // "Send to ▸" and "Pin / Unpin" here as redundant with drag, so this test fails if
-    // either creeps back in -- the count is the assertion, not incidental detail.
+    // Task 12: the menu is naming ONLY. Petre explicitly rejected "Send to ▸" and
+    // "Pin / Unpin" here as redundant with drag, so this test fails if either creeps back in --
+    // the exact list is the assertion, not incidental detail.
+    //
+    // Now three entries rather than two. "Rename all <app> windows…" was added after Petre's
+    // "i've renamed remote desktop manager to RDP yesterday, today it's still the original
+    // name, why?": renaming THIS window records the exact title it had, which RDM rewrites with
+    // its current session, so the record can never match again. The app-wide entry writes a
+    // rule keyed on the process name instead. Both are naming, so the rule this menu follows --
+    // drag expresses movement and pinning, right-click expresses naming -- still holds.
     [Fact]
     public void Icon_right_click_menu_offers_naming_only() => StaThread.Run(() =>
     {
@@ -153,7 +160,9 @@ public class FloatingBarRebuildTests
         var menu = IconButtons(bar.Rows).First().ContextMenu;
 
         Assert.NotNull(menu);
-        Assert.Equal(["Rename…", "Restore title"], menu.Items.OfType<MenuItem>().Select(item => (string)item.Header));
+        Assert.Equal(
+            ["Rename this window…", "Rename all rdm windows…", "Restore title"],
+            menu.Items.OfType<MenuItem>().Select(item => (string)item.Header));
         // Never renamed, so Restore title is visible-but-unavailable rather than absent
         // (mirrors WindowGroupsView.RunningMenu; a menu whose shape shifts per icon is
         // harder to learn than one with a greyed entry).

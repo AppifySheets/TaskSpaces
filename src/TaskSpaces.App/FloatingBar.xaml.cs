@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -65,6 +66,33 @@ public partial class FloatingBar : Window
         Show();
         PositionFromState();
         manager.SaveFloatingBar(new FloatingBarState(Left, Top, true));
+    }
+
+    // Petre: "i want it to be on top of the taskbar, if i activate the taskbar, it hides the
+    // floating window. i'm using startallback start menu".
+    //
+    // Topmost is a BAND, not a rank. Every topmost window lives in the same one and the most
+    // recently activated sits at its top -- and the taskbar is topmost, as is StartAllBack's
+    // menu (and the plain Windows 11 taskbar: same Shell_TrayWnd, same band, so this behaves
+    // identically either way). Activating one therefore climbs over the bar, and WPF's
+    // Topmost="True" cannot prevent it; there is no "more topmost" to ask for. The supported
+    // higher z-bands need uiAccess, which needs a signed exe installed to a secure location --
+    // impossible for a portable unsigned build, and far too much to pay for this.
+    //
+    // So the bar simply reclaims the top of the band whenever the foreground changes. Driven
+    // by WindowMonitor.ForegroundChanged rather than a poll, because we already hook
+    // EVENT_SYSTEM_FOREGROUND and re-asserting exactly when something else was activated is
+    // both the cheapest and the most precise moment to do it. The 5s sweep calls this too, as
+    // a backstop for any activation that fires no foreground event.
+    public void ReclaimTopmost()
+    {
+        if (!IsVisible) return;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero) return;
+        // SWP_NOACTIVATE is the load-bearing flag: without it this would yank focus off
+        // whatever was just clicked -- including the taskbar the user was reaching for.
+        NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 
     public void HideBar()
@@ -618,10 +646,27 @@ public partial class FloatingBar : Window
     {
         var menu = new ContextMenu();
 
-        var rename = new MenuItem { Header = "Rename…" };
+        var rename = new MenuItem { Header = "Rename this window…" };
         rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title, owner: this)
             .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
         menu.Items.Add(rename);
+
+        // Petre: "i've renamed remote desktop manager to RDP yesterday, today it's still the
+        // original name, why?" Because renaming THIS WINDOW records the exact title it had at
+        // the time, and RDM rewrites its title with the current session -- so the record could
+        // never match again. Renaming the APP is keyed on the process name instead, which is
+        // the one thing about a window that cannot change while it runs.
+        //
+        // Named after the actual process so the difference between the two entries is visible
+        // rather than something to be inferred from wording: "Rename this window…" versus
+        // "Rename all RemoteDesktopManager windows…".
+        var renameApp = new MenuItem { Header = $"Rename all {row.Window.ProcessName} windows…" };
+        renameApp.Click += (_, _) => PromptDialog.Ask(
+                $"Rename every {row.Window.ProcessName} window",
+                "Short name to show on the taskbar (survives the app changing its own title):",
+                row.Window.ProcessName, owner: this)
+            .Tap(shortName => Report(manager.RenameApp(row.Window.Handle, shortName)));
+        menu.Items.Add(renameApp);
 
         var restore = new MenuItem { Header = "Restore title", IsEnabled = row.OriginalTitle.HasValue };
         restore.Click += (_, _) => Report(manager.RestoreTitle(row.Window.Handle));

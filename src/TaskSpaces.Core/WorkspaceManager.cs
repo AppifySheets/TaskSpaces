@@ -99,7 +99,7 @@ public sealed class WorkspaceManager(
                     RememberVisit(desktopId);
                     stateChanged.OnNext(Unit.Default);
                 });
-                // Seed it with wherever we started, so the very first Ctrl+Alt+` of a session
+                // Seed it with wherever we started, so the very first switcher tap of a session
                 // already knows which workspace it is leaving.
                 desktops.CurrentDesktop().Tap(RememberVisit);
                 ReapplyRenames();
@@ -572,14 +572,52 @@ public sealed class WorkspaceManager(
             ? AddRenameRule(input)
             : RenameExactly(window, input);
 
-    // Prepended, not appended: rules are matched first-hit-wins in list order, so the newest
-    // and most specific intent should win over an older broader pattern.
     public Result AddRenameRule(string input) =>
         Result.FailureIf(RenamePattern.ShortNameOf(input).Length == 0,
                 "A wildcard rename still needs a name: \"*\" on its own matches everything and names it nothing.")
+            .Bind(() => AddRule(new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(input), RenamePattern.ShortNameOf(input))));
+
+    // Petre: "i've renamed remote desktop manager to RDP yesterday, today it's still the
+    // original name, why?"
+    //
+    // Because an exact-title rename CANNOT survive that app. His state.json recorded
+    // OriginalTitle "Remote Desktop Manager [_Richard - fhd]" while the window now reads
+    // "Remote Desktop Manager [i7-petre]" -- RDM puts the current session in its title, so the
+    // exact-match adoption in ReapplyRenames could never fire again. RenamePattern's own header
+    // predicted this and named RDM as the example; what was missing was a way to ACT on it,
+    // because the wildcard form derives the short name FROM the pattern ("beeper *" names it
+    // "beeper"), and no pattern matching "Remote Desktop Manager [...]" can be spelled so that
+    // it yields "RDP".
+    //
+    // So: rename by APP. One rule keyed on the process name, which is the one thing about a
+    // window that never changes while it runs. Immune to every title rewrite, and it covers
+    // every window of that app -- which for Beeper, Teams and Edge (18 dead exact-title
+    // entries between them in his file) is what was wanted all along.
+    public Result RenameApp(WindowHandle window, string shortName) =>
+        Result.FailureIf(string.IsNullOrWhiteSpace(shortName), "A name is required.")
+            .Bind(() => knownWindows.TryGetValue(window, out var info)
+                ? AddRule(new RenameRule(RuleMatchKind.ProcessName, info.ProcessName, shortName.Trim()))
+                    // The per-title renames for this app are now superseded, and leaving them
+                    // would mean two records disagreeing about one app forever. Removed in the
+                    // same breath as adding the rule, so state.json never holds both.
+                    .Tap(() => Persist(State with
+                    {
+                        PersistedRenames = State.PersistedRenames
+                            .Where(r => !r.ProcessName.Equals(info.ProcessName, StringComparison.OrdinalIgnoreCase))
+                            .ToList(),
+                    }))
+                : Result.Failure("Window no longer exists."));
+
+    // Prepended, not appended: rules are matched first-hit-wins in list order, so the newest
+    // and most specific intent should win over an older broader pattern. An existing rule with
+    // the same kind AND pattern is REPLACED rather than shadowed -- otherwise renaming the same
+    // app twice would leave the list accumulating rules that can never match, which is exactly
+    // how PersistedRenames turned into a graveyard.
+    Result AddRule(RenameRule rule) =>
+        Result.Success()
             .Tap(() => Persist(State with
             {
-                RenameRules = [new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(input), RenamePattern.ShortNameOf(input)), .. State.RenameRules],
+                RenameRules = [rule, .. State.RenameRules.Where(r => !(r.Kind == rule.Kind && r.Pattern == rule.Pattern))],
             }))
             // Apply it immediately to everything already open, so the rename is visible now
             // rather than only on the next Appeared or TitleChanged.
