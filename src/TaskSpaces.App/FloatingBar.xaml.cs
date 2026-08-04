@@ -439,19 +439,25 @@ public partial class FloatingBar : Window
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
 
     // Task 11 fix round 5 (Petre: "separated nicely, so i can tell which workspace i'm
-    // going to"): tiny, dim label to the LEFT of each row's icons, vertically centered
-    // so the row's height stays governed by the 20px icons, not the label. Current
-    // workspace gets SemiBold (Overview.WorkspaceGroup.IsCurrent) so it stands out from
-    // the rest without shouting -- everything here stays at 55% opacity regardless, this
-    // is a glance-only surface, not a reading surface.
+    // going to"): tiny label to the LEFT of each row's icons, vertically centered so the
+    // row's height stays governed by the 20px icons, not the label.
+    //
+    // Petre: "i want to make the active workspace bold, its text". It was ALREADY SemiBold,
+    // which is precisely why the ask exists: at 10px behind a flat 0.55 opacity, half a step
+    // of weight is invisible. So both dials move together -- full Bold, and the current row
+    // is the one thing on this surface drawn at near-full strength. Weight cannot read as
+    // emphasis until there is enough ink for the eye to compare.
+    //
+    // Everything else stays dim on purpose; this is a glance-only surface, not a reading
+    // surface, and the point of the contrast is that exactly one row wins it.
     UIElement RowLabel(string text, bool isCurrent, Func<Result>? switchTo)
     {
         var textBlock = new TextBlock
         {
             Text = text,
             FontSize = 10,
-            Opacity = 0.55,
-            FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal,
+            Opacity = isCurrent ? 0.95 : 0.5,
+            FontWeight = isCurrent ? FontWeights.Bold : FontWeights.Normal,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(2, 0, 6, 0),
         };
