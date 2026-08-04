@@ -275,12 +275,25 @@ public partial class App : Application
                     "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
-        // Rename safety-net sweep (spec §5): event-driven re-apply is the fast path;
-        // every 5s this re-asserts drifted titles and adopts persisted renames.
+        // Safety-net sweep (spec §5): event-driven handling is the fast path, this is the
+        // truth. Every 5s it re-asserts drifted titles, adopts persisted renames, and —
+        // added after Petre found two windows missing from his Personal row — reconciles the
+        // window list itself against what the OS actually lists.
+        //
+        // That second job matters because WinEvents are lossy in two different ways: an
+        // OUTOFCONTEXT event can be dropped when the message queue is busy, and a HIDE that
+        // did not mean "gone" leaves a window flagged hidden until a SHOW that a window on
+        // another virtual desktop never fires. Either way the bar silently loses a window
+        // forever. See WindowMonitor.Resync for the full account. Costs one EnumWindows per
+        // tick in the steady state.
         if (!compatibilityMode)
         {
             var sweep = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            sweep.Tick += (_, _) => manager.ReapplyRenames();
+            sweep.Tick += (_, _) =>
+            {
+                monitor.Resync();
+                manager.ReapplyRenames();
+            };
             sweep.Start();
         }
 

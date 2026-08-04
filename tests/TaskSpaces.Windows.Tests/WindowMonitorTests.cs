@@ -78,4 +78,67 @@ public class WindowMonitorTests(ITestOutputHelper output)
                 output.WriteLine("WARNING: WindowMonitor dispatcher thread did not shut down within 5s");
         }
     }
+
+    // Resync is the safety net for a window list that can only ever LOSE windows: an
+    // OUTOFCONTEXT WinEvent can be dropped when the message queue is busy, and a HIDE that
+    // did not mean "gone" leaves a window flagged hidden until a SHOW that a window sitting
+    // on another virtual desktop never fires. Petre hit the result of that -- two windows
+    // genuinely open on his Personal desktop, showing in no row of the bar at all.
+    //
+    // Deliberately does NOT call Start(): Resync's whole point is that it needs no hooks and
+    // no message pump, only an enumeration. That is what makes it safe to run on a timer, and
+    // it is also what makes this testable on the test thread with no STA/dispatcher ceremony.
+    [Fact]
+    public void Resync_discovers_a_window_the_hooks_never_reported()
+    {
+        var monitor = new WindowMonitor();
+        var appeared = new List<WindowInfo>();
+        using var subscription = monitor.Events.Subscribe(e =>
+        {
+            if (e.Kind == WindowEventKind.Appeared) appeared.Add(e.Window);
+        });
+
+        var winver = Process.Start("winver.exe")!;
+        try
+        {
+            // The window takes a moment to exist; Resync is a poll, so poll.
+            var found = Enumerable.Range(0, 40).Any(_ =>
+            {
+                monitor.Resync();
+                if (appeared.Any(w => w.ProcessName == "winver")) return true;
+                Thread.Sleep(250);
+                return false;
+            });
+            appeared.ForEach(w => output.WriteLine($"Resync saw: {w.ProcessName} '{w.Title}'"));
+            Assert.True(found, "Resync never discovered winver, even though it was running");
+
+            // A second Resync must NOT re-announce it: the recovery half has to be idempotent
+            // or every 5s tick would re-run placement and rename rules over every window.
+            var countAfterDiscovery = appeared.Count;
+            monitor.Resync();
+            Assert.Equal(countAfterDiscovery, appeared.Count);
+
+            // And the other half: once the window is really gone, Resync reports it. This is
+            // the branch that must key off IsWindow rather than "absent from the candidate
+            // list", so a tray-minimise can never be mistaken for a close.
+            var disappeared = new List<WindowInfo>();
+            using var gone = monitor.Events.Subscribe(e =>
+            {
+                if (e.Kind == WindowEventKind.Disappeared) disappeared.Add(e.Window);
+            });
+            winver.Kill();
+            winver.WaitForExit(TimeSpan.FromSeconds(10));
+            Assert.True(Enumerable.Range(0, 40).Any(_ =>
+            {
+                monitor.Resync();
+                if (disappeared.Any(w => w.ProcessName == "winver")) return true;
+                Thread.Sleep(250);
+                return false;
+            }), "Resync never noticed winver had gone");
+        }
+        finally
+        {
+            if (!winver.HasExited) winver.Kill();
+        }
+    }
 }

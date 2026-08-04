@@ -92,6 +92,55 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     // why (Petre could not see the TaskSpaces window in his own bar). Our chrome opts out by
     // hwnd instead, which is precise; the flag was a blunt instrument that also hid the one
     // window he wanted to see.
+    // The window list DRIFTS, and until now nothing ever put it back.
+    //
+    // Evidence, from Petre's report that YouTube Music had no icon in his Personal row: the
+    // row was EMPTY. A fresh Snapshot() taken at that moment found both Obsidian and YouTube
+    // Music sitting on Personal's desktop, and every other row in the bar matched that
+    // snapshot exactly -- Messaging 2, Work 3, TaskSpace 2, Sparrow 3. So the two windows
+    // were not mis-grouped and their icons were not failing to load. They had fallen out of
+    // our bookkeeping, and nothing was ever going to bring them back.
+    //
+    // How that happens. `known` only ever GAINS a window from a WinEvent and only ever loses
+    // one to HIDE or DESTROY, and both halves of that are leaky:
+    //   * HIDE does not mean gone. A tray-minimise fires it, and so does the shell for its
+    //     own reasons. The window keeps existing, and once flagged hidden it stays flagged
+    //     until a SHOW arrives -- which a window sitting quietly on another virtual desktop
+    //     never fires, because desktop switches CLOAK windows rather than showing them.
+    //   * WINEVENT_OUTOFCONTEXT events are delivered through this thread's message queue, so
+    //     they can simply be dropped when the queue is busy. A dropped SHOW means a window
+    //     that never existed as far as the app is concerned.
+    //
+    // Hence a periodic reconcile against what the OS actually lists, on the same 5s
+    // safety-net timer that already re-asserts drifted titles (App.OnStartup) -- the pattern
+    // this codebase already uses for exactly this class of problem: events are the fast path,
+    // the sweep is the truth.
+    //
+    // Cheap in the steady state: one EnumWindows and nothing else. No WMI query happens
+    // unless something genuinely new turned up, because TryAppear is what does the per-window
+    // lookup and it returns immediately for windows already known.
+    public void Resync()
+    {
+        var live = TopLevelWindows.Enumerate().Where(hwnd => !ignored.Contains(hwnd)).ToList();
+
+        // Recovered: listed by the OS but missing from `known`, or flagged hidden despite
+        // being visible again. TryAppear handles both, and no-ops for the ones already fine.
+        live.ForEach(TryAppear);
+
+        // Gone for real. Deliberately NOT "absent from `live`": a window minimised to the
+        // tray is absent from the taskbar-candidate list while still existing, and reporting
+        // that as Disappeared would make WorkspaceManager forget its rename ledger entry --
+        // the exact Finding 3 defect the HIDE handling above was written to avoid. IsWindow
+        // is the unambiguous question, so only DESTROY-equivalent losses are reported and a
+        // missed HIDE can never be mistaken for a close.
+        known.Keys.Where(hwnd => !IsWindow(hwnd)).ToList().ForEach(hwnd =>
+        {
+            if (!known.Remove(hwnd, out var gone)) return;
+            hidden.Remove(hwnd);
+            events.OnNext(new WindowEvent(WindowEventKind.Disappeared, gone));
+        });
+    }
+
     nint Hook(uint min, uint max) =>
         SetWinEventHook(min, max, 0, callback, 0, 0, WINEVENT_OUTOFCONTEXT);
 

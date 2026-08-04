@@ -15,6 +15,9 @@ public static class NativeMethods
     [DllImport("user32.dll")] public static extern bool UnhookWinEvent(nint hook);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, nint lparam);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(nint hwnd);
+    // "Does this hwnd still name a window at all?" -- the unambiguous test Resync uses to
+    // tell a DESTROYED window from one that merely left the taskbar (minimised to tray).
+    [DllImport("user32.dll")] public static extern bool IsWindow(nint hwnd);
     // Used to reject shell-owned windows, which Windows itself never lists on the taskbar.
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(nint hwnd, [Out] char[] buffer, int size);
     // Seeds the active-window highlight at startup; EVENT_SYSTEM_FOREGROUND alone only
