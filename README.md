@@ -50,7 +50,7 @@ rebuild. Workspaces survive reboots.
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
-1. Download `TaskSpaces-1.0.0-win-x64.exe` from the
+1. Download `TaskSpaces-1.1.0-win-x64.exe` from the
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
 2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
@@ -128,8 +128,9 @@ single ~74 MB exe in `artifacts/publish`.
   Manager), because a single-window rename is keyed to the exact title it had at the
   time and lapses the moment the app changes it. App-wide renames are keyed to the
   process and never lapse. Names persist across restarts.
-- **Rosters.** A workspace remembers which apps belong to it even when they are
-  closed, and offers to relaunch them after a reboot.
+- **Rosters.** A workspace remembers which apps belong to it even when they are closed.
+  That memory is what puts a window back where you last had it, rather than wherever it
+  happens to open. TaskSpaces does not relaunch anything for you.
 
 ## Why this matters
 
@@ -257,12 +258,15 @@ you do not have.
 - Where a window belongs is remembered by **what it is**, not by its window handle:
   identity is its executable path plus arguments, so `rider64 A.sln` and
   `rider64 B.sln` are different things. Chromium browsers key on their profile.
-- **Your last placement wins.** Drag a window somewhere and that is where it goes
-  next time; rules only decide for windows with no history.
+- **Your last placement wins.** Drag a window somewhere and that is where it goes next
+  time; rules only decide for windows with no history. One exception, learned the hard
+  way: when several windows of one app are already open, a new one is left where you
+  opened it. Four browser windows on one profile share a single identity, so "put it back"
+  has no single answer for them.
 - Rules can auto-assign windows you have never placed, by process name, title
   regex or browser profile.
-- Everything is persisted, so a reboot can relaunch a workspace's apps back into
-  their group.
+- Everything is persisted, so your workspaces, window names, colours and shortcut
+  survive both an app restart and a reboot.
 
 ## Tech
 
@@ -271,7 +275,7 @@ mode), the Windows virtual desktop COM API via Slions.VirtualDesktop, WinEvent h
 plus RX for window lifecycle events, and CSharpFunctionalExtensions for
 railway-style error handling.
 
-The domain is deliberately COM-free and fully unit-tested: 186 tests, of which 179
+The domain is deliberately COM-free and heavily unit-tested: 262 tests, of which 256
 run without touching Windows at all.
 
 ## Development
