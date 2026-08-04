@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using TaskSpaces.Core.Domain;
 using TaskSpaces.Windows.Monitoring;
 
 namespace TaskSpaces.App;
@@ -22,9 +23,11 @@ public partial class WorkspaceSwitcher : Window
 
     public WorkspaceSwitcher() => InitializeComponent();
 
-    // Draw the list and show it centred on whichever monitor the cursor is on.
-    public void Present(IReadOnlyList<SwitcherChoice> choices, int selected)
+    // Draw the list and show it centred on whichever monitor the cursor is on. The chord is
+    // passed in rather than assumed so the hint line names whatever is currently bound.
+    public void Present(IReadOnlyList<SwitcherChoice> choices, int selected, Chord chord)
     {
+        Hint.Text = $"hold {chord.ModifiersText} · tap {chord.KeyText} to walk · release to switch";
         rows.Clear();
         Rows.Children.Clear();
         choices.ToList().ForEach(choice =>

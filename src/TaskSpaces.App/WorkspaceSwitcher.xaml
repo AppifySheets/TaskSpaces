@@ -18,8 +18,10 @@
          same reason: WPF throws if these are assigned imperatively in the wrong order. -->
     <Border CornerRadius="10" Background="#E6202020" Padding="12,10,12,10">
         <StackPanel>
-            <TextBlock Text="hold Ctrl+Alt · tap ` to walk · release to switch"
-                       FontSize="10" Foreground="White" Opacity="0.45" Margin="4,0,4,8"/>
+            <!-- Names the chord actually in force, filled in by Present(): the shortcut is
+                 configurable (Petre: "i want it configurable"), so a hardcoded "hold
+                 Ctrl+Alt" would start lying the moment anyone changed it. -->
+            <TextBlock x:Name="Hint" FontSize="10" Foreground="White" Opacity="0.45" Margin="4,0,4,8"/>
             <!-- One row per workspace, most recently used first. Built in code-behind, like
                  every other list in this app, so the rows can carry the workspace's own
                  lane colour from WorkspacePalette. -->

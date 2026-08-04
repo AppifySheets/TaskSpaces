@@ -42,6 +42,30 @@
                     <ListBox x:Name="WorkspaceList" DisplayMemberPath="Name"/>
                 </DockPanel>
             </TabItem>
+            <TabItem Header="Shortcuts">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12"
+                               Text="Global shortcuts. TaskSpaces registers these with Windows, so a chord it takes is unavailable to every other app while TaskSpaces runs — which is why only the one below is editable, and why the default avoids chords other tools already use."/>
+                    <StackPanel>
+                        <TextBlock Text="Switch workspaces, Alt+Tab style" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,8"
+                                   Text="Hold the modifiers and tap the key to walk workspaces in most-recently-used order; release to switch. Add Shift while walking to go backwards. Type a chord such as Ctrl+Alt+` , Win+Tab or Ctrl+Shift+Space."/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="SwitcherShortcutBox" Width="220" TextChanged="OnSwitcherShortcutTyped"/>
+                            <Button Content="Apply" Margin="8,0,0,0" Padding="12,2" Click="OnApplySwitcherShortcut"/>
+                            <Button Content="Reset to default" Margin="8,0,0,0" Padding="12,2" Click="OnResetSwitcherShortcut"/>
+                        </StackPanel>
+                        <!-- Live validation, which is the reason Chord.Parse returns a Result
+                             instead of throwing: the reason a chord is rejected is shown as it
+                             is typed, before anything tries to register it. -->
+                        <TextBlock x:Name="SwitcherShortcutStatus" TextWrapping="Wrap" Margin="0,6,0,0"/>
+
+                        <TextBlock Text="Fixed shortcuts" FontWeight="Bold" Margin="0,20,0,0"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,0"
+                                   Text="Ctrl+Alt+← and Ctrl+Alt+→ cycle workspaces in list order (not by recent use). Ctrl+Alt+1…9 switch straight to a workspace by its position on the Workspaces tab."/>
+                    </StackPanel>
+                </DockPanel>
+            </TabItem>
             <TabItem Header="Rules">
                 <DockPanel Margin="8">
                     <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"

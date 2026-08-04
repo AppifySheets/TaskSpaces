@@ -38,11 +38,25 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     IReadOnlyList<Workspace> candidates = [];
     int selected = -1;
     bool active;
+    // The chord currently bound. Held here as well as in HotkeyService because BOTH halves
+    // of the gesture depend on it: the service needs the key to register, and this class
+    // needs the MODIFIERS to know what "still held" means. Petre: "i want it configurable" --
+    // so this is a field that changes, not a constant.
+    Chord chord;
 
-    public WorkspaceSwitchGesture(WorkspaceManager manager)
+    public WorkspaceSwitchGesture(WorkspaceManager manager, Chord chord)
     {
         this.manager = manager;
+        this.chord = chord;
         release.Tick += (_, _) => { if (!ModifiersHeld()) Commit(); };
+    }
+
+    // Mid-gesture rebinding would leave the picker watching for a modifier nobody is
+    // holding, so commit whatever is selected first and start clean on the new chord.
+    public void Rebind(Chord replacement)
+    {
+        if (active) Commit();
+        chord = replacement;
     }
 
     // The picker's hwnd, so the composition root can hand it to WindowMonitor.Ignore. The
@@ -83,7 +97,11 @@ public sealed class WorkspaceSwitchGesture : IDisposable
                 // Colour by DEFINED position, not by position in the recency list -- the same
                 // rule the floating bar's lane tints follow, so the two surfaces agree.
                 new SwitcherChoice(workspace.Name, WorkspacePalette.For(workspace, DefinedIndexOf(workspace)))).ToList(),
-            selected);
+            selected,
+            // The on-screen hint names the chord actually in force, not a hardcoded one --
+            // the whole point of making it configurable is undone if the picker still tells
+            // you to hold Ctrl+Alt after you have rebound it to something else.
+            chord);
         release.Start();
     }
 
@@ -102,10 +120,26 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         selected = -1;
     }
 
-    // Commits as soon as EITHER modifier goes up, rather than waiting for both: releasing
-    // Ctrl+Alt is one motion, and insisting on the exact order they happen to leave the keys
-    // would make the gesture feel like it stuck.
-    static bool ModifiersHeld() => Down(NativeMethods.VK_CONTROL) && Down(NativeMethods.VK_MENU);
+    // Which physical keys each modifier bit corresponds to. Win has two, and either one
+    // counts as holding it.
+    static readonly IReadOnlyList<(uint Bit, int[] Keys)> ModifierKeys =
+    [
+        (Chord.Control, [NativeMethods.VK_CONTROL]),
+        (Chord.Alt, [NativeMethods.VK_MENU]),
+        (Chord.Shift, [NativeMethods.VK_SHIFT]),
+        (Chord.Win, [NativeMethods.VK_LWIN, NativeMethods.VK_RWIN]),
+    ];
+
+    // True while EVERY modifier of the bound chord is still down; the gesture commits the
+    // moment any one of them goes up, rather than waiting for all of them, because letting
+    // go of Ctrl+Alt is one motion and insisting on a particular order would feel stuck.
+    //
+    // Note this asks about the chord's OWN modifiers, so the Shift used for the reverse
+    // direction is not among them (unless the user bound Shift deliberately) -- which is
+    // what lets you release Shift mid-walk to go forwards again, exactly as Alt+Tab does.
+    bool ModifiersHeld() =>
+        ModifierKeys.Where(modifier => (chord.Modifiers & modifier.Bit) != 0)
+            .All(modifier => modifier.Keys.Any(Down));
 
     static bool Down(int vk) => (NativeMethods.GetAsyncKeyState(vk) & NativeMethods.KeyDownBit) != 0;
 

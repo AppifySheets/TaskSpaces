@@ -25,7 +25,8 @@ public partial class App : Application
     bool compatibilityMode;
     ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
-    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Ctrl+Alt+`)
+    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Ctrl+Alt+` by default)
+    Chord boundSwitcher;              // the chord the picker and the hotkey are currently registered on
     FloatingBar? floatingBar; // Task 11: created lazily on first show
 
     // Held for the whole process lifetime, in a FIELD so the GC cannot collect it and quietly
@@ -245,14 +246,27 @@ public partial class App : Application
             // Ignored by the monitor for the same reason the floating bar is: it is our own
             // chrome, and now that the hooks see our process it would otherwise appear in
             // the bar as a window every time it flashed up.
-            switcher = new WorkspaceSwitchGesture(manager);
+            // WorkspaceManager.SwitcherShortcut has already fallen back to the default for
+            // anything unusable, so this parse cannot realistically fail -- but Parse returns
+            // a Result, and inventing a value on failure here would hide a real bug behind a
+            // silently different shortcut. GetValueOrThrow is the honest reading.
+            boundSwitcher = Chord.Parse(manager.SwitcherShortcut).Value;
+            switcher = new WorkspaceSwitchGesture(manager, boundSwitcher);
             monitor.Ignore(switcher.EnsureHandle());
 
             hotkeys = new HotkeyService(
                 () => manager.CycleWorkspace(-1),
                 () => manager.CycleWorkspace(+1),
                 n => manager.SwitchToIndex(n),
-                direction => switcher.Step(direction));
+                direction => switcher.Step(direction),
+                boundSwitcher);
+
+            // Petre: "i want it configurable". Rebinding is driven off StateChanged rather
+            // than off a callback from the Shortcuts tab, so ANY route that changes the
+            // shortcut takes effect immediately -- the editor today, and anything else that
+            // ends up writing it later. Comparing against what is currently bound makes this
+            // a no-op on the many pulses that have nothing to do with shortcuts.
+            manager.StateChanged.Subscribe(_ => RebindSwitcherIfChanged());
             if (hotkeys.Failures.Count > 0)
                 MessageBox.Show(
                     "TaskSpaces could not register these keyboard shortcuts (another app already owns them):\n"
@@ -371,6 +385,22 @@ public partial class App : Application
             .TapError(err => MessageBox.Show(
                 $"TaskSpaces could not pin the floating bar to every workspace:\n{err}\n\nIt will only stay visible on the desktop it was shown on.",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
+    }
+
+    // Re-registers the Alt+Tab-style switcher when its configured chord changes, and moves
+    // the picker's hold-detection onto the new modifiers at the same time. Both halves must
+    // move together: a chord registered on Win+Tab whose release poll still watched Ctrl+Alt
+    // would open the picker and never close it.
+    void RebindSwitcherIfChanged()
+    {
+        var configured = Chord.Parse(manager!.SwitcherShortcut);
+        if (configured.IsFailure || configured.Value == boundSwitcher) return;
+        boundSwitcher = configured.Value;
+        switcher!.Rebind(boundSwitcher);
+        // A chord another app already owns is worth saying out loud: this is a change Petre
+        // just made by hand, so silence would read as "applied" when nothing was.
+        hotkeys!.BindSwitcher(boundSwitcher)
+            .TapError(err => MessageBox.Show(err, "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
     }
 
     void ExitApp()

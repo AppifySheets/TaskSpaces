@@ -344,6 +344,27 @@ public sealed class WorkspaceManager(
             current.IsFailure ? -1 : ordered.ToList().FindIndex(w => w.DesktopId == current.Value));
     }
 
+    // Petre: "i want it configurable". The chord that drives the switcher above.
+    //
+    // Every consumer reads it HERE rather than from AppState, because this is where the
+    // fallback lives: blank, missing, or a hand-edited state.json holding nonsense all come
+    // back as the default. A bad string in a file must never leave the app with no way to
+    // switch workspaces at all -- and since it is validated on the way in (below), the only
+    // route to a bad one is editing the file by hand.
+    public string SwitcherShortcut =>
+        Chord.Parse(State.SwitcherShortcut).IsSuccess
+            ? State.SwitcherShortcut.Trim()
+            : AppState.DefaultSwitcherShortcut;
+
+    // Validated BEFORE it is persisted, which is the whole reason Chord.Parse returns a
+    // Result rather than throwing: the editor gets to say exactly why "Ctrl+Bananas" is not
+    // a shortcut, and nothing unusable ever reaches the file.
+    // Stored in Chord's canonical spelling rather than verbatim, so "control + alt+1" and
+    // "Ctrl+Alt+1" cannot sit in state.json as two different-looking versions of one chord.
+    public Result SetSwitcherShortcut(string shortcut) =>
+        Chord.Parse(shortcut)
+            .Tap(chord => Persist(State with { SwitcherShortcut = chord.ToString() }));
+
     // A desktop became current: if it belongs to a workspace, that is a visit.
     void RememberVisit(Guid desktopId) =>
         State.Workspaces.TryFirst(w => w.DesktopId == desktopId).Tap(w => mru = mru.Touch(w.Id));

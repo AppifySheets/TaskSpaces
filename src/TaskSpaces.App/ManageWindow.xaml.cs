@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Domain;
+using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.App;
@@ -59,7 +61,45 @@ public partial class ManageWindow : Window
 
         if (selectedWorkspaceId is { } wsId)
             WorkspaceList.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == wsId);
+
+        // Reads through WorkspaceManager, not AppState, so the box shows what is actually
+        // BOUND -- including the fallback to the default when state.json holds something
+        // unusable. Assigning Text raises TextChanged, which validates it for free.
+        SwitcherShortcutBox.Text = manager.SwitcherShortcut;
     }
+
+    // --- Shortcuts tab ------------------------------------------------------------------
+    // Petre: "i want it configurable".
+
+    // Validated as it is typed, which is precisely what Chord.Parse's Result was built for:
+    // "so the editor UI can validate what someone typed BEFORE anything tries to register
+    // it". Nothing is bound here -- this only says whether Apply would work.
+    void OnSwitcherShortcutTyped(object s, RoutedEventArgs e) =>
+        Chord.Parse(SwitcherShortcutBox.Text).Match(
+            chord => Status(Describe(chord), ok: true),
+            error => Status(error, ok: false));
+
+    // Says what the chord will DO, not just that it parsed: a chord that already contains
+    // Shift has no free modifier left to mean "backwards", so the walk becomes forward-only.
+    // Better to say so here than to let it be discovered as a missing feature.
+    static string Describe(Chord chord) =>
+        (chord.Modifiers & Chord.Shift) == 0
+            ? $"Hold {chord.ModifiersText}, tap {chord.KeyText} to walk forwards, add Shift to walk backwards."
+            : $"Hold {chord.ModifiersText}, tap {chord.KeyText} to walk. Forwards only: Shift is already part of the chord, so it cannot also mean \"backwards\".";
+
+    void Status(string message, bool ok)
+    {
+        SwitcherShortcutStatus.Text = message;
+        SwitcherShortcutStatus.Foreground = ok ? SystemColors.GrayTextBrush : Brushes.Firebrick;
+    }
+
+    // Persisting is all this does. App re-registers off StateChanged, so the new chord is
+    // live immediately and a chord another app already owns reports itself from there.
+    void OnApplySwitcherShortcut(object s, RoutedEventArgs e) =>
+        Report(manager.SetSwitcherShortcut(SwitcherShortcutBox.Text).Map(() => true)).Tap(Reload);
+
+    void OnResetSwitcherShortcut(object s, RoutedEventArgs e) =>
+        Report(manager.SetSwitcherShortcut(AppState.DefaultSwitcherShortcut).Map(() => true)).Tap(Reload);
 
     void OnAddWorkspace(object s, RoutedEventArgs e) => Report(manager.AddWorkspace(NewWorkspaceName.Text).Map(_ => true)).Tap(Reload);
     void OnRenameWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RenameWorkspace(w.Id, NewWorkspaceName.Text));

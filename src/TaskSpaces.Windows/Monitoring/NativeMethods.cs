@@ -135,6 +135,7 @@ public static class NativeMethods
     // this process in the input path of EVERY keystroke on the machine -- a far bigger
     // liability than a 30ms poll that only runs during the gesture itself.
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
-    public const int VK_CONTROL = 0x11, VK_MENU = 0x12; // VK_MENU is Alt
+    public const int VK_CONTROL = 0x11, VK_MENU = 0x12, VK_SHIFT = 0x10; // VK_MENU is Alt
+    public const int VK_LWIN = 0x5B, VK_RWIN = 0x5C;    // Win has two keys; either counts as held
     public const int KeyDownBit = 0x8000;               // GetAsyncKeyState's "down right now" bit
 }

@@ -27,7 +27,32 @@ public sealed class JsonPersistenceStoreTests : IDisposable
             FloatingBar = new FloatingBarState(120.5, 40.25, true),
             PinnedApps = [new InventoryEntry(@"C:\Programs\Beeper.exe", @"""C:\Programs\Beeper.exe"" ", "Beeper")],
             DetachedApps = [new InventoryEntry(@"C:\Programs\obs.exe", null, "OBS")],
+            SwitcherShortcut = "Win+Tab",
         };
+    }
+
+    // The switcher shortcut is an init property with a NON-empty default, unlike every other
+    // optional field here, so both halves are worth pinning: a value written by the editor
+    // must come back, and a file that predates the setting must load with the default rather
+    // than with null.
+    [Fact]
+    public void Roundtrips_a_configured_switcher_shortcut()
+    {
+        var store = new JsonPersistenceStore(dir);
+        Assert.True(store.Save(SampleState()).IsSuccess);
+
+        Assert.Equal("Win+Tab", store.Load().Value.SwitcherShortcut);
+    }
+
+    [Fact]
+    public void A_file_written_before_the_switcher_shortcut_existed_loads_with_the_default()
+    {
+        Directory.CreateDirectory(dir);
+        // Exactly the shape an older build wrote: the four required members and nothing else.
+        File.WriteAllText(Path.Combine(dir, "state.json"),
+            """{"Workspaces":[],"WorkspaceRules":[],"RenameRules":[],"Inventory":{}}""");
+
+        Assert.Equal(AppState.DefaultSwitcherShortcut, new JsonPersistenceStore(dir).Load().Value.SwitcherShortcut);
     }
 
     [Fact]

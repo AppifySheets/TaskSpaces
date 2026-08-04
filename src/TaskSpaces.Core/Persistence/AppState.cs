@@ -37,6 +37,25 @@ public sealed record AppState(
     public IReadOnlyList<InventoryEntry> PinnedApps { get; init; } = [];
     public IReadOnlyList<InventoryEntry> DetachedApps { get; init; } = [];
 
+    // Petre: "i want it configurable" -- the Alt+Tab-style workspace switcher's chord.
+    //
+    // Stored as the TEXT the user typed, not as a parsed Chord: state.json stays readable
+    // and hand-editable, Chord.Parse stays the single place that decides what a shortcut
+    // means, and no serializer has to know about virtual-key codes. Same init-property/
+    // no-migration pattern as everything above -- an older state.json with no such key
+    // deserializes straight to the default.
+    //
+    // Nothing reads this property directly; WorkspaceManager.SwitcherShortcut does, and
+    // falls back to the default for anything unusable.
+    public string SwitcherShortcut { get; init; } = DefaultSwitcherShortcut;
+
+    // Ctrl+Alt+` and not the more natural Alt+`, deliberately: a global hotkey is EXCLUSIVE,
+    // so registering Alt+` would take it away from every other app on this machine, and
+    // Rider binds Alt+` to its VCS popup. Ctrl+Alt+` also keeps the default inside the chord
+    // family the app already owns (Ctrl+Alt+arrows, Ctrl+Alt+1..9). Anyone who disagrees can
+    // now change it, which is the point.
+    public const string DefaultSwitcherShortcut = "Ctrl+Alt+`";
+
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }
 

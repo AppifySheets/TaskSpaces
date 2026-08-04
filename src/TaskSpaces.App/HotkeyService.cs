@@ -1,4 +1,6 @@
 using System.Windows.Interop;
+using CSharpFunctionalExtensions;
+using TaskSpaces.Core.Domain;
 using TaskSpaces.Windows.Monitoring;
 
 namespace TaskSpaces.App;
@@ -32,7 +34,7 @@ public sealed class HotkeyService : IDisposable
     readonly Action<int> switchTo;
     readonly Action<int> stepRecent;
 
-    public HotkeyService(Action cyclePrev, Action cycleNext, Action<int> switchTo, Action<int> stepRecent)
+    public HotkeyService(Action cyclePrev, Action cycleNext, Action<int> switchTo, Action<int> stepRecent, Chord switcher)
     {
         this.cyclePrev = cyclePrev;
         this.cycleNext = cycleNext;
@@ -48,35 +50,65 @@ public sealed class HotkeyService : IDisposable
         });
         source.AddHook(WndProc);
 
-        Register(IdCyclePrev, NativeMethods.VK_LEFT, "Ctrl+Alt+Left");
-        Register(IdCycleNext, NativeMethods.VK_RIGHT, "Ctrl+Alt+Right");
-
-        // Alt+Tab-style switching, on the backtick key. WHY Ctrl+Alt+` and not the more
-        // muscle-memory-friendly Alt+`: a global hotkey is EXCLUSIVE, so registering Alt+`
-        // would take it away from every other app on the machine for good, and Rider binds
-        // Alt+` to its VCS popup. Ctrl+Alt+` also keeps the whole feature inside the chord
-        // family this app already owns (Ctrl+Alt+arrows, Ctrl+Alt+1..9).
-        //
-        // Shift is the reverse direction, exactly as Shift+Alt+Tab is. Registered as a
-        // SEPARATE chord because RegisterHotKey matches modifiers exactly -- Ctrl+Alt+`
-        // would not fire at all while Shift is held, so without this the reverse walk would
-        // simply stop responding.
-        Register(IdRecentNext, NativeMethods.VK_OEM_3, "Ctrl+Alt+`");
-        Register(IdRecentPrev, NativeMethods.VK_OEM_3, "Ctrl+Alt+Shift+`", NativeMethods.MOD_SHIFT);
+        RegisterOrNote(IdCyclePrev, CtrlAlt, NativeMethods.VK_LEFT, "Ctrl+Alt+Left");
+        RegisterOrNote(IdCycleNext, CtrlAlt, NativeMethods.VK_RIGHT, "Ctrl+Alt+Right");
+        // The one configurable chord (Petre: "i want it configurable"), so unlike everything
+        // else here it arrives as a parameter and can be changed later without a restart.
+        BindSwitcher(switcher).TapError(failures.Add);
 
         // '1'..'9' virtual-key codes equal their ASCII char codes (0x31..0x39).
         Enumerable.Range(1, 9).ToList()
-            .ForEach(digit => Register(IdDigitBase + digit, (uint)('0' + digit), $"Ctrl+Alt+{digit}"));
+            .ForEach(digit => RegisterOrNote(IdDigitBase + digit, CtrlAlt, (uint)('0' + digit), $"Ctrl+Alt+{digit}"));
     }
 
-    void Register(int id, uint vk, string chordName, uint extraModifiers = 0)
+    // The fixed chords all share these. Chord's own constants carry the same values as
+    // Win32's MOD_*, which is why a parsed Chord's Modifiers can be handed to RegisterHotKey
+    // unconverted.
+    const uint CtrlAlt = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT;
+
+    // Rebinds the Alt+Tab-style switcher to a new chord, releasing the old one first.
+    // Returns a Result rather than adding to Failures, because unlike the startup
+    // registrations this one has a human waiting on it in the Shortcuts tab.
+    public Result BindSwitcher(Chord chord)
+    {
+        Unregister(IdRecentNext);
+        Unregister(IdRecentPrev);
+
+        // Shift is the reverse direction, exactly as Shift+Alt+Tab is, and it has to be a
+        // SEPARATE registration because RegisterHotKey matches modifiers EXACTLY -- the
+        // forward chord does not fire at all while Shift is held, so without this the
+        // backward walk would simply stop responding.
+        //
+        // Unless the chord already uses Shift, in which case there is no free modifier left
+        // to mean "backwards" and the walk is forward-only. Not an error: wrapping means
+        // every workspace is still reachable, just not in one tap.
+        if ((chord.Modifiers & Chord.Shift) == 0)
+            // A failure here is deliberately ignored: losing the reverse direction is a
+            // degradation, not a reason to reject a chord whose forward half works.
+            Register(IdRecentPrev, chord.Modifiers | Chord.Shift, chord.VirtualKey);
+
+        return Result.SuccessIf(
+            Register(IdRecentNext, chord.Modifiers, chord.VirtualKey),
+            $"{chord} is already taken by another app, so it will not switch workspaces.");
+    }
+
+    void RegisterOrNote(int id, uint modifiers, uint vk, string chordName)
     {
         // Best-effort: a chord already owned by another app (Intel graphics rotate,
         // another utility, ...) is expected on some machines — never a crash.
-        if (NativeMethods.RegisterHotKey(source.Handle, id, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | extraModifiers, vk))
-            registeredIds.Add(id);
-        else
-            failures.Add(chordName);
+        if (!Register(id, modifiers, vk)) failures.Add(chordName);
+    }
+
+    bool Register(int id, uint modifiers, uint vk)
+    {
+        if (!NativeMethods.RegisterHotKey(source.Handle, id, modifiers, vk)) return false;
+        registeredIds.Add(id);
+        return true;
+    }
+
+    void Unregister(int id)
+    {
+        if (registeredIds.Remove(id)) NativeMethods.UnregisterHotKey(source.Handle, id);
     }
 
     nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
