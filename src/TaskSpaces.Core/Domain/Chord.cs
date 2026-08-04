@@ -9,9 +9,12 @@ namespace TaskSpaces.Core.Domain;
 // in Core, with no Win32 reference, so it is unit-testable and so the editor UI can validate
 // what someone typed BEFORE anything tries to register it.
 //
-// WHY this exists at all: hotkeys are currently bound to Ctrl+Alt+1..9 by a workspace's LIST
-// POSITION, so reordering workspaces silently changes what each chord does. Naming the chord on
-// the workspace makes the binding survive both reordering and renaming.
+// WHY this exists at all: hotkeys used to be bound to Ctrl+Alt+1..9 by a workspace's LIST
+// POSITION, so reordering workspaces silently changed what each chord did. Naming a chord makes
+// the binding survive both reordering and renaming. Those positional chords have since been
+// removed outright, and this is what the switcher's own configurable chord is parsed with --
+// plus the groundwork for per-workspace named chords (Workspace.Shortcut) if direct jumps are
+// wanted back on the keyboard.
 public readonly record struct Chord(uint Modifiers, uint VirtualKey)
 {
     // Win32 MOD_* values, written out rather than referenced so Core stays free of Win32.

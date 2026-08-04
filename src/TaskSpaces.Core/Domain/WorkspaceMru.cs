@@ -4,11 +4,11 @@ namespace TaskSpaces.Core.Domain;
 
 // Petre: "maybe an alt-tab like shortcut for me to switch through workspaces".
 //
-// What makes Alt+Tab worth using is not that it cycles -- Ctrl+Alt+arrows already cycles --
-// it is that it cycles in MOST-RECENTLY-USED order, so the single most common switch (back
-// to where you just were) is one tap regardless of how the list is arranged. This is that
-// order, and nothing else: no UI, no Win32, no timing. Pure and in Core so the ordering
-// rules are unit-testable on their own.
+// What makes Alt+Tab worth using is not that it cycles -- Ctrl+Alt+arrows used to cycle, in
+// list order, and was removed as redundant -- it is that it cycles in MOST-RECENTLY-USED order,
+// so the single most common switch (back to where you just were) is one tap regardless of how
+// the list is arranged. This is that order, and nothing else: no UI, no Win32, no timing. Pure
+// and in Core so the ordering rules are unit-testable on their own.
 //
 // Live-only, deliberately not persisted: "where I was a moment ago" is a fact about this
 // session. A restored MRU from last Tuesday would send the first tap somewhere arbitrary.

@@ -11,8 +11,9 @@ namespace TaskSpaces.Core.Domain;
 // Both are appended as OPTIONAL positional parameters so every existing construction site and
 // every state.json written before this keeps working untouched.
 //
-// Why Shortcut lives on the workspace rather than staying implicit: today's Ctrl+Alt+1..9 binds
-// by LIST POSITION, so reordering workspaces silently changes what each chord does. Naming the
+// Why Shortcut lives on the workspace rather than staying implicit: the old Ctrl+Alt+1..9 bound
+// by LIST POSITION, so reordering workspaces silently changed what each chord did. Naming the
 // chord here makes the binding survive reordering, which is the whole point of being able to
-// reorder.
+// reorder. Those positional chords have since been removed and nothing reads Shortcut yet -- it
+// is the groundwork for per-workspace direct jumps, done right, if they are wanted back.
 public sealed record Workspace(Guid Id, string Name, Guid? DesktopId, string? Color = null, string? Shortcut = null);

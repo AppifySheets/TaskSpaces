@@ -5,40 +5,45 @@ using TaskSpaces.Windows.Monitoring;
 
 namespace TaskSpaces.App;
 
-// Task 9: global workspace hotkeys (Ctrl+Alt+Left/Right cycle, Ctrl+Alt+1..9 direct
-// switch), spec §Tray interaction & hotkeys. RegisterHotKey needs SOME window handle to
-// deliver WM_HOTKEY to, but this app has no always-visible main window (SwitcherPanel
-// only exists once summoned, and hiding/showing it would be a fragile place to hang
-// global input on). A message-only window (HWND_MESSAGE parent, per Win32 docs) is the
-// standard fix: it can own a message loop and receive messages but never paints, is
-// never visible, and never shows up in Alt+Tab or the taskbar.
+// The app's global hotkeys, which are now exactly ONE chord and its Shift variant: the
+// Alt+Tab-style workspace switcher.
+//
+// Petre: "i don't think we need ctrl+alt and those, ctrl+tab is good enough". It was: this
+// class used to register eleven chords -- Ctrl+Alt+Left/Right to cycle and Ctrl+Alt+1..9 to
+// jump by position -- and holding eleven chords EXCLUSIVELY, machine-wide, is a real price for
+// features the bar and the switcher already cover. Ctrl+Alt+arrows cycled in LIST order, which
+// is strictly worse than most-recently-used for the only job cycling does well (going back).
+// Ctrl+Alt+1..9 bound by list POSITION, so reordering workspaces silently changed what each
+// chord did. Direct jumps did not disappear with them: a bar row label is one click, and the
+// scaffolding for per-workspace NAMED chords (Workspace.Shortcut, Chord) is already in place
+// for when a keyboard version is wanted -- keyed to a workspace's identity rather than its
+// index, and chosen rather than squatting on nine chords.
+//
+// RegisterHotKey needs SOME window handle to deliver WM_HOTKEY to, and this app has no
+// always-visible main window. A message-only window (HWND_MESSAGE parent, per Win32 docs) is
+// the standard fix: it can receive messages but never paints, is never visible, and never
+// shows up in Alt+Tab or the taskbar.
 public sealed class HotkeyService : IDisposable
 {
-    // Ids 1/2 are the arrow chords; 3/4 the Alt+Tab-style recent-order chords; 11..19 are
-    // Ctrl+Alt+1..9 (10 + digit) so every registered id is trivially reversible back to
-    // "which chord was this".
-    const int IdCyclePrev = 1, IdCycleNext = 2, IdRecentNext = 3, IdRecentPrev = 4, IdDigitBase = 10;
+    // Ids 3/4 are the switcher's forward and backward chords. The numbering starts at 3 rather
+    // than 1 because ids 1, 2 and 11..19 belonged to the cycle and digit chords removed above;
+    // leaving the gap keeps the ids stable for anyone reading an old log.
+    const int IdRecentNext = 3, IdRecentPrev = 4;
 
     readonly HwndSource source;
     readonly List<int> registeredIds = [];
     readonly List<string> failures = [];
 
-    // Failed registrations (another app already owns that chord) are recorded here
-    // rather than thrown — spec: "Registration failures ... surface once as a warning —
-    // never a crash, never silent." The composition root reads this once, after
-    // construction, to show a single MessageBox if non-empty.
+    // Failed registrations (another app already owns that chord) are recorded here rather
+    // than thrown — spec: "Registration failures ... surface once as a warning — never a
+    // crash, never silent." The composition root reads this once, after construction, to show
+    // a single MessageBox if non-empty. At most one entry now that there is one chord.
     public IReadOnlyList<string> Failures => failures;
 
-    readonly Action cyclePrev;
-    readonly Action cycleNext;
-    readonly Action<int> switchTo;
     readonly Action<int> stepRecent;
 
-    public HotkeyService(Action cyclePrev, Action cycleNext, Action<int> switchTo, Action<int> stepRecent, Chord switcher)
+    public HotkeyService(Action<int> stepRecent, Chord switcher)
     {
-        this.cyclePrev = cyclePrev;
-        this.cycleNext = cycleNext;
-        this.switchTo = switchTo;
         this.stepRecent = stepRecent;
 
         source = new HwndSource(new HwndSourceParameters("TaskSpacesHotkeys")
@@ -50,25 +55,14 @@ public sealed class HotkeyService : IDisposable
         });
         source.AddHook(WndProc);
 
-        RegisterOrNote(IdCyclePrev, CtrlAlt, NativeMethods.VK_LEFT, "Ctrl+Alt+Left");
-        RegisterOrNote(IdCycleNext, CtrlAlt, NativeMethods.VK_RIGHT, "Ctrl+Alt+Right");
-        // The one configurable chord (Petre: "i want it configurable"), so unlike everything
-        // else here it arrives as a parameter and can be changed later without a restart.
+        // Configurable (Petre: "i want it configurable"), hence a parameter rather than a
+        // constant, and rebindable below without a restart.
         BindSwitcher(switcher).TapError(failures.Add);
-
-        // '1'..'9' virtual-key codes equal their ASCII char codes (0x31..0x39).
-        Enumerable.Range(1, 9).ToList()
-            .ForEach(digit => RegisterOrNote(IdDigitBase + digit, CtrlAlt, (uint)('0' + digit), $"Ctrl+Alt+{digit}"));
     }
 
-    // The fixed chords all share these. Chord's own constants carry the same values as
-    // Win32's MOD_*, which is why a parsed Chord's Modifiers can be handed to RegisterHotKey
-    // unconverted.
-    const uint CtrlAlt = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT;
-
     // Rebinds the Alt+Tab-style switcher to a new chord, releasing the old one first.
-    // Returns a Result rather than adding to Failures, because unlike the startup
-    // registrations this one has a human waiting on it in the Shortcuts tab.
+    // Returns a Result rather than adding to Failures, because unlike a startup registration
+    // this one has a human waiting on it in the Shortcuts tab.
     public Result BindSwitcher(Chord chord)
     {
         Unregister(IdRecentNext);
@@ -92,15 +86,10 @@ public sealed class HotkeyService : IDisposable
             $"{chord} is already taken by another app, so it will not switch workspaces.");
     }
 
-    void RegisterOrNote(int id, uint modifiers, uint vk, string chordName)
-    {
-        // Best-effort: a chord already owned by another app (Intel graphics rotate,
-        // another utility, ...) is expected on some machines — never a crash.
-        if (!Register(id, modifiers, vk)) failures.Add(chordName);
-    }
-
     bool Register(int id, uint modifiers, uint vk)
     {
+        // Chord's own modifier constants carry the same values as Win32's MOD_*, which is why
+        // a parsed Chord's Modifiers can be handed to RegisterHotKey unconverted.
         if (!NativeMethods.RegisterHotKey(source.Handle, id, modifiers, vk)) return false;
         registeredIds.Add(id);
         return true;
@@ -116,16 +105,11 @@ public sealed class HotkeyService : IDisposable
         if (msg != (int)NativeMethods.WM_HOTKEY) return nint.Zero;
 
         var id = (int)wParam;
-        // Fire-and-forget (spec comment, App wiring): a failed switch triggered from a
-        // hotkey has no UI to speak through — silent no-op beats a MessageBox storm on
-        // every keypress that happens to hit a stale/removed workspace.
-        if (id == IdCyclePrev) cyclePrev();
-        else if (id == IdCycleNext) cycleNext();
-        // Note these do NOT switch: they advance a highlight in the picker, which commits
-        // when Ctrl+Alt is released. See WorkspaceSwitchGesture.
-        else if (id == IdRecentNext) stepRecent(+1);
+        // Note these do NOT switch: they advance a highlight in the picker, which commits when
+        // the chord's modifiers are released. See WorkspaceSwitchGesture.
+        if (id == IdRecentNext) stepRecent(+1);
         else if (id == IdRecentPrev) stepRecent(-1);
-        else if (id is >= IdDigitBase + 1 and <= IdDigitBase + 9) switchTo(id - IdDigitBase - 1); // 0-based index
+        else return nint.Zero; // not one of ours: leave `handled` false
 
         handled = true;
         return nint.Zero;

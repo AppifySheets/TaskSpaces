@@ -377,28 +377,16 @@ public sealed class WorkspaceManager(
     // workspace" is always derived live from CurrentDesktop, never stored).
     public Result SwitchToDesktop(Guid desktopId) => desktops.Switch(desktopId);
 
-    // Ctrl+Alt+arrows (spec §Tray interaction): cycle through OUR workspaces in their
-    // defined order — unlike native Win+Ctrl+arrows, which walks every OS desktop
-    // including unbound ones. Wrapping; a non-workspace current desktop enters the
-    // ring at the edge matching travel direction.
-    public Result CycleWorkspace(int direction) =>
-        State.Workspaces.Count == 0
-            ? Result.Failure("No workspaces to cycle through.")
-            : desktops.CurrentDesktop().Bind(current =>
-            {
-                var index = State.Workspaces.ToList().FindIndex(w => w.DesktopId == current);
-                var next = index < 0
-                    ? (direction > 0 ? 0 : State.Workspaces.Count - 1)
-                    : (index + direction + State.Workspaces.Count) % State.Workspaces.Count;
-                return Switch(State.Workspaces[next].Id);
-            });
-
-    // Ctrl+Alt+1..9: direct switch by defined order (hotkey digit - 1).
-    public Result SwitchToIndex(int index) =>
-        index >= 0 && index < State.Workspaces.Count
-            ? Switch(State.Workspaces[index].Id)
-            : Result.Failure($"No workspace #{index + 1}.");
-
+    // CycleWorkspace(direction) and SwitchToIndex(index) used to live here, driving
+    // Ctrl+Alt+arrows and Ctrl+Alt+1..9. Both are gone with those chords (Petre: "i don't
+    // think we need ctrl+alt and those, ctrl+tab is good enough"), and removed rather than
+    // left as unreachable public API so nothing has to wonder later which switching path is
+    // the live one. There are now exactly two: Switch(workspaceId) and SwitchToDesktop.
+    //
+    // If keyboard direct-jump comes back it should bind a NAMED chord to a workspace's id
+    // (Workspace.Shortcut and Chord already exist for it) rather than to its list position,
+    // which is the wart that made SwitchToIndex change meaning whenever anyone reordered the
+    // Workspaces tab. And MRU walking already replaces cycling: see ByRecentUse.
     public Result<Workspace> AddWorkspace(string name) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
             .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
@@ -424,9 +412,10 @@ public sealed class WorkspaceManager(
             }));
 
     // Petre: "i need to be able to move workspaces up or down in the manage window".
-    // delta is -1 (up) or +1 (down). Order is NOT cosmetic -- this one list drives the
-    // floating bar's row order, the switcher panel's group order and which workspace
-    // Ctrl+Alt+1..9 selects -- so persisting it here is all the other surfaces need.
+    // delta is -1 (up) or +1 (down). This one list drives the floating bar's row order and,
+    // through WorkspacePalette, each workspace's lane colour -- so persisting it here is all
+    // the other surfaces need. It no longer decides what any shortcut does: Ctrl+Alt+1..9 bound
+    // by position and has been removed, which is exactly why reordering is now safe.
     //
     // Out-of-range moves SUCCEED as no-ops rather than failing: the Up button on the first
     // row should do nothing, not raise an error dialog at someone who clicked it.

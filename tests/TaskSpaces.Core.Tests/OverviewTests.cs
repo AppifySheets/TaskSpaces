@@ -201,81 +201,13 @@ public class OverviewTests
         Assert.Equal(ghost, unplaced.Windows.Single().Window.Handle);
     }
 
-    // --- Task 9: hotkey-driven cycling / direct switch ---------------------------
-
-    [Fact]
-    public void Cycle_wraps_in_workspace_order()
-    {
-        var (manager, work1) = Started();
-        var work2 = manager.AddWorkspace("Personal").Value;
-        desktops.CurrentDesktopId = work1.DesktopId!.Value;
-
-        Assert.True(manager.CycleWorkspace(+1).IsSuccess);
-        Assert.Equal(work2.DesktopId!.Value, desktops.Switches.Last());
-
-        desktops.CurrentDesktopId = work2.DesktopId!.Value;
-        Assert.True(manager.CycleWorkspace(+1).IsSuccess);
-        Assert.Equal(work1.DesktopId!.Value, desktops.Switches.Last()); // wraps back to first
-    }
-
-    // Fix round 1 (reviewer, Important): the forward direction was covered above, but
-    // CycleWorkspace(-1) from a valid, already-in-the-ring index (as opposed to the
-    // non-workspace-desktop case below, which enters at an edge) exercises a different
-    // branch of the (index + direction + Count) % Count wrap arithmetic — pins it.
-    [Fact]
-    public void Cycle_wraps_backward_from_first_workspace_to_last()
-    {
-        var (manager, work1) = Started();
-        var work2 = manager.AddWorkspace("Personal").Value;
-        desktops.CurrentDesktopId = work1.DesktopId!.Value; // sitting on the FIRST workspace
-
-        Assert.True(manager.CycleWorkspace(-1).IsSuccess);
-        Assert.Equal(work2.DesktopId!.Value, desktops.Switches.Last()); // wraps to the last
-    }
-
-    [Fact]
-    public void Cycle_from_non_workspace_desktop_goes_to_first()
-    {
-        var (manager, work1) = Started();
-        var work2 = manager.AddWorkspace("Personal").Value;
-        desktops.CurrentDesktopId = Guid.NewGuid(); // some plain OS desktop, not a workspace
-
-        Assert.True(manager.CycleWorkspace(+1).IsSuccess);
-        Assert.Equal(work1.DesktopId!.Value, desktops.Switches.Last()); // enters at the first
-
-        desktops.CurrentDesktopId = Guid.NewGuid();
-        Assert.True(manager.CycleWorkspace(-1).IsSuccess);
-        Assert.Equal(work2.DesktopId!.Value, desktops.Switches.Last()); // enters at the last
-    }
-
-    [Fact]
-    public void Cycle_with_no_workspaces_fails()
-    {
-        var manager = new WorkspaceManager(desktops, monitor, titles, store);
-        Assert.True(manager.Start().IsSuccess);
-
-        Assert.True(manager.CycleWorkspace(+1).IsFailure);
-    }
-
-    [Fact]
-    public void SwitchToIndex_out_of_range_fails()
-    {
-        var (manager, work) = Started();
-
-        Assert.True(manager.SwitchToIndex(0).IsSuccess);
-        Assert.Equal(work.DesktopId!.Value, desktops.Switches.Last());
-
-        Assert.True(manager.SwitchToIndex(5).IsFailure);
-    }
-
-    // Fix round 1 (reviewer, minor): negative index is out of range same as too-large —
-    // its own test rather than folded into the one above, so it stays independently
-    // identifiable in the results.
-    [Fact]
-    public void SwitchToIndex_negative_fails()
-    {
-        var (manager, _) = Started();
-
-        Assert.True(manager.SwitchToIndex(-1).IsFailure);
-    }
+    // Six tests covering CycleWorkspace's wrap arithmetic and SwitchToIndex's range checks
+    // used to sit here (Task 9). Both methods went with the Ctrl+Alt+arrows and Ctrl+Alt+1..9
+    // chords they existed to serve -- Petre: "i don't think we need ctrl+alt and those,
+    // ctrl+tab is good enough" -- so the tests went too rather than being kept alive against
+    // dead code.
+    //
+    // Nothing they asserted is now untested: MRU-order walking replaces cycling and is covered
+    // by WorkspaceMruTests, and Switch(workspaceId) -- the one switching path left besides
+    // SwitchToDesktop -- is exercised throughout this file and CurrentDesktopPulseTests.
 }

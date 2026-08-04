@@ -20,8 +20,13 @@
 
 Named workspaces for the Windows taskbar. Group your running apps into contexts
 (**Work**, **Personal**, **YouTube**) and switch between them with one click.
-Switch to a workspace and the taskbar shows only that group's windows; everything
-else keeps running out of sight. Workspaces survive reboots.
+
+Switching does not just filter the taskbar. **You come back to the workspace exactly as
+you left it** — every window still open, still where you put it, still scrolled to where
+you were reading. Nothing was closed and nothing was minimised; the other workspaces'
+windows simply kept running out of sight while you were away. That is the point: the
+expensive part of changing project is not the switch, it is rebuilding the context you
+had before, and here there is nothing to rebuild. Workspaces survive reboots too.
 
 <p align="center">
   <img src="docs/images/floating-bar.png" width="243" alt="The floating bar: one row per workspace, each tinted its own colour, showing every window's icon across all workspaces" />
@@ -104,8 +109,8 @@ single ~74 MB exe in `artifacts/publish`.
   This chord is **exclusive** while TaskSpaces runs: `Ctrl+Tab` and `Ctrl+Shift+Tab`
   stop reaching apps that use them to move between tabs. Change it on Manage →
   **Shortcuts** if you would rather keep them — ``Ctrl+Alt+` `` is a quiet alternative.
-- **Other hotkeys.** `Ctrl+Alt+←/→` cycles workspaces in *list* order rather than by
-  recent use, and `Ctrl+Alt+1…9` jumps straight to one by its position.
+  It is the *only* shortcut TaskSpaces registers; everything else is on the bar, one
+  click away.
 - **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of
   `Remote Desktop Manager [server-01 - fhd]`. Right-click an icon for either
   **Rename this window** or **Rename all *app* windows** — prefer the second for

@@ -127,7 +127,7 @@ public static class NativeMethods
 
     public const int SW_RESTORE = 9; // NEVER SW_HIDE anywhere in this codebase (spec)
 
-    // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
+    // The app's one global chord: the Alt+Tab-style workspace switcher (Ctrl+Tab by default).
     // RegisterHotKey delivers WM_HOTKEY to the given window's message queue regardless
     // of focus — exactly what a background tray app needs (no window ever has to be
     // foreground for the chord to fire).

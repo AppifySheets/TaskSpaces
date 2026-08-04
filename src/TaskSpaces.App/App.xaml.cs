@@ -233,7 +233,7 @@ public partial class App : Application
         //   see every window across workspaces -> the floating bar
         //   jump to a window                   -> bar icons
         //   drag windows between workspaces    -> bar rows, and Manage's Windows tab
-        //   switch workspace                   -> bar row labels, Ctrl+Alt+arrows, Ctrl+Alt+1..9
+        //   switch workspace                   -> bar row labels, and the Ctrl+Tab switcher
         //   rename / pin / restore             -> bar icon right-click, Manage's Windows tab
         //
         // The deletion was cheap for one specific reason: the panel and Manage's Windows tab
@@ -241,12 +241,12 @@ public partial class App : Application
         // could not drift apart. Removing the panel left that control untouched in Manage, so
         // grouped drag-and-drop window management survived intact.
 
-        // Task 9: global hotkeys (Ctrl+Alt+arrows cycle, Ctrl+Alt+1..9 direct switch).
-        // Gated on !compatibilityMode: CycleWorkspace/SwitchToIndex both call
-        // manager.Switch, which needs a real desktop to switch to — compatibility mode
-        // has none. Results are fire-and-forget: a hotkey has no UI to report a failure
-        // through, and a message box on every keypress that misses would be worse than a
-        // silent no-op (e.g. Ctrl+Alt+3 with only two workspaces defined).
+        // The app's ONE global chord: the Alt+Tab-style workspace switcher, Ctrl+Tab by
+        // default. Petre: "i don't think we need ctrl+alt and those, ctrl+tab is good enough" --
+        // Ctrl+Alt+arrows and Ctrl+Alt+1..9 are gone, and HotkeyService's header records why.
+        //
+        // Gated on !compatibilityMode: the switcher ends in manager.Switch, which needs a real
+        // desktop to switch to, and compatibility mode has none.
         if (!compatibilityMode)
         {
             // Ctrl+Tab (the configured chord) walks workspaces in most-recently-used order
@@ -258,17 +258,12 @@ public partial class App : Application
             // WorkspaceManager.SwitcherShortcut has already fallen back to the default for
             // anything unusable, so this parse cannot realistically fail -- but Parse returns
             // a Result, and inventing a value on failure here would hide a real bug behind a
-            // silently different shortcut. GetValueOrThrow is the honest reading.
+            // silently different shortcut. Taking .Value is the honest reading.
             boundSwitcher = Chord.Parse(manager.SwitcherShortcut).Value;
             switcher = new WorkspaceSwitchGesture(manager, boundSwitcher);
             monitor.Ignore(switcher.EnsureHandle());
 
-            hotkeys = new HotkeyService(
-                () => manager.CycleWorkspace(-1),
-                () => manager.CycleWorkspace(+1),
-                n => manager.SwitchToIndex(n),
-                direction => switcher.Step(direction),
-                boundSwitcher);
+            hotkeys = new HotkeyService(direction => switcher.Step(direction), boundSwitcher);
 
             // Petre: "i want it configurable". Rebinding is driven off StateChanged rather
             // than off a callback from the Shortcuts tab, so ANY route that changes the
@@ -276,11 +271,12 @@ public partial class App : Application
             // ends up writing it later. Comparing against what is currently bound makes this
             // a no-op on the many pulses that have nothing to do with shortcuts.
             manager.StateChanged.Subscribe(_ => RebindSwitcherIfChanged());
+            // One chord now, so at most one failure -- and it names the chord, since the whole
+            // point is that the reader can go and change it on Manage -> Shortcuts.
             if (hotkeys.Failures.Count > 0)
                 MessageBox.Show(
-                    "TaskSpaces could not register these keyboard shortcuts (another app already owns them):\n"
-                    + string.Join("\n", hotkeys.Failures)
-                    + "\n\nTaskSpaces will keep running; those chords just won't switch workspaces.",
+                    string.Join("\n", hotkeys.Failures)
+                    + "\n\nTaskSpaces will keep running. Pick a different chord on Manage → Shortcuts.",
                     "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 

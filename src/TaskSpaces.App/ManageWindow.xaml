@@ -25,12 +25,12 @@
             <TabItem Header="Workspaces">
                 <DockPanel Margin="8">
                     <!-- Order is not cosmetic, so it is worth saying so where it is edited:
-                         this one list drives the floating bar's rows, the switcher panel's
-                         groups and which workspace Ctrl+Alt+1..9 selects. Same explanatory
-                         style as the Rules tab below. -->
-                    <!-- No longer mentions the switcher panel, which has been deleted. -->
+                         this one list drives the floating bar's row order and each workspace's
+                         lane colour. It no longer decides what any shortcut does, because
+                         Ctrl+Alt+1…9 bound by position and is gone, so reordering is now purely
+                         visual. Worth stating: it used to have a hidden consequence. -->
                     <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Order sets the floating bar's rows and the Ctrl+Alt+1…9 shortcuts. Select a workspace and use ↑ / ↓ to reorder."/>
+                               Text="Order sets the floating bar's rows and each workspace's lane colour. Select a workspace and use ↑ / ↓ to reorder."/>
                     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
                         <TextBox x:Name="NewWorkspaceName" Width="200"/>
                         <Button Content="Add" Margin="8,0,0,0" Padding="12,2" Click="OnAddWorkspace"/>
@@ -60,9 +60,13 @@
                              is typed, before anything tries to register it. -->
                         <TextBlock x:Name="SwitcherShortcutStatus" TextWrapping="Wrap" Margin="0,6,0,0"/>
 
-                        <TextBlock Text="Fixed shortcuts" FontWeight="Bold" Margin="0,20,0,0"/>
-                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,0"
-                                   Text="Ctrl+Alt+← and Ctrl+Alt+→ cycle workspaces in list order (not by recent use). Ctrl+Alt+1…9 switch straight to a workspace by its position on the Workspaces tab."/>
+                        <!-- There used to be a "Fixed shortcuts" section here listing
+                             Ctrl+Alt+←/→ and Ctrl+Alt+1…9. Both are gone (Petre: "i don't
+                             think we need ctrl+alt and those, ctrl+tab is good enough"), so the
+                             one above is now the app's only global chord and there is nothing
+                             left to list. -->
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,20,0,0"
+                                   Text="This is the only keyboard shortcut TaskSpaces registers. Everything else is on the floating bar: click a row label to switch to that workspace, click an icon to jump to a window, drag an icon to another row to move it."/>
                     </StackPanel>
                 </DockPanel>
             </TabItem>
