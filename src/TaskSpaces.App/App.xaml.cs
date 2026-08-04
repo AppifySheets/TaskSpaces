@@ -25,7 +25,7 @@ public partial class App : Application
     bool compatibilityMode;
     ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
-    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Ctrl+Alt+` by default)
+    WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Ctrl+Tab by default)
     Chord boundSwitcher;              // the chord the picker and the hotkey are currently registered on
     FloatingBar? floatingBar; // Task 11: created lazily on first show
 
@@ -213,6 +213,14 @@ public partial class App : Application
             monitor.Ignore(barHwnd);
             floatingBar.ShowBar();
             PinFloatingBar(barHwnd);
+
+            // Petre: "if i activate the taskbar, it hides the floating window". Topmost is a
+            // shared band, not a rank, so the taskbar (and StartAllBack's menu) climbs over
+            // the bar the moment it is activated. Reclaiming the top of the band on every
+            // foreground change is the fix -- see FloatingBar.ReclaimTopmost. Subscribed here
+            // rather than inside the bar because the monitor is the composition root's to hand
+            // out, and the bar has no business knowing what a WinEvent hook is.
+            monitor.ForegroundChanged.Subscribe(_ => floatingBar.ReclaimTopmost());
         }
 
         // The hover-to-peek switcher panel USED to be summoned from here, with a 400ms
@@ -241,8 +249,9 @@ public partial class App : Application
         // silent no-op (e.g. Ctrl+Alt+3 with only two workspaces defined).
         if (!compatibilityMode)
         {
-            // Ctrl+Alt+` walks workspaces in most-recently-used order while Ctrl+Alt stays
-            // held, and switches on release -- Alt+Tab's gesture, applied to workspaces.
+            // Ctrl+Tab (the configured chord) walks workspaces in most-recently-used order
+            // while the modifiers stay held, and switches on release -- Alt+Tab's gesture,
+            // applied to workspaces rather than windows.
             // Ignored by the monitor for the same reason the floating bar is: it is our own
             // chrome, and now that the hooks see our process it would otherwise appear in
             // the bar as a window every time it flashed up.
@@ -293,6 +302,9 @@ public partial class App : Application
             {
                 monitor.Resync();
                 manager.ReapplyRenames();
+                // Backstop for the topmost-band fix above: an activation that somehow fires no
+                // foreground event would otherwise leave the bar buried until the next one.
+                floatingBar?.ReclaimTopmost();
             };
             sweep.Start();
         }

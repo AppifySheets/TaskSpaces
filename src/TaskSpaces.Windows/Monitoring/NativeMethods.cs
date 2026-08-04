@@ -74,6 +74,21 @@ public static class NativeMethods
     public const nint ICON_SMALL = 0, ICON_BIG = 1, ICON_SMALL2 = 2;
     public const int GCLP_HICON = -14, GCLP_HICONSM = -34;
 
+    // Petre: "i want it to be on top of the taskbar, if i activate the taskbar, it hides the
+    // floating window."
+    //
+    // Topmost is a BAND, not a rank: every topmost window shares one, and whichever was
+    // activated most recently sits at its top. The taskbar is topmost too (so is
+    // StartAllBack's menu), so activating it climbs over our bar and WPF's Topmost="True"
+    // does nothing to prevent it. Re-asserting HWND_TOPMOST moves the bar back to the top of
+    // the band. SWP_NOACTIVATE is essential: without it this would steal focus from whatever
+    // the user just clicked, including the taskbar they were reaching for.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int cx, int cy, uint flags);
+
+    public static readonly nint HWND_TOPMOST = new(-1);
+    public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
+
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(nint hwnd);
     [DllImport("user32.dll")] public static extern bool IsIconic(nint hwnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(nint hwnd, int cmdShow);
@@ -124,8 +139,9 @@ public static class NativeMethods
     public const uint VK_LEFT = 0x25, VK_RIGHT = 0x27;
 
     // Alt+Tab-style workspace switching (Petre: "maybe an alt-tab like shortcut for me to
-    // switch through workspaces"). VK_OEM_3 is the backtick/tilde key: Ctrl+Alt+` walks the
-    // most-recently-used list, Ctrl+Alt+Shift+` walks it backwards.
+    // switch through workspaces"). The chord is configurable and defaults to Ctrl+Tab; this
+    // constant remains because VK_OEM_3 (the backtick/tilde key) was the original default and
+    // Chord still has to be able to spell it.
     public const uint VK_OEM_3 = 0xC0;
 
     // The missing half of that gesture. RegisterHotKey reports a chord being PRESSED and

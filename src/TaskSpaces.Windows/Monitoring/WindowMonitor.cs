@@ -33,6 +33,18 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
 
     public IObservable<WindowEvent> Events => events.AsObservable();
 
+    // EVERY foreground change, tracked window or not -- which is the difference between this
+    // and the Activated WindowEvent below.
+    //
+    // Petre: "if i activate the taskbar, it hides the floating window". The taskbar and
+    // StartAllBack's menu are not taskbar candidates, so they never enter `known` and never
+    // produce an Activated event; but they ARE topmost, so activating one puts it above the
+    // floating bar. The bar has to hear about those activations specifically in order to
+    // re-assert its place in the topmost band, so this reports the raw fact and lets the
+    // caller decide what it means.
+    public IObservable<nint> ForegroundChanged => foreground.AsObservable();
+    readonly Subject<nint> foreground = new();
+
     // Petre: "why isn't the taskspaces window in the floating window? it's clearly open and
     // i can't see it in the floating bar." It wasn't there because Hook() below used to pass
     // WINEVENT_SKIPOWNPROCESS, which made this monitor structurally blind to every window
@@ -153,6 +165,13 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         // walk this switch.
         if (ignored.Contains(hwnd)) return;
 
+        // Raised for every foreground change BEFORE the switch below filters to windows we
+        // track: the taskbar and the Start menu are exactly the activations the floating bar
+        // needs to hear about, and neither is a window we would ever track. Our own chrome is
+        // already excluded by the line above, so the bar is never told to raise itself over
+        // a click on itself.
+        if (@event == EVENT_SYSTEM_FOREGROUND) foreground.OnNext(hwnd);
+
         // INVARIANT: no managed exception may ever escape a native callback. OnWinEvent is
         // invoked directly by user32 via the SetWinEventHook out-of-context callback — an
         // unhandled exception here unwinds through native stack frames and takes down the
@@ -251,5 +270,6 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     {
         hooks.ForEach(h => UnhookWinEvent(h));
         events.OnCompleted();
+        foreground.OnCompleted();
     }
 }
