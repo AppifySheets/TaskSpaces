@@ -7,7 +7,8 @@
         SizeToContent="WidthAndHeight"
         PreviewMouseLeftButtonDown="OnPreviewMouseLeftButtonDown"
         PreviewMouseMove="OnPreviewMouseMove"
-        PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp">
+        PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp"
+        SizeChanged="OnSizeChanged">
     <!-- Task 11 (spec: Floating icon bar): translucent, borderless, icon-only bar.
          AllowsTransparency requires WindowStyle=None; both set here in XAML (not
          code-behind) to dodge the "AllowsTransparency must be set before the window is

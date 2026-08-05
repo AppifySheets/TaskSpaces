@@ -65,7 +65,7 @@ public partial class FloatingBar : Window
         Rebuild();
         Show();
         PositionFromState();
-        manager.SaveFloatingBar(new FloatingBarState(Left, Top, true));
+        Save();
     }
 
     // Petre: "i want it to be on top of the taskbar, if i activate the taskbar, it hides the
@@ -114,7 +114,7 @@ public partial class FloatingBar : Window
     public void HideBar()
     {
         Hide();
-        manager.SaveFloatingBar(new FloatingBarState(Left, Top, false));
+        manager.SaveFloatingBar(new FloatingBarState(Left, Top, false) { Right = anchorRight });
     }
 
     void OnHideClick(object sender, RoutedEventArgs e) => HideBar();
@@ -195,7 +195,10 @@ public partial class FloatingBar : Window
         {
             moving = false;
         }
-        manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)); // only draggable while shown
+        // A drag is the user choosing a new right edge, so re-anchor to where they put it --
+        // otherwise the next window to open would yank the bar back to the old anchor.
+        anchorRight = Left + ActualWidth;
+        Save(); // only draggable while shown
     }
 
     bool moving;
@@ -760,15 +763,7 @@ public partial class FloatingBar : Window
     void PositionFromState()
     {
         var stored = manager.State.FloatingBar;
-        // Task 11 fix round 2 (reviewer, restore-path safety): the saved position is
-        // run through MonitorFromPoint + the clamp on EVERY show, stored or not, so a
-        // stale/bad save (like Petre's) self-heals here without editing state.json --
-        // MONITOR_DEFAULTTONEAREST always returns a real, valid monitor no matter how
-        // far outside every monitor's bounds the probe point falls.
-        var probe = new NativeMethods.POINT { X = (int)(stored?.Left ?? 0), Y = (int)(stored?.Top ?? 0) };
-        var monitor = NativeMethods.MonitorFromPoint(probe, NativeMethods.MONITOR_DEFAULTTONEAREST);
-        var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
-        if (!NativeMethods.GetMonitorInfo(monitor, ref info))
+        if (WorkArea(stored?.Left ?? 0, stored?.Top ?? 0) is not { } work)
         {
             // Best-effort fallback if the API ever fails -- better than crashing the show.
             Left = stored?.Left ?? 0;
@@ -776,24 +771,81 @@ public partial class FloatingBar : Window
             return;
         }
 
+        // Petre: "when adding more windows, the floating window should grow to the left, not
+        // to the right... it'll be stacked next to the right edge of the screen".
+        //
+        // So the RIGHT edge is the anchor, and that is what gets restored when it is known.
+        // Restoring Left instead would put the left edge back where it was and let the right
+        // edge land wherever this session's width happens to reach -- which, for a bar parked
+        // against the screen edge, is off it.
+        //
+        // Left is still read for state.json files written before Right existed, and still
+        // written, so nothing is lost by going back to an older build.
+        //
+        // Task 11 fix round 2 (reviewer, restore-path safety): whichever branch supplies the
+        // position, it goes through MonitorFromPoint and the clamp on EVERY show, so a stale
+        // or impossible save self-heals here without anyone editing state.json.
+        // MONITOR_DEFAULTTONEAREST always returns a real monitor however far outside every
+        // monitor's bounds the probe point falls.
+        //
+        // No persisted state at all (first run, or a pre-bar state.json): the bottom-right
+        // corner of the work area, minus the bar's own size.
+        var rawLeft = stored switch
+        {
+            { Right: { } right } => right - ActualWidth,
+            { } s => s.Left,
+            null => work.Right - ActualWidth,
+        };
+        var rawTop = stored?.Top ?? work.Bottom - ActualHeight;
+
+        (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
+        anchorRight = Left + ActualWidth;
+    }
+
+    // The screen x the bar's right edge is pinned to. Null until the bar has been positioned,
+    // which is what stops the initial layout passes -- several of them, as rows are built and
+    // the info line is measured -- from being mistaken for growth and dragging the bar
+    // leftwards before it has been placed at all.
+    double? anchorRight;
+
+    // Keeps the right edge still while the bar gets wider or narrower, which is the whole ask:
+    // the bar is parked against the right of the screen, so growing rightwards walks it off.
+    //
+    // SizeChanged rather than a recalculation inside Rebuild: SizeToContent means the width is
+    // only known once WPF has measured the new content, and Rebuild returns long before that.
+    void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!e.WidthChanged || anchorRight is not { } anchor || moving) return;
+        if (WorkArea(Left, Top) is not { } work) return;
+        // Clamped like every other placement here: a bar grown wider than the work area cannot
+        // keep its right edge AND stay on screen, and staying on screen wins.
+        (Left, Top) = WorkAreaClamp.Clamp(anchor - ActualWidth, Top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
+    }
+
+    // The work area of whichever monitor holds the given point, in DIPs. Null when Windows
+    // refuses to answer, which callers treat as "do not move anything".
+    //
+    // Task 11 fix round 2 (reviewer, root cause of Petre's invisible bar): the DPI comes from
+    // GetDpiForMonitor on the SAME HMONITOR, not from VisualTreeHelper.GetDpi(window). A
+    // window-scoped DPI query can still report a stale scale immediately after Show(), before
+    // its WM_DPICHANGED round trip has landed, which is how a monitor's raw physical rcWork
+    // once ended up written into DIP-valued Left/Top unconverted.
+    (double Left, double Top, double Right, double Bottom)? WorkArea(double probeX, double probeY)
+    {
+        var probe = new NativeMethods.POINT { X = (int)probeX, Y = (int)probeY };
+        var monitor = NativeMethods.MonitorFromPoint(probe, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+        if (!NativeMethods.GetMonitorInfo(monitor, ref info)) return null;
+
         NativeMethods.GetDpiForMonitor(monitor, NativeMethods.MDT_EFFECTIVE_DPI, out var dpiX, out var dpiY);
         var scaleX = dpiX / 96.0;
         var scaleY = dpiY / 96.0;
-        var workLeft = info.rcWork.Left / scaleX;
-        var workTop = info.rcWork.Top / scaleY;
-        var workRight = info.rcWork.Right / scaleX;
-        var workBottom = info.rcWork.Bottom / scaleY;
-
-        // No persisted state at all (first run, or an old state.json): default to the
-        // bottom-right corner of the work area minus the bar's own size (brief). This
-        // default path gets the exact same clamp treatment as the restore path below --
-        // one shared call, both branches feed into it.
-        var (rawLeft, rawTop) = stored is { } s
-            ? (s.Left, s.Top)
-            : (workRight - ActualWidth, workBottom - ActualHeight);
-
-        (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, workLeft, workTop, workRight, workBottom);
+        return (info.rcWork.Left / scaleX, info.rcWork.Top / scaleY, info.rcWork.Right / scaleX, info.rcWork.Bottom / scaleY);
     }
+
+    // One place that writes the position, so Right can never be persisted out of step with
+    // Left. Visible is always true here: both callers are showing or moving the bar.
+    void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, true) { Right = anchorRight });
 
     // Owned by the bar for the same reason PromptDialog.Ask now takes an owner: this window
     // is Topmost, so an unowned message box can open behind it and strand the user with an

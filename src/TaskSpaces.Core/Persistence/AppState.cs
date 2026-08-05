@@ -82,4 +82,18 @@ public sealed record AppState(
 // moment it was dragged or hidden — restored verbatim then clamped into whichever
 // monitor's work area contains that point (FloatingBar.xaml.cs), since the monitor
 // layout itself isn't part of what we persist.
-public sealed record FloatingBarState(double Left, double Top, bool Visible);
+public sealed record FloatingBarState(double Left, double Top, bool Visible)
+{
+    // Petre: "when adding more windows, the floating window should grow to the left, not to the
+    // right... it'll be stacked next to the right edge of the screen."
+    //
+    // The bar's width follows its content, so the edge that must stay put is the RIGHT one --
+    // and that means the right edge, not Left, is what a restore should reproduce. Restoring
+    // Left would put the left edge back and let the right edge land wherever this session's
+    // width reaches, which for a bar parked against the screen edge is off it.
+    //
+    // An init property with no default so files written before this key load as null, which
+    // PositionFromState reads as "fall back to Left". Left and Top are still written too, so
+    // going back to an older build does not lose the position.
+    public double? Right { get; init; }
+}
