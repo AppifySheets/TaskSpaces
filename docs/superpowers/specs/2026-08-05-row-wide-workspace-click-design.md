@@ -85,11 +85,21 @@ as the incidental one.
 
 ## Testing
 
-- **Unit (`TaskSpaces.Windows.Tests`):** raising `MouseLeftButtonUp` on a row container
-  invokes `switchTo`; a row built with `switchTo: null` does not throw and does not switch.
-- **Not unit-tested:** the hover highlight. It depends on real hit-testing and a real pointer
-  position, and any test that faked those would be asserting the fake. Verified by looking at
-  the running bar instead, and recorded here as a deliberate gap rather than an oversight.
+Four tests in `TaskSpaces.Windows.Tests`. All of them synthesise input by raising the routed
+event on the element, which reaches the handlers directly — the bar under test is parked
+off-screen and never rendered, so there is no real pointer to move.
+
+- Raising `MouseLeftButtonUp` on a row container switches to that row's desktop.
+- A row with no destination (📌) ignores the same event.
+- `MouseEnter` on a row container brightens its label to exactly the strength the current row
+  is drawn at; `MouseLeave` restores the resting value; the weight never moves.
+- `MouseEnter` on an icon inside a row returns the label to its resting value.
+
+**What these cannot cover, stated plainly:** they prove the wiring and the opacity arithmetic,
+not that the hit-test *regions* are the intended ones — that blank row area really raises the
+container's `MouseEnter` rather than some child's, and that a real release there is not
+swallowed by something else. That half is verified by looking at the running bar, and is
+recorded here as a deliberate gap rather than an oversight.
 
 ## Out of scope
 

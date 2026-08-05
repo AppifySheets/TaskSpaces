@@ -402,9 +402,53 @@ public partial class FloatingBar : Window
         Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
 
-        var label = RowLabel(visualLabel, isCurrent, switchTo);
+        // setHover is null exactly when this row has no destination (see RowLabel), which is
+        // what keeps the Pinned and Unplaced rows inert below without a second null check.
+        var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo);
         Grid.SetColumn(label, 1);
         container.Children.Add(label);
+
+        // Petre: "i'd prefer to be able to click on the empty row as well and it takes me to
+        // the right place... let the text be highlighted as it is now when i am over a row and
+        // take me there when i click it."
+        //
+        // The label alone used to be the click target: a ~10px word at the right end of the
+        // row, carrying the bar's second most common action. Now the whole row does it.
+        //
+        // Why a bare bubbling MouseLeftButtonUp is enough, on both counts:
+        //
+        //  - It cannot steal clicks from the icons or the label. ButtonBase marks the event
+        //    handled when it raises Click, so a release on any of those controls never reaches
+        //    this handler. Clicking an icon still jumps to that window and nothing else.
+        //  - It cannot fire when you were dragging the BAR. A press that passes the drag
+        //    threshold hands the mouse to DragMove(), whose native move loop consumes the
+        //    mouse-up (see OnPreviewMouseMove). No mouse-up, no click -- the same split that
+        //    already lets you drag the bar by pressing on a row label.
+        if (switchTo is not null && setHover is not null)
+        {
+            container.MouseLeftButtonUp += (_, _) => Report(switchTo());
+
+            // Hover feedback is the LABEL brightening, never a row background: the background
+            // already means "a dragged window will land here" (DropHighlight above), and one
+            // channel cannot carry two meanings on a surface this small.
+            container.MouseEnter += (_, _) => setHover(true);
+            container.MouseLeave += (_, _) => setHover(false);
+
+            // ...and the icons punch holes in that hover area. Clicking an icon jumps to a
+            // WINDOW, so lighting the label there would advertise an action the click does not
+            // perform. The info line already says which group an icon belongs to, which is the
+            // information the highlight would have carried anyway.
+            //
+            // Wired here rather than inside IconButton: IconButton has no business knowing
+            // about the row it happens to sit in. Note the deliberate inversion -- entering an
+            // icon CLEARS the highlight, because the container's own MouseEnter has already
+            // set it (entering a child counts as entering the parent).
+            icons.Children.Cast<UIElement>().ToList().ForEach(icon =>
+            {
+                icon.MouseEnter += (_, _) => setHover(false);
+                icon.MouseLeave += (_, _) => setHover(true);
+            });
+        }
 
         if (onDrop is not null)
         {
@@ -534,13 +578,18 @@ public partial class FloatingBar : Window
     //
     // Everything else stays dim on purpose; this is a glance-only surface, not a reading
     // surface, and the point of the contrast is that exactly one row wins it.
-    UIElement RowLabel(string text, bool isCurrent, Func<Result>? switchTo)
+    // Returns the element plus, when the row has somewhere to go, a setter its row uses to
+    // raise the text to its hovered look and drop it back (see GroupRow). The setter is null
+    // for the rows that cannot be clicked, which is what makes them inert end to end: no
+    // highlight, no click, one null check.
+    (UIElement Element, Action<bool>? SetHover) RowLabel(string text, bool isCurrent, Func<Result>? switchTo)
     {
+        var resting = isCurrent ? CurrentRowOpacity : 0.5;
         var textBlock = new TextBlock
         {
             Text = text,
             FontSize = 10,
-            Opacity = isCurrent ? 0.95 : 0.5,
+            Opacity = resting,
             FontWeight = isCurrent ? FontWeights.Bold : FontWeights.Normal,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 2, 0),
@@ -552,7 +601,14 @@ public partial class FloatingBar : Window
             // workspace, so there's no single place a click could go) and the
             // "Unplaced" catch-all (Guid.Empty is not a real desktop). A Button here
             // would be dead chrome pretending to do something.
-            return textBlock;
+            return (textBlock, null);
+
+        // Hover raises the label to the same near-full strength the CURRENT row is drawn at,
+        // and only the opacity moves: weight already means "this is the workspace you are on",
+        // so a hover that also went bold would impersonate it. On the current row itself the
+        // hovered and resting values coincide, which is correct -- there is no state to
+        // preview when you are already there.
+        void SetHover(bool hovered) => textBlock.Opacity = hovered ? CurrentRowOpacity : resting;
 
         // Brief: "if it's trivial to make it switch to the workspace via
         // manager.Switch, DO make it switch -- that's an obvious affordance." A label
@@ -571,8 +627,13 @@ public partial class FloatingBar : Window
             ToolTip = $"Switch to {text}",
         };
         button.Click += (_, _) => Report(switchTo());
-        return button;
+        return (button, SetHover);
     }
+
+    // The strength the current row's label is drawn at, and therefore also the strength a
+    // hovered label rises to. Named because two places have to agree on it exactly: if they
+    // drift, hover starts reading as "this row is current".
+    const double CurrentRowOpacity = 0.95;
 
     UIElement IconButton(string groupLabel, string groupKey, WindowRow row)
     {

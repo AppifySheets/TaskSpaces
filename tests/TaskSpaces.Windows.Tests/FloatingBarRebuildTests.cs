@@ -1,6 +1,7 @@
 ﻿using System.Reactive.Subjects;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.App;
@@ -225,6 +226,109 @@ public class FloatingBarRebuildTests
         manage.Close();
     });
 
+    // Petre: "i'd prefer to be able to click on the empty row as well and it takes me to the
+    // right place." The label used to be the only switch target -- a ~10px word at the right
+    // end of the row, carrying the bar's second most common action.
+    //
+    // Sparrow rather than GEPHA throughout this group: GEPHA is the CURRENT workspace, whose
+    // label is already drawn at full strength, so a hover assertion there could not tell
+    // "highlight applied" from "nothing happened".
+    [Fact]
+    public void Clicking_a_rows_empty_area_switches_to_that_workspace() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var sparrowDesktop = harness.Desktops.Desktops.Single(d => d.Name == "Sparrow").Id;
+        Assert.Empty(harness.Desktops.Switched); // precondition: nothing switched yet
+
+        // Raised on the row CONTAINER, which is what a release on blank row area reaches:
+        // the icon and label Buttons mark the event handled when they raise Click, so a
+        // release on either never bubbles this far.
+        RowFor(bar.Rows, "Sparrow").RaiseEvent(MouseUp());
+
+        Assert.Equal([sparrowDesktop], harness.Desktops.Switched);
+    });
+
+    // The 📌 Pinned row has no destination -- pinned windows are on every workspace by
+    // definition -- and neither does the "Unplaced" catch-all. Those rows must stay inert, or
+    // the highlight stops meaning "click and you go there".
+    [Fact]
+    public void A_row_with_no_destination_ignores_a_click() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+
+        RowFor(bar.Rows, "📌").RaiseEvent(MouseUp());
+
+        Assert.Empty(harness.Desktops.Switched);
+    });
+
+    // Hover feedback is the LABEL brightening and nothing else: the row background already
+    // means "a dragged window will land here" (DropHighlight), so it cannot also mean hover.
+    //
+    // What this test does and does not cover, stated plainly: MouseEnter/MouseLeave are DIRECT
+    // routed events, so raising them proves the wiring and the opacity arithmetic without a
+    // rendered window. It cannot prove the hit-test REGIONS are the intended ones -- that
+    // blank row area really raises the container's MouseEnter rather than some child's. That
+    // half is verified by looking at the running bar.
+    [Fact]
+    public void Hovering_a_rows_empty_area_brightens_its_label_and_releases_it_on_leave() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var row = RowFor(bar.Rows, "Sparrow");
+        var label = TextBlocks(row).Single(t => t.Text == "Sparrow");
+        var resting = label.Opacity;
+
+        row.RaiseEvent(MouseEnter());
+        var hovered = label.Opacity;
+
+        row.RaiseEvent(MouseLeave());
+
+        Assert.True(hovered > resting, $"hover should brighten the label; was {resting}, hovered {hovered}");
+        // Rises to exactly the strength the CURRENT row is drawn at, and no further: the two
+        // values are shared through one const precisely so hover cannot drift past "current".
+        Assert.Equal(TextBlocks(RowFor(bar.Rows, "GEPHA")).Single(t => t.Text == "GEPHA").Opacity, hovered);
+        Assert.Equal(resting, label.Opacity); // restored, not left stuck bright
+        // Weight never moves: bold already means "this is the workspace you are on", and a
+        // hover that also went bold would impersonate it.
+        Assert.Equal(FontWeights.Normal, label.FontWeight);
+    });
+
+    // Clicking an icon jumps to a WINDOW, not to a workspace, so the icons punch holes in the
+    // row's hover area -- lighting the label there would advertise an action the click does
+    // not perform. Note the inversion this pins: entering an icon CLEARS a highlight the
+    // container's own MouseEnter has already set, because entering a child counts as entering
+    // the parent.
+    [Fact]
+    public void Hovering_an_icon_does_not_brighten_its_rows_label() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var row = RowFor(bar.Rows, "Sparrow");
+        var label = TextBlocks(row).Single(t => t.Text == "Sparrow");
+        var resting = label.Opacity;
+
+        row.RaiseEvent(MouseEnter());                              // into the row: bright
+        IconButtons(row).Single().RaiseEvent(MouseEnter());         // onto its icon: back to rest
+
+        Assert.Equal(resting, label.Opacity);
+    });
+
+    // Synthesised input events. RaiseEvent invokes the handlers the bar registered through
+    // `+= MouseLeftButtonUp` / `MouseEnter` / `MouseLeave` directly, with no rendered window
+    // and no real pointer -- which is the only way to exercise this on an off-screen bar.
+    static MouseButtonEventArgs MouseUp() =>
+        new(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonUpEvent };
+
+    static MouseEventArgs MouseEnter() => new(Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseEnterEvent };
+    static MouseEventArgs MouseLeave() => new(Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseLeaveEvent };
+
+    // The row container for a given label. GroupRow builds one Grid per group, added directly
+    // to the Rows panel, so the group's Grid is the one holding a TextBlock with that text.
+    static Grid RowFor(Panel rows, string label) =>
+        rows.Children.OfType<Grid>().Single(row => TextBlocks(row).Any(t => t.Text == label));
+
     // The bar tags every icon Button so its press-drag moves the WINDOW rather than the
     // bar; the literal matches FloatingBar's private IconTag const.
     static IReadOnlyList<Button> IconButtons(DependencyObject root)
@@ -262,12 +366,15 @@ public class FloatingBarRebuildTests
                 });
     }
 
+    static IReadOnlyList<string> Labels(DependencyObject root) =>
+        TextBlocks(root).Select(text => text.Text).ToList();
+
     // Every TextBlock in the logical subtree, flattened. The logical tree (not the visual
     // one) because these elements are constructed but never rendered, so Button templates
     // are not expanded -- a Button's Content is a logical child regardless.
-    static IReadOnlyList<string> Labels(DependencyObject root)
+    static IReadOnlyList<TextBlock> TextBlocks(DependencyObject root)
     {
-        var found = new List<string>();
+        var found = new List<TextBlock>();
         Collect(root);
         return found;
 
@@ -277,7 +384,7 @@ public class FloatingBarRebuildTests
                 .ToList()
                 .ForEach(child =>
                 {
-                    if (child is TextBlock text) found.Add(text.Text);
+                    if (child is TextBlock text) found.Add(text);
                     Collect(child);
                 });
     }
@@ -375,8 +482,18 @@ sealed class PulsingDesktops : IVirtualDesktopService
     }
 
     public Result Rename(Guid desktopId, string name) => Result.Success();
-    public Result Switch(Guid desktopId) => Result.Success();
     public Result Remove(Guid desktopId) => Result.Success();
+
+    // Recorded rather than merely succeeding: the row-click tests assert on WHICH desktop a
+    // click reached, and that an inert row reached none.
+    public List<Guid> Switched { get; } = [];
+
+    public Result Switch(Guid desktopId)
+    {
+        Switched.Add(desktopId);
+        CurrentId = desktopId;
+        return Result.Success();
+    }
 
     public Result MoveWindow(WindowHandle window, Guid desktopId)
     {
