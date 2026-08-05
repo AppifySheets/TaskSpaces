@@ -289,6 +289,11 @@ public partial class FloatingBar : Window
     {
         Rows.Children.Clear();
         ClearInfo();
+        // BEFORE the overview query, and outside its Tap, deliberately: the back button reads
+        // the MRU rather than the overview, so a transient desktop-enumeration failure (which
+        // leaves the rows showing whatever they last showed) must not also leave the button
+        // pointing at a workspace we have since left.
+        RefreshBackButton();
         manager.WindowsByWorkspace().Tap(overview =>
         {
             // Task 11 fix round 5 (Petre: "the rows are indistinguishable... i want to
@@ -600,6 +605,34 @@ public partial class FloatingBar : Window
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
+
+    // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
+    // once, without the kb." So this deliberately holds NO history of its own: it asks the same
+    // MRU the chord asks, through the same RecentWorkspaces.Back, and is therefore incapable of
+    // disagreeing with the keyboard.
+    //
+    // It also self-toggles without any extra work: the switch below touches the MRU, so the
+    // next refresh points this button back at the workspace we just left.
+    void OnBackClick(object sender, RoutedEventArgs e) =>
+        manager.ByRecentUse().Back.Tap(target => Report(manager.Switch(target.Id)));
+
+    // Called from RebuildCore on every pulse, which includes a desktop change -- so the button
+    // starts naming the right destination the moment you land somewhere.
+    //
+    // Dimmed-and-disabled rather than hidden when there is nowhere to go, following the ruling
+    // the icon context menu already follows for a greyed "Restore title": a surface whose shape
+    // shifts is harder to learn than one with a control that is visibly unavailable. The only
+    // way to reach that state is a single workspace you are already on.
+    void RefreshBackButton()
+    {
+        var back = manager.ByRecentUse().Back;
+        BackButton.IsEnabled = back.HasValue;
+        // The glyph cannot say WHICH workspace it means, and the info line's own text is
+        // overwritten whenever an icon is hovered, so the tooltip is the one stable place the
+        // destination can be named.
+        BackButton.ToolTip = back.HasValue ? $"Back to {back.Value.Name}" : "Nowhere to go back to";
+        BackButton.Opacity = back.HasValue ? 1.0 : 0.3;
+    }
 
     // Task 11 fix round 5 (Petre: "separated nicely, so i can tell which workspace i'm
     // going to"): tiny label to the LEFT of each row's icons, vertically centered so the

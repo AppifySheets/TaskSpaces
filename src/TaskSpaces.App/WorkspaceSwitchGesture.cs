@@ -35,7 +35,10 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     readonly WorkspaceSwitcher picker = new();
     readonly DispatcherTimer release = new() { Interval = ReleasePoll };
 
-    IReadOnlyList<Workspace> candidates = [];
+    // The whole record rather than just its Ordered list: Step below resolves the next index
+    // through RecentWorkspaces.IndexAfter, so that the chord and the floating bar's back
+    // button cannot disagree about where "one tap away" is.
+    RecentWorkspaces recent = new([], -1);
     int selected = -1;
     bool active;
     // The chord currently bound. Held here as well as in HotkeyService because BOTH halves
@@ -69,20 +72,17 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     public void Step(int direction)
     {
         if (!active) Begin(direction);
-        if (candidates.Count == 0) return;
-        // Wrapping in both directions, and written the long way because C#'s % keeps the
-        // sign of the left operand: -1 % 3 is -1, not 2.
-        selected = ((selected + direction) % candidates.Count + candidates.Count) % candidates.Count;
+        if (recent.Ordered.Count == 0) return;
+        selected = recent.IndexAfter(selected, direction);
         picker.Select(selected);
     }
 
     void Begin(int direction)
     {
-        var recent = manager.ByRecentUse();
-        candidates = recent.Ordered;
+        recent = manager.ByRecentUse();
         // Nothing (or nothing but where we already are) to switch between: no picker, no
         // timer, and Step's guard above turns the tap into a no-op.
-        if (candidates.Count < 2) return;
+        if (recent.Ordered.Count < 2) return;
 
         // CurrentIndex is -1 when the current desktop is not a workspace at all (one of the
         // unbound ones, e.g. Petre's "Main"). Walking forward from -1 lands on index 0, the
@@ -93,7 +93,7 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         active = true;
 
         picker.Present(
-            candidates.Select((workspace, index) =>
+            recent.Ordered.Select((workspace, index) =>
                 // Colour by DEFINED position, not by position in the recency list -- the same
                 // rule the floating bar's lane tints follow, so the two surfaces agree.
                 new SwitcherChoice(workspace.Name, WorkspacePalette.For(workspace, DefinedIndexOf(workspace)))).ToList(),
@@ -116,7 +116,7 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         // Fire-and-forget, like every other hotkey path in this app: a keypress has no UI to
         // report a failure through, and a message box raised by a chord would be worse than
         // a switch that quietly did not happen.
-        if (selected >= 0 && selected < candidates.Count) manager.Switch(candidates[selected].Id);
+        if (selected >= 0 && selected < recent.Ordered.Count) manager.Switch(recent.Ordered[selected].Id);
         selected = -1;
     }
 

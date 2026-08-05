@@ -52,8 +52,24 @@
                  point (see the comment above): it stops a hover from resizing, and therefore
                  repositioning, a SizeToContent window. Rows wider than this still grow the bar,
                  which is the "grow on demand" half. -->
-            <TextBlock x:Name="Info" Width="150" FontSize="11" Foreground="White"
-                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+            <!-- Petre: "on the floating window i want a go back to previous button... basically
+                 the same as ctrl+win+tab tap once, without the kb."
+                 Shares the info line's row rather than taking a row of its own: the bar's
+                 default home is the bottom-right corner, where extra HEIGHT grows towards the
+                 screen edge, while the 18px of width this costs is paid once.
+                 Declared here rather than built in RebuildCore because it is not part of the
+                 Rows panel that gets cleared; RebuildCore refreshes its state instead.
+                 Width is FIXED for the same reason Info's is (see above): a control that
+                 tracked a workspace name's length would resize, and therefore reposition, a
+                 SizeToContent window every time the recency order changed. The destination is
+                 named in the tooltip, which costs no layout. -->
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="BackButton" Content="↩" Width="18" FontSize="12"
+                        Foreground="White" Background="Transparent" BorderThickness="0"
+                        Padding="0" VerticalAlignment="Center" Click="OnBackClick"/>
+                <TextBlock x:Name="Info" Width="150" FontSize="11" Foreground="White"
+                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+            </StackPanel>
         </StackPanel>
     </Border>
 </Window>

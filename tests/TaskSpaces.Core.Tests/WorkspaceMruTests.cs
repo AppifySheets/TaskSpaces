@@ -140,4 +140,84 @@ public class WorkspaceMruTests
 
         Assert.Equal(-1, manager.ByRecentUse().CurrentIndex);
     }
+
+    // --- Back: the floating bar's back button ------------------------------------
+    //
+    // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
+    // once, without the kb." So Back is not a second history; it is one forward step through
+    // this same list, and these tests pin that it agrees with the chord in every case the
+    // chord has one.
+
+    static RecentWorkspaces Recent(IReadOnlyList<Workspace> ordered, int currentIndex) =>
+        new(ordered, currentIndex);
+
+    [Fact]
+    public void Back_is_the_workspace_visited_before_this_one()
+    {
+        var workspaces = new[] { Named("Work"), Named("Personal"), Named("YouTube") };
+        // Visited Personal, then Work: Ordered is [Work, Personal, YouTube] and we are on Work.
+        var mru = WorkspaceMru.Empty.Touch(workspaces[1].Id).Touch(workspaces[0].Id);
+        var recent = Recent(mru.Order(workspaces), 0);
+
+        Assert.Equal("Personal", recent.Back.Value.Name);
+    }
+
+    // The self-toggle, which is what makes the button usable without thinking: pressing it
+    // switches, switching touches the MRU, and the button then points back where you came from.
+    [Fact]
+    public void Back_twice_returns_to_where_you_started()
+    {
+        var workspaces = new[] { Named("Work"), Named("Personal"), Named("YouTube") };
+        var mru = WorkspaceMru.Empty.Touch(workspaces[1].Id).Touch(workspaces[0].Id);
+
+        var first = Recent(mru.Order(workspaces), 0).Back.Value;      // Work -> Personal
+        var afterSwitch = mru.Touch(first.Id);                        // what Switch() does
+        var second = Recent(afterSwitch.Order(workspaces), 0).Back.Value;
+
+        Assert.Equal("Personal", first.Name);
+        Assert.Equal("Work", second.Name);
+    }
+
+    // Not None here, which is the case most likely to be "fixed" wrongly later: standing on one
+    // of Petre's unbound desktops ("Main") reports CurrentIndex -1, and one step forward from
+    // there lands on the most recent workspace. That IS a real move, and it is what a forward
+    // tap of the chord already does.
+    [Fact]
+    public void Back_from_a_desktop_that_is_not_a_workspace_goes_to_the_most_recent_one()
+    {
+        var workspaces = new[] { Named("Work"), Named("Personal") };
+        var mru = WorkspaceMru.Empty.Touch(workspaces[1].Id);
+
+        var recent = Recent(mru.Order(workspaces), -1);
+
+        Assert.Equal("Personal", recent.Back.Value.Name);
+    }
+
+    [Fact]
+    public void Back_is_nothing_when_the_only_workspace_is_the_one_you_are_on()
+    {
+        var workspaces = new[] { Named("Work") };
+
+        Assert.False(Recent(workspaces, 0).Back.HasValue);
+    }
+
+    [Fact]
+    public void Back_is_nothing_when_there_are_no_workspaces()
+    {
+        Assert.False(Recent([], -1).Back.HasValue);
+    }
+
+    // The wrapping arithmetic the chord and the button now share. The negative-direction case
+    // is the one that motivated writing the modulo the long way: C#'s % keeps the sign of its
+    // left operand, so a naive (-1 % 3) is -1 and would index out of range.
+    [Fact]
+    public void IndexAfter_wraps_in_both_directions()
+    {
+        var recent = Recent([Named("A"), Named("B"), Named("C")], 0);
+
+        Assert.Equal(1, recent.IndexAfter(0, 1));
+        Assert.Equal(0, recent.IndexAfter(2, 1));   // forward off the end
+        Assert.Equal(2, recent.IndexAfter(0, -1));  // backward off the start
+        Assert.Equal(0, recent.IndexAfter(-1, 1));  // from "before the beginning"
+    }
 }

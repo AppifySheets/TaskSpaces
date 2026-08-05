@@ -44,4 +44,32 @@ public sealed record WorkspaceMru(IReadOnlyList<Guid> Recent)
 // Petre's unbound desktops, e.g. "Main") -- the picker reads that as "start before the
 // beginning", so the first forward tap lands on the most recent workspace rather than
 // skipping past it.
-public sealed record RecentWorkspaces(IReadOnlyList<Workspace> Ordered, int CurrentIndex);
+public sealed record RecentWorkspaces(IReadOnlyList<Workspace> Ordered, int CurrentIndex)
+{
+    // The index one tap in `direction` lands on, wrapping in both directions.
+    //
+    // Written the long way because C#'s % keeps the sign of the LEFT operand: -1 % 3 is -1,
+    // not 2. Lifted out of WorkspaceSwitchGesture so the chord and the bar's back button
+    // resolve "one tap away" through the same arithmetic -- two copies of this would drift,
+    // and the drift would show up as a button that disagrees with the keyboard.
+    public int IndexAfter(int from, int direction) =>
+        ((from + direction) % Ordered.Count + Ordered.Count) % Ordered.Count;
+
+    // Petre: "on the floating window i want a go back to previous button... basically the same
+    // as ctrl+win+tab tap once, without the kb."
+    //
+    // Where a single forward tap from the current workspace lands, which is the whole
+    // definition of the back button. No separate history is kept: the MRU is already updated
+    // by the time you have arrived somewhere (Switch touches it directly, and RememberVisit
+    // catches the switches JumpTo makes through the desktop service), so "where I came from"
+    // is simply the next entry.
+    //
+    // None in exactly the cases where there is nowhere to go -- no workspaces at all, or the
+    // step lands on where we already are (one workspace, and we are on it). Note that being on
+    // an UNBOUND desktop is not one of those cases: CurrentIndex is -1 there, so one step
+    // forward lands on the most recent workspace, which is a real move.
+    public Maybe<Workspace> Back =>
+        Ordered.Count == 0 || IndexAfter(CurrentIndex, 1) == CurrentIndex
+            ? Maybe<Workspace>.None
+            : Ordered[IndexAfter(CurrentIndex, 1)];
+}

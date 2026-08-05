@@ -1,6 +1,7 @@
 ﻿using System.Reactive.Subjects;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using CSharpFunctionalExtensions;
@@ -315,6 +316,44 @@ public class FloatingBarRebuildTests
         Assert.Equal(resting, label.Opacity);
     });
 
+    // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
+    // once, without the kb."
+    //
+    // The harness starts on GEPHA with Sparrow never visited this session, so Ordered is
+    // [GEPHA, Sparrow] with CurrentIndex 0 and one step forward is Sparrow.
+    [Fact]
+    public void The_back_button_switches_to_the_workspace_one_tap_away() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var back = (Button)bar.Bar.FindName("BackButton")!;
+        var sparrowDesktop = harness.Desktops.Desktops.Single(d => d.Name == "Sparrow").Id;
+
+        // Names the destination, because the glyph cannot and the info line's text is
+        // overwritten on icon hover.
+        Assert.True(back.IsEnabled);
+        Assert.Equal("Back to Sparrow", back.ToolTip);
+
+        back.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+        Assert.Equal([sparrowDesktop], harness.Desktops.Switched);
+    });
+
+    // Dimmed-and-disabled rather than absent, following the ruling the icon context menu
+    // already follows for a greyed "Restore title": a surface whose shape shifts is harder to
+    // learn than one with a visibly unavailable control.
+    [Fact]
+    public void The_back_button_is_disabled_when_there_is_nowhere_to_go() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build(singleWorkspace: true);
+        using var bar = harness.ShowBar();
+        var back = (Button)bar.Bar.FindName("BackButton")!;
+
+        Assert.False(back.IsEnabled);
+        Assert.Equal("Nowhere to go back to", back.ToolTip);
+        Assert.True(back.Opacity < 1.0);
+    });
+
     // Synthesised input events. RaiseEvent invokes the handlers the bar registered through
     // `+= MouseLeftButtonUp` / `MouseEnter` / `MouseLeave` directly, with no rendered window
     // and no real pointer -- which is the only way to exercise this on an off-screen bar.
@@ -400,7 +439,10 @@ sealed class Harness
     public required WindowInfo First { get; init; }
     public required WindowInfo Second { get; init; }
 
-    public static Harness Build(bool withUnresolvableWindow = false)
+    // singleWorkspace: the only state in which the bar's back button has nowhere to go -- one
+    // workspace, and you are standing on it. Sparrow and its window are simply left out rather
+    // than a second fixture being written, so the two paths share every other detail.
+    public static Harness Build(bool withUnresolvableWindow = false, bool singleWorkspace = false)
     {
 
         // NO Application is created here, deliberately. An Application belongs to the thread
@@ -418,7 +460,7 @@ sealed class Harness
 
         var desktops = new PulsingDesktops { CurrentId = gephaDesktop };
         desktops.Desktops.Add(new DesktopInfo(gephaDesktop, "GEPHA"));
-        desktops.Desktops.Add(new DesktopInfo(sparrowDesktop, "Sparrow"));
+        if (!singleWorkspace) desktops.Desktops.Add(new DesktopInfo(sparrowDesktop, "Sparrow"));
 
         var rdm = new WindowInfo(new WindowHandle(101), 11, "rdm", @"C:\rdm.exe", "Remote Desktop Manager", null);
         var beeper = new WindowInfo(new WindowHandle(202), 22, "beeper", @"C:\beeper.exe", "Beeper", null);
@@ -426,14 +468,18 @@ sealed class Harness
         desktops.Placements[beeper.Handle] = sparrowDesktop;
 
         var monitor = new StubMonitor();
-        monitor.Initial.AddRange([rdm, beeper]);
+        monitor.Initial.Add(rdm);
+        if (!singleWorkspace) monitor.Initial.Add(beeper);
 
         if (withUnresolvableWindow)
             // Deliberately absent from Placements, so DesktopOf fails for it exactly as
             // VirtualDesktop.FromHwnd does for "Windows Input Experience" on Petre's box.
             monitor.Initial.Add(new WindowInfo(new WindowHandle(303), 33, "textinputhost", @"C:\tih.exe", "Windows Input Experience", null));
 
-        var store = new StubStore { Stored = AppState.Empty with { Workspaces = [gepha, sparrow] } };
+        var store = new StubStore
+        {
+            Stored = AppState.Empty with { Workspaces = singleWorkspace ? [gepha] : [gepha, sparrow] },
+        };
         var manager = new WorkspaceManager(desktops, monitor, new StubTitles(), store);
         Assert.True(manager.Start().IsSuccess);
 
