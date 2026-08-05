@@ -195,9 +195,10 @@ public partial class FloatingBar : Window
         {
             moving = false;
         }
-        // A drag is the user choosing a new right edge, so re-anchor to where they put it --
-        // otherwise the next window to open would yank the bar back to the old anchor.
-        anchorRight = Left + ActualWidth;
+        // A drag is the user choosing a new position, so snap it to any edge it came close to
+        // and re-derive the growth anchor from where it actually landed -- otherwise the next
+        // window to open would yank the bar back to the anchor it had before the drag.
+        SnapToEdges();
         Save(); // only draggable while shown
     }
 
@@ -799,8 +800,27 @@ public partial class FloatingBar : Window
         var rawTop = stored?.Top ?? work.Bottom - ActualHeight;
 
         (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
-        anchorRight = Left + ActualWidth;
+        AnchorFromPosition(work);
     }
+
+    // Petre: "can you snap to edges?" Called when a drag ends. EdgeSnap holds the maths (pure,
+    // in Core, tested); this supplies the work area and applies the result.
+    void SnapToEdges()
+    {
+        if (WorkArea(Left, Top) is not { } work) return;
+        (Left, Top) = EdgeSnap.Snap(Left, Top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
+        AnchorFromPosition(work);
+    }
+
+    // Which edge the bar grows from, derived from where it is rather than remembered.
+    //
+    // A bar snapped to the LEFT edge has to grow rightwards, or it walks straight off the
+    // screen -- precisely the bug that made the right edge the anchor for every other case.
+    // Deriving the choice means the two cannot disagree and nothing extra is persisted: a null
+    // anchor is "pin the left edge", which is WPF's own behaviour, so OnSizeChanged does
+    // nothing at all.
+    void AnchorFromPosition((double Left, double Top, double Right, double Bottom) work) =>
+        anchorRight = EdgeSnap.GrowsLeftwards(Left, work.Left) ? Left + ActualWidth : null;
 
     // The screen x the bar's right edge is pinned to. Null until the bar has been positioned,
     // which is what stops the initial layout passes -- several of them, as rows are built and
