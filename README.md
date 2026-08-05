@@ -50,7 +50,7 @@ rebuild. Workspaces survive reboots.
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
-1. Download `TaskSpaces-1.1.0-win-x64.exe` from the
+1. Download `TaskSpaces-1.2.0-win-x64.exe` from the
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
 2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
