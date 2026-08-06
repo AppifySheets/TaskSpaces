@@ -50,7 +50,7 @@ rebuild. Workspaces survive reboots.
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
-1. Download `TaskSpaces-1.2.1-win-x64.exe` from the
+1. Download `TaskSpaces-1.3.0-win-x64.exe` from the
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
 2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
@@ -70,6 +70,10 @@ nothing outside your own user profile:
 |---|---|
 | Your workspaces, rules and window names | `%APPDATA%\TaskSpaces\state.json` |
 | "Start with Windows", when enabled | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+
+> **Making the bar bigger or smaller.** It draws at 90% by default. Set `"BarScale"` in
+> `state.json` to anything between `0.5` and `2.0` and restart TaskSpaces. There is no
+> setting in Manage for it yet.
 
 > **Why the file's location matters.** "Start with Windows" records the *path* of the
 > exe you ran it from. If you later move or delete that file, Windows will keep
@@ -103,11 +107,19 @@ single ~74 MB exe in `artifacts/publish`.
   just Manage and Exit.
 - **Floating bar.** An always-on-top, icon-only strip with one row per workspace, and
   the surface you will actually live in. Click an icon to jump to that window wherever
-  it lives, drag icons between rows to move windows between workspaces, click a row
-  label to switch to it, right-click an icon to rename it, hover to see what an icon
-  actually is. The current workspace's label is bold and the focused window's icon is
-  highlighted. Always on: it is the only surface that lists your windows, so there is
-  nothing to switch off.
+  it lives, drag icons between rows to move windows between workspaces, click **anywhere
+  on a row** to switch to that workspace, right-click an icon to rename it, hover to see
+  what an icon actually is. The current workspace's label is bold and the focused
+  window's icon is highlighted. Always on: it is the only surface that lists your
+  windows, so there is nothing to switch off.
+
+  **↩ goes back**, to the workspace you were on before this one — the same thing one tap
+  of `Win+Ctrl+Tab` does, for when your hand is already on the mouse. Press it twice and
+  you are where you started.
+
+  A workspace with more than five windows **wraps onto another line** rather than making
+  the whole bar wider, so one busy workspace cannot stretch every other lane into empty
+  space. Drop the bar wherever you like, including on top of a taskbar; it stays put.
 - **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
   patterns. Opened by left-clicking the tray icon.
 - **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
