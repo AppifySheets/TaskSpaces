@@ -51,8 +51,38 @@ public partial class FloatingBar : Window
         // opening/closing (manual script item 36) must update the bar without Petre
         // having to toggle it off and on.
         subscription = manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() => { if (IsVisible) Rebuild(); }));
-        Closed += (_, _) => subscription?.Dispose();
+
+        // Petre: "Same as before, edge icon shows up instead of [the] music icon, it never
+        // changes. when you restarted the app, it seems that it picked up the correct
+        // YouTube music icon."
+        //
+        // The reason it never changed, and the false premise two earlier fixes rested on:
+        // THE BAR HAS NO PERIODIC REBUILD. It rebuilds on window EVENTS only -- the 5s sweep
+        // calls Resync (which emits events just for drift) and ReapplyRenames (which pulses
+        // nothing at all). IconCache's own comment claimed rebuilds happen "at least every
+        // 5s"; they do not.
+        //
+        // A loading PWA therefore got exactly ONE probe -- the rebuild caused by its own
+        // Appeared event, when its icon is still blank -- and on a quiet machine nothing ever
+        // asked again, so the browser placeholder stayed for the life of the window.
+        //
+        // This is that missing clock, and it is deliberately self-stopping: it runs only while
+        // some window is still without an icon of its own, which is a few seconds after a PWA
+        // launches and never otherwise. Idle cost is one bool per tick, then it turns itself
+        // off. Driving it from the existing 1s topmost timer was the alternative and was
+        // rejected: that one runs forever and this concern has a natural end.
+        iconWatch.Tick += (_, _) =>
+        {
+            if (IconCache.HasPendingIcons && IsVisible) Rebuild();
+            else iconWatch.Stop();
+        };
+        Closed += (_, _) => { iconWatch.Stop(); subscription?.Dispose(); };
     }
+
+    // 1s, matching IconCache's own probe interval: ticking faster would just be throttled
+    // there and rebuild the bar for nothing.
+    readonly System.Windows.Threading.DispatcherTimer iconWatch =
+        new() { Interval = TimeSpan.FromSeconds(1) };
 
     // Called both at startup (App.OnStartup, when persisted state says Visible: true)
     // and from the tray toggle. Rebuilds unconditionally first: StateChanged may have
@@ -339,6 +369,11 @@ public partial class FloatingBar : Window
                 .ToList()
                 .ForEach(el => Rows.Children.Add(el));
         });
+
+        // Started HERE rather than when a window appears, because this is the only place that
+        // knows whether the icons just drawn are real or placeholders. Stops itself on the
+        // first tick where nothing is pending (see the ctor).
+        if (IconCache.HasPendingIcons && !iconWatch.IsEnabled) iconWatch.Start();
         // Overview query failure (e.g. a transient desktop-enumeration hiccup) just
         // leaves whatever the bar last showed -- there's no text area on this surface to
         // report an error into, and the next StateChanged pulse retries for free.
