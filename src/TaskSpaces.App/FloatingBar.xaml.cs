@@ -449,13 +449,40 @@ public partial class FloatingBar : Window
         container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+        // Petre: "if any one workspace grows too wide, then it's inefficient... there's an icon
+        // limit, and if that's exceeded, then it's the next row that needs to be added."
+        //
+        // So the icons column is now a VERTICAL stack of horizontal lines rather than one long
+        // horizontal strip. A WrapPanel would be the obvious control and is wrong here: it
+        // wraps against an available width, and this window is SizeToContent, so the width it
+        // would wrap against is the width it is trying to compute. Chunking by count sidesteps
+        // that circularity entirely and is deterministic.
+        //
+        // Centred vertically as a block, so a wrapped workspace keeps ONE label beside the
+        // whole lane rather than one per line.
         var icons = new StackPanel
         {
-            Orientation = Orientation.Horizontal,
+            Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        rows.ToList().ForEach(r => icons.Children.Add(IconButton(groupLabel, groupKey, r)));
+
+        // Collected as they are built, because the hover wiring below needs the BUTTONS and
+        // icons.Children now holds line panels. Reading icons.Children there instead would
+        // still compile, match nothing, and silently stop suppressing the label highlight over
+        // an icon -- a failure with no error and no crash.
+        var iconButtons = new List<UIElement>();
+        IconRowLimit.Lines(rows.ToList()).ToList().ForEach(line =>
+        {
+            var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            line.ToList().ForEach(r =>
+            {
+                var button = IconButton(groupLabel, groupKey, r);
+                iconButtons.Add(button);
+                linedUp.Children.Add(button);
+            });
+            icons.Children.Add(linedUp);
+        });
         Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
 
@@ -500,7 +527,9 @@ public partial class FloatingBar : Window
             // about the row it happens to sit in. Note the deliberate inversion -- entering an
             // icon CLEARS the highlight, because the container's own MouseEnter has already
             // set it (entering a child counts as entering the parent).
-            icons.Children.Cast<UIElement>().ToList().ForEach(icon =>
+            // iconButtons, NOT icons.Children: since rows wrap, icons.Children holds one panel
+            // per LINE, and hooking those would match no icon at all.
+            iconButtons.ForEach(icon =>
             {
                 icon.MouseEnter += (_, _) => setHover(false);
                 icon.MouseLeave += (_, _) => setHover(true);
