@@ -20,7 +20,13 @@
          nearly all icon Buttons with only 6px of Padding as bare background, leaving
          almost nothing to grab. See FloatingBar.xaml.cs for the press/move/threshold
          logic; this Border no longer has its own MouseLeftButtonDown handler. -->
-    <Border x:Name="Root" CornerRadius="8" Background="#99202020" Padding="6">
+    <!-- Padding 6 -> 4 (Petre: "the padding and the spacing between icons could be reduced a
+         little bit so that this whole thing is taking up less space"). Density is a separate
+         axis from BarScale: the scale shrinks everything in proportion, while this makes the
+         layout tighter at any scale. Not taken to zero, because the bar's bare background is
+         what you grab to drag it, and at 0 the only draggable surface left would be the gaps
+         between rows. -->
+    <Border x:Name="Root" CornerRadius="8" Background="#99202020" Padding="4">
         <!-- No "Hide floating bar" menu any more. Petre: "show floating bar doesn't make
              sense anymore, it's crucial for the app's design." Once the switcher panel and the
              Windows tab were gone this bar became the only surface that lists windows and

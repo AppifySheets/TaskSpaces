@@ -46,6 +46,21 @@ public partial class FloatingBar : Window
     {
         this.manager = manager;
         InitializeComponent();
+
+        // Petre: "my window has gotten quite too large... shrink by twenty percent."
+        //
+        // LayoutTransform, NOT RenderTransform, and that is the whole trick. A RenderTransform
+        // scales the pixels but leaves the element's measured size alone, so this window --
+        // which is SizeToContent -- would draw a smaller bar inside a full-size window, with a
+        // margin of dead translucent space around it. LayoutTransform participates in measure,
+        // so the window itself actually shrinks.
+        //
+        // Applied once here rather than on every rebuild: a live change would have to re-run
+        // edge snapping and the work-area clamp mid-flight, which is a lot of machinery for a
+        // value that gets set once. Editing it in state.json takes effect on the next start.
+        var scale = BarScaling.Clamp(manager.State.BarScale);
+        if (Math.Abs(scale - 1.0) > 0.001) Root.LayoutTransform = new ScaleTransform(scale, scale);
+
         Rebuild();
         // Live-refresh while visible, same pattern as WindowGroupsView.Bind: windows
         // opening/closing (manual script item 36) must update the bar without Petre
@@ -390,7 +405,9 @@ public partial class FloatingBar : Window
     static UIElement Separator() => new Border
     {
         Height = 1,
-        Margin = new Thickness(0, 3, 0, 3),
+        // 3 -> 2 per side, so the gap between rows goes 6px to 4px. The hairline still has to
+        // read as a divider at a glance, which is why this is tightened rather than removed.
+        Margin = new Thickness(0, 2, 0, 2),
         Background = Brushes.White,
         Opacity = 0.2,
     };
@@ -660,7 +677,9 @@ public partial class FloatingBar : Window
             Opacity = resting,
             FontWeight = isCurrent ? FontWeights.Bold : FontWeights.Normal,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 2, 0),
+            // 8 -> 6 on the left: the gutter still has to separate the label from the icons,
+            // but it was the widest single gap on the bar.
+            Margin = new Thickness(6, 0, 2, 0),
         };
 
         if (switchTo is null)
@@ -707,8 +726,14 @@ public partial class FloatingBar : Window
     {
         var button = new Button
         {
-            Padding = new Thickness(2),
-            Margin = new Thickness(2),
+            // Both 2 -> 1. Margins do NOT collapse in a StackPanel, so the margin is paid
+            // twice between neighbours: this takes the gap between adjacent icons from 4px to
+            // 2px and each icon's cell from 28px to 22px, which is where most of the width
+            // saving comes from. Not zero: the padding is the icon's own breathing room and
+            // the active-window outline is drawn in it, so at 0 the highlight would touch the
+            // artwork.
+            Padding = new Thickness(1),
+            Margin = new Thickness(1),
             // Petre: "active window should be highlighted in the floating window". On an
             // icon-only surface with three identical VS Code glyphs, "which one am I in" is
             // otherwise unanswerable. BorderThickness stays 1 for EVERY icon with a

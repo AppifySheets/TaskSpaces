@@ -24,6 +24,12 @@ public sealed record AppState(
     // default bottom-right position (spec: "older files load with it hidden/default").
     public FloatingBarState? FloatingBar { get; init; }
 
+    // Petre: "shrink by twenty percent", and he wanted it adjustable rather than baked in.
+    // A uniform scale applied to the whole bar; read through BarScaling.Clamp, which supplies
+    // the default and tolerates whatever a hand-edited file contains. Null means "never
+    // configured" -- same init-property/no-migration pattern as FloatingBar above.
+    public double? BarScale { get; init; }
+
     // The two placements the Inventory above cannot express (Petre: "last placement IS the
     // rule"). Inventory already records identity -> workspace on every Place(), but a
     // PINNED window belongs to no single workspace and a DETACHED one belongs to none at
