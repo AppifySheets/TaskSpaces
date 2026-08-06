@@ -918,7 +918,7 @@ public partial class FloatingBar : Window
     void PositionFromState()
     {
         var stored = manager.State.FloatingBar;
-        if (WorkArea(stored?.Left ?? 0, stored?.Top ?? 0) is not { } work)
+        if (MonitorBounds(stored?.Left ?? 0, stored?.Top ?? 0) is not { } work)
         {
             // Best-effort fallback if the API ever fails -- better than crashing the show.
             Left = stored?.Left ?? 0;
@@ -961,7 +961,7 @@ public partial class FloatingBar : Window
     // in Core, tested); this supplies the work area and applies the result.
     void SnapToEdges()
     {
-        if (WorkArea(Left, Top) is not { } work) return;
+        if (MonitorBounds(Left, Top) is not { } work) return;
         (Left, Top) = EdgeSnap.Snap(Left, Top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
         AnchorFromPosition(work);
     }
@@ -990,7 +990,7 @@ public partial class FloatingBar : Window
     void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!e.WidthChanged || anchorRight is not { } anchor || moving) return;
-        if (WorkArea(Left, Top) is not { } work) return;
+        if (MonitorBounds(Left, Top) is not { } work) return;
         // Clamped like every other placement here: a bar grown wider than the work area cannot
         // keep its right edge AND stay on screen, and staying on screen wins.
         (Left, Top) = WorkAreaClamp.Clamp(anchor - ActualWidth, Top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
@@ -1004,7 +1004,7 @@ public partial class FloatingBar : Window
     // window-scoped DPI query can still report a stale scale immediately after Show(), before
     // its WM_DPICHANGED round trip has landed, which is how a monitor's raw physical rcWork
     // once ended up written into DIP-valued Left/Top unconverted.
-    (double Left, double Top, double Right, double Bottom)? WorkArea(double probeX, double probeY)
+    (double Left, double Top, double Right, double Bottom)? MonitorBounds(double probeX, double probeY)
     {
         var probe = new NativeMethods.POINT { X = (int)probeX, Y = (int)probeY };
         var monitor = NativeMethods.MonitorFromPoint(probe, NativeMethods.MONITOR_DEFAULTTONEAREST);
@@ -1014,7 +1014,31 @@ public partial class FloatingBar : Window
         NativeMethods.GetDpiForMonitor(monitor, NativeMethods.MDT_EFFECTIVE_DPI, out var dpiX, out var dpiY);
         var scaleX = dpiX / 96.0;
         var scaleY = dpiY / 96.0;
-        return (info.rcWork.Left / scaleX, info.rcWork.Top / scaleY, info.rcWork.Right / scaleX, info.rcWork.Bottom / scaleY);
+
+        // rcMonitor, NOT rcWork, and that one word is the whole of this fix.
+        //
+        // Petre: "When I place it over a taskbar, because taskbar is mostly empty space, I have
+        // vertical taskbars in the middle of the screen, it keeps being moved... it keeps being
+        // moved right next to the taskbar because taskbar kind of wants to reclaim the space,
+        // it seems. So I just want it to be positioned in such a way where I place it."
+        //
+        // The taskbar was reclaiming nothing; we were evicting ourselves. rcWork is the desktop
+        // MINUS the taskbar, and both callers of this force the bar inside it -- SnapToEdges on
+        // every drop and PositionFromState on every show. Drop the bar onto a taskbar and the
+        // nearest legal point is, precisely, flush beside that taskbar. The behaviour looked
+        // like an outside force because it was applied on a later event than the drop.
+        //
+        // rcMonitor is the physical screen, so the taskbar strip is placeable and the bar stays
+        // where it was put. The clamp still does its real job -- keeping the window on a
+        // monitor, which is what it was written for (a stale DPI scale once parked it at
+        // Left=2408 on a ~2048-DIP-wide screen).
+        //
+        // Safe here specifically because this window re-asserts HWND_TOPMOST on foreground
+        // change and on a 1s timer: sharing the taskbar's band is a solved problem for it, and
+        // sitting over one is no different from sitting over the Start menu, which it already
+        // does. Edge snapping now snaps to the screen's own edges, which is arguably what "snap
+        // to edges" should always have meant.
+        return (info.rcMonitor.Left / scaleX, info.rcMonitor.Top / scaleY, info.rcMonitor.Right / scaleX, info.rcMonitor.Bottom / scaleY);
     }
 
     // One place that writes the position, so Right can never be persisted out of step with
