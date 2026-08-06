@@ -12,9 +12,12 @@ namespace TaskSpaces.Core.Domain;
 // Pure and in Core so the clamp is unit-testable without constructing a window.
 public static class BarScaling
 {
-    // 80%: the size Petre asked for. Also the value a brand-new install gets, since there is
-    // no reason for a fresh bar to start bigger than the one he settled on.
-    public const double Default = 0.8;
+    // 90%. He asked for "shrink by twenty percent" and 0.8 was the first attempt, but seeing it
+    // he said "It seems too tiny. Maybe a little larger will be better" -- because the density
+    // change shipped alongside it compounds: this is 0.9 of an already-tighter layout, not of
+    // the old one. Recorded because the arithmetic is counter-intuitive, and the next person to
+    // "restore" 0.8 from the original request would be undoing a decision made by looking at it.
+    public const double Default = 0.9;
 
     // Deliberately wide, because this is a preference and not a safety rail. The bounds exist
     // only to stop a hand-edited state.json producing an unusable window: 0 or a negative
