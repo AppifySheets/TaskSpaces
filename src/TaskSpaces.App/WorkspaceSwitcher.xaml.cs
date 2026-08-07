@@ -23,9 +23,13 @@ public partial class WorkspaceSwitcher : Window
 
     public WorkspaceSwitcher() => InitializeComponent();
 
-    // Draw the list and show it centred on whichever monitor the cursor is on. The chord is
-    // passed in rather than assumed so the hint line names whatever is currently bound.
-    public void Present(IReadOnlyList<SwitcherChoice> choices, int selected, Chord chord)
+    // Draw the list and show it centred on the GIVEN monitor. The chord is passed in rather than
+    // assumed so the hint line names whatever is currently bound.
+    //
+    // The monitor is a parameter rather than "wherever the cursor is" because there is now one of
+    // these per screen (Petre: "show the ctrlwintab window on all screens"), and each has to be
+    // told which one it belongs to. SwitcherPickers owns that decision.
+    public void Present(IReadOnlyList<SwitcherChoice> choices, int selected, Chord chord, nint monitor)
     {
         Hint.Text = $"hold {chord.ModifiersText} · tap {chord.KeyText} to walk · release to switch";
         rows.Clear();
@@ -39,7 +43,7 @@ public partial class WorkspaceSwitcher : Window
         Select(selected);
 
         Show();
-        CenterOnCursorMonitor(); // after Show(), so ActualWidth/Height are real (same order as FloatingBar.ShowBar)
+        CenterOn(monitor); // after Show(), so ActualWidth/Height are real (same order as FloatingBar.ShowBar)
     }
 
     // Repaint only. Called on every tap of the key, so it must not relayout: a picker that
@@ -111,15 +115,20 @@ public partial class WorkspaceSwitcher : Window
         return brush;
     }
 
-    // Centred on the monitor holding the CURSOR, not the primary monitor: Petre works across
-    // more than one screen, and a picker that always appeared on the primary would be
-    // somewhere he is not looking. Queries the monitor's own DPI rather than the window's,
-    // for the reason FloatingBar.PositionFromState documents at length -- a window-scoped DPI
-    // query can still report a stale scale immediately after Show().
-    void CenterOnCursorMonitor()
+    // Centred on one specific monitor.
+    //
+    // This used to find the monitor itself, from the cursor: a single picker had to guess which
+    // screen Petre was looking at, and the cursor was the best guess available. There is now one
+    // picker per screen, so there is nothing left to guess -- which also retires the case the
+    // guess got wrong, where the cursor sat on one monitor while Petre's eyes were on another.
+    //
+    // Queries the MONITOR's own DPI rather than the window's, for the reason
+    // FloatingBar.PositionFromState documents at length: a window-scoped DPI query can still
+    // report a stale scale immediately after Show(). That matters more here than it did before,
+    // because these windows are deliberately spread across screens that may well differ in
+    // scaling.
+    void CenterOn(nint monitor)
     {
-        if (!NativeMethods.GetCursorPos(out var cursor)) return;
-        var monitor = NativeMethods.MonitorFromPoint(cursor, NativeMethods.MONITOR_DEFAULTTONEAREST);
         var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
         if (!NativeMethods.GetMonitorInfo(monitor, ref info)) return;
 
