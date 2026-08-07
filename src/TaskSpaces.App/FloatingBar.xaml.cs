@@ -830,17 +830,19 @@ public partial class FloatingBar : Window
     //
     // The bar-wide hint at the bottom names ctrl+drag, but it is only on screen when nothing is
     // hovered -- which is never the moment you are reaching for the bar to move it. Hovering a
-    // row's bare area is exactly that moment: you are on the surface, you want to know what it
-    // does. So the readout answers both questions at once, the click that surface performs and
-    // the gesture that moves the bar instead.
+    // row's bare area is exactly that moment: you are on the surface, with your hand on it.
     //
-    // Only for rows that can be switched to. Pinned and Unplaced have no destination, and
-    // offering one would be a lie -- they never reach here (see the caller's null guard).
+    // The gesture ONLY. Petre: "don't say click to switch, only say ctrl+drag to move." Naming
+    // the click as well was padding: the row is already brightening its label under the cursor,
+    // and a hint is worth reading only for the thing that is not obvious.
+    //
+    // Only for rows that can be switched to -- Pinned and Unplaced never reach here (see the
+    // caller's null guard).
     void ShowRowActions(string label)
     {
         Info.Inlines.Clear();
         Info.Inlines.Add(new Run($"{label}  ") { Foreground = Brushes.White });
-        Info.Inlines.Add(new Run("click to switch · ctrl+drag to move") { Foreground = DimForeground });
+        Info.Inlines.Add(new Run("ctrl+drag to move") { Foreground = DimForeground });
     }
 
     // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
