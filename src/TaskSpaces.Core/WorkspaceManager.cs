@@ -516,9 +516,38 @@ public sealed class WorkspaceManager(
     // Pinned windows are skipped: a pinned window follows you to every desktop, so it is
     // already wherever you land and "restoring" it would say nothing, while its marker would
     // claim a landing spot that was never in question.
+    // Petre: "i had teams active there, when i leave the workspace teams isn't mentioned as
+    // selected in that one anymore", and "activates a second window". Traced in the running app
+    // rather than reasoned about: Teams was stamped onto a workspace it does not live on, and
+    // that entry then vanished on the next arrival.
+    //
+    // The window must actually BE on the desktop we are leaving, and that check is the fix.
+    //
+    // Why it can fail to be: activeWindow deliberately never clears on None (MarkActive's first
+    // load-bearing property -- Foreground() returns None for the taskbar, the Start menu and our
+    // own bar, and blinking the highlight off every time Petre touches one of those would be
+    // worse than holding a slightly stale value). So landing somewhere that gives nothing focus
+    // -- an empty workspace, a restore that found nothing, a foreground window we do not track --
+    // leaves activeWindow still naming the PREVIOUS desktop's window. Without this check, leaving
+    // stamped that foreign window over the departing desktop's perfectly good memory.
+    //
+    // The corruption erased itself, which is why it read as forgetting rather than as a wrong
+    // answer: Remembered() validates with DesktopOf on the way back in, sees the window does not
+    // belong, and drops the entry -- so the marker disappears, and the restore falls through to
+    // FrontmostOnMainMonitor and focuses something Petre never chose ("activates a second
+    // window"). One cause, both symptoms.
+    //
+    // Not stamping is the right answer rather than a cautious one: if the active window is not on
+    // the desktop we are leaving, we have learned NOTHING about that desktop, so what we already
+    // knew about it is still the best answer available. The read path has always validated this
+    // way; now the write path does too.
+    //
+    // Costs one DesktopOf COM call per switch, not per window -- the same call Remembered()
+    // already makes on the other side of the same move.
     void RecordLastActive(Guid leaving) =>
         activeWindow
             .Where(w => !desktops.IsPinned(w).GetValueOrDefault(false))
+            .Where(w => desktops.DesktopOf(w).GetValueOrDefault() == leaving)
             .Tap(w => lastActiveByDesktop[leaving] = w);
 
     // ...and put focus back on arrival.

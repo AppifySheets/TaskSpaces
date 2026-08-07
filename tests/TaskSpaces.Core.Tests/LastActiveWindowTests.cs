@@ -78,6 +78,52 @@ public class LastActiveWindowTests
         Assert.Equal(browser.Handle, Assert.Single(activator.Activated));
     }
 
+    // Petre: "i had teams active there, when i leave the workspace teams isn't mentioned as
+    // selected in that one anymore", and "activates a second window".
+    //
+    // MEASURED from a trace of the real app, not reasoned about. Teams was stamped onto a
+    // workspace it does not live on, and the entry then vanished on the next arrival.
+    //
+    // The mechanism: activeWindow deliberately NEVER clears on None (Foreground() reports None
+    // for the taskbar, the Start menu and our own bar, and blinking the highlight off every time
+    // Petre touches one of those would be worse). So landing somewhere that gives nothing focus
+    // -- an empty workspace, a restore that found nothing, a foreground window we do not track --
+    // leaves activeWindow holding the PREVIOUS desktop's window. Leaving then stamped that
+    // foreign window over the departing desktop's perfectly good memory.
+    //
+    // The corruption is self-erasing, which is why it looked like forgetting rather than like a
+    // wrong answer: Remembered() validates with DesktopOf on the way back in, sees the window
+    // does not belong, and drops the entry. The marker disappears. And with the entry gone the
+    // restore falls through to FrontmostOnMainMonitor -- "activates a second window".
+    //
+    // So the write path now validates exactly as the read path already did. When the active
+    // window is not on the desktop being left, we have learned NOTHING about that desktop, and
+    // the right move is to leave what we already knew alone.
+    // The damage is an OVERWRITE, which is what makes it look like forgetting: the bogus entry
+    // names a window on another desktop, so it can never light up a row here -- it just destroys
+    // the good answer that was there, and then erases itself on the next arrival.
+    [Fact]
+    public void Leaving_a_desktop_does_not_overwrite_its_memory_with_a_window_that_lives_elsewhere()
+    {
+        var manager = Started();
+        // Work correctly remembers Browser: focus it, then leave.
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, browser));
+        SwitchTo(personal);
+        SwitchTo(work);
+
+        // Now the stale case, exactly as traced in the running app: activeWindow names Mail,
+        // which lives on PERSONAL, while we are standing on Work. In the app this is simply what
+        // is left over after landing somewhere that gave nothing focus. Leaving Work must not
+        // claim Mail for Work.
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, mail));
+        SwitchTo(personal);
+
+        // Work still names Browser. Before the fix its memory was replaced by Mail -- a window
+        // with no row on Work, so NOTHING was marked -- and the entry was then dropped by the
+        // DesktopOf check on the next arrival.
+        Assert.Equal(browser.Handle, RowsOn(manager, work).Single(r => r.WillActivate).Window.Handle);
+    }
+
     // The stamp happens on the way OUT, so a desktop never visited this session has nothing
     // remembered. With no screen information to fall back on either, there is nothing to do.
     [Fact]
