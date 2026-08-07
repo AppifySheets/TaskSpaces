@@ -107,6 +107,17 @@ public static class NativeMethods
     public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
 
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(nint hwnd);
+
+    // Windows only grants SetForegroundWindow to a process that already has a claim on the
+    // foreground -- it received the last input event, owns the current foreground window, and so
+    // on. Attaching our input queue to the CURRENT foreground thread borrows that claim for the
+    // length of one call, which is the documented way to hand focus on deliberately rather than
+    // have the request silently degrade to a flashing taskbar button.
+    //
+    // See WindowActivator, which is the only caller and explains why the workspace switcher
+    // needs this at all.
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attachTo, uint attachFrom, bool attach);
     [DllImport("user32.dll")] public static extern bool IsIconic(nint hwnd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(nint hwnd, int cmdShow);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
