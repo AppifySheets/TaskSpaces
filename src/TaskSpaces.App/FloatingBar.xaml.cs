@@ -1189,14 +1189,25 @@ public partial class FloatingBar : Window
     // same-app bands under the icons, which are already colour. Marks you can count need
     // neither: two strokes means monitor two, and nothing has to be learned.
     //
-    // It also absorbs the divider's old job. Every group now opens with its own mark, so the
+    // It also absorbs the divider's old job. Every group that has a mark opens with it, so the
     // boundary between two groups is visible without anything being drawn between them.
+    //
+    // ZERO-BASED, which is Petre's refinement: "no leading hairline if it's on the first one,
+    // leading hairline if it's on the second." Monitor 1 is silent and monitor 2 gets one
+    // stroke, so on two displays the ABSENCE of a mark carries the first monitor -- complete
+    // information for half the ink, on much the commoner row. It still generalises: monitor 3
+    // would take two strokes.
+    //
+    // The cost, accepted rather than solved: a window whose monitor could not be resolved also
+    // draws nothing, so at the end of a row it is indistinguishable from monitor 1. That needs
+    // MonitorFromWindow to have failed for a live window, which is rare enough not to buy a
+    // permanent mark on every primary-monitor group.
     static UIElement MonitorMarker(int monitor)
     {
         var tally = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        // Capped so a machine with many displays cannot widen every row without limit; past
-        // three, the exact count matters less than "not one of the first two".
-        Enumerable.Range(0, Math.Min(monitor, 3)).ToList().ForEach(_ => tally.Children.Add(new Border
+        // Capped so a machine with many displays cannot widen every row without limit; past the
+        // third, the exact count matters less than "not one of the first two".
+        Enumerable.Range(0, Math.Min(monitor - 1, 3)).ToList().ForEach(_ => tally.Children.Add(new Border
         {
             Width = 1,
             Height = 14,
