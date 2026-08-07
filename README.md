@@ -51,7 +51,7 @@ nothing to rebuild. Workspaces survive reboots.
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
-1. Download `TaskSpaces-1.4.0-win-x64.exe` from the
+1. Download `TaskSpaces-1.4.1-win-x64.exe` from the
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
 2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
@@ -130,7 +130,9 @@ single ~74 MB exe in `artifacts/publish`.
 
   A workspace with more than five windows **wraps onto another line** rather than making
   the whole bar wider, so one busy workspace cannot stretch every other lane into empty
-  space. Drop the bar wherever you like, including on top of a taskbar; it stays put.
+  space. **`Ctrl`+drag moves the bar** — from anywhere on it, rows and icons included, so a
+  plain press is only ever the click of whatever is under it. Drop it wherever you like,
+  including on top of a taskbar; it stays put.
 - **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
   patterns. Opened by left-clicking the tray icon.
 - **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
