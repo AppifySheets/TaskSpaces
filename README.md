@@ -13,18 +13,24 @@
 </p>
 
 <p align="center">
-  <!-- No width attribute, deliberately. An earlier capture was 252px wide and this used to
-       render it at 290, so the browser scaled it up 15% and softened every edge -- Petre:
+  <!-- NEVER PUT A BLANK LINE INSIDE THIS BLOCK, comments included. `<p ...>` opens a CommonMark
+       HTML block whose END CONDITION IS A BLANK LINE, so one blank line here closes the <p>
+       early, and GitHub then discards the rest of the FILE: this README once rendered as its
+       header and nothing else because of exactly that, and the image it was documenting
+       vanished along with every section below it. Keep comments in one unbroken run of lines.
+       .
+       No width attribute, deliberately. An earlier capture was 252px wide and this used to
+       render it at 290, so the browser scaled it up 15% and softened every edge. Petre:
        "actual image is much nicer... don't scale it up". Left intrinsic, it draws pixel for
        pixel. Any future recapture stays sharp for the same reason, whatever size the bar
        happens to be.
-
+       .
        The PNG's corners are ALPHA-TRANSPARENT, not black. The bar is a translucent window with
        8px rounded corners, so a plain screen capture bakes in whatever desktop happened to sit
-       behind those corners -- which reads as four dark notches against GitHub's page, and would
+       behind those corners, which reads as four dark notches against GitHub's page and would
        read differently again in light mode. Masked to a rounded rectangle after capture, the
-       page shows through instead. Recaptures must do the same (the radius is 12px at this
-       machine's 150% scaling -- it is the XAML's 8px, in physical pixels). -->
+       page shows through instead. Recaptures must do the same. The radius is 12px at this
+       machine's 150% scaling, which is the XAML's 8px in physical pixels. -->
   <img src="docs/images/floating-bar-1.6.0.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. The current workspace's whole row is boxed in white. Icons are grouped by monitor behind hairline markers, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom. A pinned row sits at the top and a hint line at the bottom." />
 </p>
 
