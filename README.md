@@ -45,6 +45,13 @@ Group your running apps into workspaces — one per project, so **Work**, **Pers
 most-recently-used order, release to land. One tap takes you back to wherever you just were.
 Or click a row on the bar. The chord deliberately neighbours Windows' own `Win+Ctrl+←/→`.
 
+**They stay out of each other's way.** While you are in one workspace, its windows are the only
+ones on your taskbar and the only ones `Alt+Tab` walks through. Everything else is still running,
+still untouched — just not in front of you. Work does not bleed into Personal, a screen share of
+one shows nothing of the others, and a project you are not on today cannot clutter the one you
+are. That separation is Windows' own, not something this app fakes: the taskbar has always
+filtered per desktop, and TaskSpaces simply makes the desktops worth using.
+
 Switching does not merely filter the taskbar: you come back to a workspace with everything
 still open and still where you put it, because nothing was ever closed or minimised — and
 **focus lands back on the window you were last using there**, so you arrive typing rather than
