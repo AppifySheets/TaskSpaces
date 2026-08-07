@@ -41,16 +41,17 @@ most-recently-used order, release to land. One tap takes you back to wherever yo
 Or click a row on the bar. The chord deliberately neighbours Windows' own `Win+Ctrl+←/→`.
 
 Switching does not merely filter the taskbar: you come back to a workspace with everything
-still open and still where you put it, because nothing was ever closed or minimised. The
-expensive part of changing task is rebuilding what you had open, and here there is nothing to
-rebuild. Workspaces survive reboots.
+still open and still where you put it, because nothing was ever closed or minimised — and
+**focus lands back on the window you were last using there**, so you arrive typing rather than
+hunting. The expensive part of changing task is rebuilding what you had open, and here there is
+nothing to rebuild. Workspaces survive reboots.
 
 ## Install
 
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
-1. Download `TaskSpaces-1.3.0-win-x64.exe` from the
+1. Download `TaskSpaces-1.4.0-win-x64.exe` from the
    [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
 2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
@@ -107,15 +108,25 @@ single ~74 MB exe in `artifacts/publish`.
   just Manage and Exit.
 - **Floating bar.** An always-on-top, icon-only strip with one row per workspace, and
   the surface you will actually live in. Click an icon to jump to that window wherever
-  it lives, drag icons between rows to move windows between workspaces, click **anywhere
-  on a row** to switch to that workspace, right-click an icon to rename it, hover to see
-  what an icon actually is. The current workspace's label is bold and the focused
-  window's icon is highlighted. Always on: it is the only surface that lists your
-  windows, so there is nothing to switch off.
+  it lives, **click it again to minimise it** once you are in it, drag icons between rows
+  to move windows between workspaces, click **anywhere on a row** to switch to that
+  workspace, right-click an icon to rename it, hover to see what an icon actually is.
+  Every workspace label is bold, with the current one ringed. Always on: it is the only
+  surface that lists your windows, so there is nothing to switch off.
 
   **↩ goes back**, to the workspace you were on before this one — the same thing one tap
   of `Win+Ctrl+Tab` does, for when your hand is already on the mouse. Press it twice and
   you are where you started.
+
+  **What each icon tells you.** The focused window is outlined and filled. A fainter
+  outline on another workspace's row marks the window you will land on if you switch
+  there. Icons fade as they recede: full strength in front, dimmer when covered, dimmest
+  when minimised. An amber dot means that app is asking for you — someone messaged, or it
+  wants attention. Several windows of one app each get a coloured bar along the bottom, so
+  you can tell three browsers apart and watch one drop back as you use another.
+
+  **Monitors.** Icons are grouped by screen, front-most first within each. A group on
+  your second monitor opens with a hairline, a third with two; no mark means the first.
 
   A workspace with more than five windows **wraps onto another line** rather than making
   the whole bar wider, so one busy workspace cannot stretch every other lane into empty
@@ -126,6 +137,12 @@ single ~74 MB exe in `artifacts/publish`.
   workspaces in **most-recently-used** order; release to switch. Add `Shift` to walk
   backwards. One tap therefore returns you to wherever you just were, however your list
   is arranged — which is the whole reason Alt+Tab is worth using.
+
+  **You arrive in the window you left.** Landing on a workspace puts focus back on
+  whichever window had it last time you were there, so you can start typing instead of
+  hunting for it. The bar tells you where you will land before you go — see the fainter
+  outline described above. Somewhere you have not been yet this session gets the
+  front-most window on your main monitor, rather than whatever Windows happens to pick.
 
   `Win+Ctrl+Tab` was chosen by testing every `*+Tab` chord against Windows: it is the only
   one left unclaimed, and it neighbours `Win+Ctrl+←/→`, which Windows already uses for
