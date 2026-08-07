@@ -130,8 +130,16 @@ single ~74 MB exe in `artifacts/publish`.
   wants attention. Several windows of one app each get a coloured bar along the bottom, so
   you can tell three browsers apart and watch one drop back as you use another.
 
-  **Monitors.** Icons are grouped by screen, front-most first within each. A group on
-  your second monitor opens with a hairline, a third with two; no mark means the first.
+  **The order means something.** Within each row, icons sit in the order the windows are
+  stacked on screen — front-most first, the one you are looking at leftmost, whatever is
+  buried behind it last. That order is live: use a different window and its icon moves up.
+  Only the workspace you are on can be ordered this way, because Windows only reports the
+  stacking of windows you can actually see, so every other row keeps a stable order. This
+  is also why identical windows carry those coloured bars: without them you could not tell
+  which of three browsers had just moved.
+
+  **Monitors.** Icons are grouped by screen first, then stacked-order within each. A group
+  on your second monitor opens with a hairline, a third with two; no mark means the first.
 
   A workspace with more than five windows **wraps onto another line** rather than making
   the whole bar wider, so one busy workspace cannot stretch every other lane into empty
