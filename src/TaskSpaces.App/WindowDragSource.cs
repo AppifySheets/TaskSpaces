@@ -61,6 +61,11 @@ static class WindowDragSource
         button.PreviewMouseMove += (_, e) =>
         {
             if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
+            // Ctrl+drag belongs to the BAR, which moves itself and can be grabbed anywhere --
+            // including over an icon (see FloatingBar.OnPreviewMouseLeftButtonDown). Without
+            // this, an icon would answer that gesture too and both drags would start on the same
+            // press, fighting over the same mouse.
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
             var pos = e.GetPosition(null);
             if (Math.Abs(pos.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
                 && Math.Abs(pos.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;

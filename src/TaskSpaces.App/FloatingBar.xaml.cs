@@ -207,10 +207,22 @@ public partial class FloatingBar : Window
     //
     // The icon exclusion below predates all this and stays for a different reason: a press on an
     // icon drags the WINDOW between workspaces.
+    // Petre: "can't drag it", then "maybe make draggable with ctrl+drag".
+    //
+    // His answer is better than the two this went through. Excluding rows made clicks reliable
+    // and left the bar hard to grab; a bigger threshold made both merely probable. A MODIFIER
+    // settles it outright: the two gestures stop overlapping, so neither has to be guessed at
+    // from movement. Ctrl+drag moves the bar from anywhere at all -- rows, labels, icons -- and a
+    // press without Ctrl can only ever be what the thing under it does.
+    //
+    // Plain drag still works on the surfaces that are not click targets, so the discoverable way
+    // to move the bar (grab its edge, or the info line that says so) survives alongside the
+    // deliberate one.
     void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
-        dragStart = StartedOnIcon(e.OriginalSource) || StartedOnClickTarget(e.OriginalSource)
-            ? null
-            : PointToScreen(e.GetPosition(this));
+        dragStart = Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+                    || !(StartedOnIcon(e.OriginalSource) || StartedOnClickTarget(e.OriginalSource))
+            ? PointToScreen(e.GetPosition(this))
+            : null;
 
     // Anything whose press must reach a click handler intact: the rows (every one of them
     // switches workspace, by label or by bare area) and the back button, which sits on the info
@@ -802,10 +814,10 @@ public partial class FloatingBar : Window
     void ClearInfo()
     {
         Info.Inlines.Clear();
-        // "drag labels to move" was true until rows stopped being drag handles; the bar is now
-        // moved from this line and the frame around the rows. Named accurately rather than left
-        // to advertise a gesture that no longer exists.
-        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · drag here to move") { Foreground = DimForeground });
+        // Names the gesture that works from ANYWHERE, rather than the edge-and-info-line one that
+        // also works but has to be found. "drag labels to move" was true until rows stopped being
+        // drag handles, and a hint advertising a gesture that no longer exists is worse than none.
+        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · ctrl+drag to move") { Foreground = DimForeground });
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
