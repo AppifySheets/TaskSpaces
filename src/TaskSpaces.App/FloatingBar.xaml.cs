@@ -189,8 +189,38 @@ public partial class FloatingBar : Window
     // the bar, which is what made round 3's "drag from anywhere" fix work in the first
     // place. Ignoring the press here is what keeps OnPreviewMouseMove below from starting
     // a bar-move that would fight the icon's own DoDragDrop for the same mouse.
+    // Petre, twice: "clicking another workspace... doesn't take me there", then after the first
+    // round of fixes, "it's better than before, but it still doesn't work sometimes."
+    //
+    // The first round treated symptoms -- it raised the drag threshold so ordinary jitter stopped
+    // crossing it. That made the failure rarer without removing it, because the real problem is
+    // structural: a row was BOTH a click target and a handle for dragging the bar, so every press
+    // on one was a gesture the bar had to guess the meaning of. Any guess has a wrong case, and
+    // the wrong case here silently eats the click -- DragMove's native loop swallows the mouse-up,
+    // so no Click is ever raised.
+    //
+    // So the guessing is gone. A press inside the ROWS is only ever a click; the bar is dragged
+    // from the surfaces that are not click targets -- the frame, the separator band above the
+    // info line, and the info line itself, which spans most of the width. That is a real loss
+    // ("drag labels to move" was a documented gesture) and it is worth it: switching workspaces
+    // is the thing this bar exists for, and it now cannot fail.
+    //
+    // The icon exclusion below predates all this and stays for a different reason: a press on an
+    // icon drags the WINDOW between workspaces.
     void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
-        dragStart = StartedOnIcon(e.OriginalSource) ? null : PointToScreen(e.GetPosition(this));
+        dragStart = StartedOnIcon(e.OriginalSource) || StartedOnClickTarget(e.OriginalSource)
+            ? null
+            : PointToScreen(e.GetPosition(this));
+
+    // Anything whose press must reach a click handler intact: the rows (every one of them
+    // switches workspace, by label or by bare area) and the back button, which sits on the info
+    // line and would otherwise be the one click target on a drag surface.
+    bool StartedOnClickTarget(object source)
+    {
+        for (var node = source as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+            if (ReferenceEquals(node, Rows) || ReferenceEquals(node, BackButton)) return true;
+        return false;
+    }
 
     // Walks up from whatever element the press actually hit (an Image inside a Button
     // template, usually) looking for one of our tagged icon buttons. VisualTreeHelper
@@ -227,22 +257,13 @@ public partial class FloatingBar : Window
     {
         if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
         var current = PointToScreen(e.GetPosition(this));
-        // Petre: "i'm clicking another workspace and it doesn't take me there... i need to click
-        // twice."
-        //
-        // The system drag threshold is about four pixels, and a press that crosses it hands the
-        // mouse to DragMove(), whose native loop eats the mouse-up -- so the row label's Click
-        // never fires and the workspace never switches. Four pixels of drift is well within an
-        // ordinary click, which made the gesture ambiguous exactly where it hurt: the row label
-        // is a click target FIRST and a drag handle second.
-        //
-        // Tripled rather than removed, because dragging the bar by its labels is a real feature
-        // the info line advertises ("drag labels to move"). At around twelve pixels a deliberate
-        // drag still starts immediately and a click no longer misfires. Icons are unaffected --
-        // a press on one is ignored above, since it drags the WINDOW instead.
-        const double clickTolerance = 3;
-        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance * clickTolerance
-            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance * clickTolerance) return;
+        // Back to the plain system threshold. It was tripled while rows were still drag handles,
+        // to stop ordinary click jitter from being read as a drag; now that a press on a row
+        // never starts a drag at all (see OnPreviewMouseLeftButtonDown), the only presses
+        // reaching here are on surfaces that do nothing else -- so waiting twelve pixels before
+        // the bar moves would be sluggishness bought for nothing.
+        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
         dragStart = null;
 
         // If the press landed on an icon Button, ButtonBase.OnMouseLeftButtonDown
@@ -757,7 +778,10 @@ public partial class FloatingBar : Window
     void ClearInfo()
     {
         Info.Inlines.Clear();
-        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · drag labels to move") { Foreground = DimForeground });
+        // "drag labels to move" was true until rows stopped being drag handles; the bar is now
+        // moved from this line and the frame around the rows. Named accurately rather than left
+        // to advertise a gesture that no longer exists.
+        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · drag here to move") { Foreground = DimForeground });
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
