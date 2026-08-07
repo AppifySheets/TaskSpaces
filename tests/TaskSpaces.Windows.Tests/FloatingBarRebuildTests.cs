@@ -76,11 +76,14 @@ public class FloatingBarRebuildTests
 
         var rows = (StackPanel)bar.FindName("Rows")!;
 
-        // GroupRow builds a Grid per group; Separator builds a Border. Counting the grids
-        // counts the groups, independent of separator placement. (It was a StackPanel until
-        // the labels moved to the right of the icons -- that needed two columns, so the row
-        // container became a Grid.)
-        int GroupCount() => rows.Children.OfType<Grid>().Count();
+        // GroupRow builds a Border wrapping a Grid per group; Separator builds a childless
+        // Border. Counting the Borders that CONTAIN a Grid counts the groups, independent of
+        // separator placement.
+        //
+        // (The row container became a Grid when the labels moved right of the icons, which
+        // needed two columns. The Border around it came later, when the current-workspace
+        // marker moved from a pill on the label to a box around the whole row.)
+        int GroupCount() => rows.Children.OfType<Border>().Count(b => b.Child is Grid);
 
         // 3 = the always-rendered 📌 row (Task 12) + GEPHA + Sparrow.
         Assert.Equal(3, GroupCount()); // baseline from the constructor's own Rebuild
@@ -341,14 +344,16 @@ public class FloatingBarRebuildTests
         Assert.Equal(other.FontSize, current.FontSize);
         Assert.Equal(other.Margin, current.Margin);
 
-        // ...and the same for the pill drawn around each label: present on both rows at the
-        // same thickness and padding, differing only in the brush.
-        var currentPill = (Border)VisualTreeHelper.GetParent(current);
-        var otherPill = (Border)VisualTreeHelper.GetParent(other);
-        Assert.Equal(otherPill.BorderThickness, currentPill.BorderThickness);
-        Assert.Equal(otherPill.Padding, currentPill.Padding);
-        Assert.Equal(otherPill.Margin, currentPill.Margin);
-        Assert.NotEqual(Strength(otherPill.BorderBrush), Strength(currentPill.BorderBrush));
+        // ...and the same for the box drawn around each ROW, which is where the current-workspace
+        // marker moved to (Petre: "when looking at the left edge, i can't really see what's
+        // active" -- the pill this replaced sat in the right-hand gutter). Present on both rows
+        // at the same thickness and corner radius, differing only in the brush.
+        var currentRow = RowBorderFor(bar.Rows, "GEPHA");
+        var otherRow = RowBorderFor(bar.Rows, "Sparrow");
+        Assert.Equal(otherRow.BorderThickness, currentRow.BorderThickness);
+        Assert.Equal(otherRow.CornerRadius, currentRow.CornerRadius);
+        Assert.Equal(otherRow.Margin, currentRow.Margin);
+        Assert.NotEqual(Strength(otherRow.BorderBrush), Strength(currentRow.BorderBrush));
     });
 
     // The current-row state lives entirely in brush ALPHA now, so "brighter" is a number these
@@ -406,8 +411,19 @@ public class FloatingBarRebuildTests
 
     // The row container for a given label. GroupRow builds one Grid per group, added directly
     // to the Rows panel, so the group's Grid is the one holding a TextBlock with that text.
+    // Every row is a Border wrapping its Grid now: the current workspace is marked by a box
+    // around the whole row, and that border has to exist on every row (transparent when not
+    // current) or the SizeToContent bar would resize on each switch. Separators are Bordered
+    // too, but childless, so asking for the Grid inside filters them out.
     static Grid RowFor(Panel rows, string label) =>
-        rows.Children.OfType<Grid>().Single(row => TextBlocks(row).Any(t => t.Text == label));
+        rows.Children.OfType<Border>()
+            .Select(b => b.Child)
+            .OfType<Grid>()
+            .Single(row => TextBlocks(row).Any(t => t.Text == label));
+
+    static Border RowBorderFor(Panel rows, string label) =>
+        rows.Children.OfType<Border>()
+            .Single(b => b.Child is Grid g && TextBlocks(g).Any(t => t.Text == label));
 
     // The bar tags every icon Button so its press-drag moves the WINDOW rather than the
     // bar; the literal matches FloatingBar's private IconTag const.

@@ -787,7 +787,33 @@ public partial class FloatingBar : Window
             };
         }
 
-        return container;
+        // Petre: "let the entire row be outlined / squared, when the workspace is active", because
+        // "when looking at the left edge, i can't really see what's active".
+        //
+        // That second sentence is the whole design. The current workspace was marked by a pill
+        // around its LABEL, and labels live in the right-hand gutter -- deliberately, so the
+        // icons get the clean left edge. But the icons are what you look at, so the one marker
+        // saying "you are here" was as far from your eye as it could be while still being on the
+        // bar. A box round the row reaches the left edge; a pill in the gutter never can.
+        //
+        // Drawn on EVERY row, transparent when not current, for the reason this bar keeps
+        // relearning: it is SizeToContent, so a border that only existed on the current row
+        // would add its thickness to that row alone and resize the whole window on every switch.
+        // Same rule as the icons' outlines and the labels' weight.
+        //
+        // Wrapping rather than bordering the Grid itself, because a Grid has no border of its
+        // own -- and wrapping keeps the drop highlight where it belongs, on the Grid's
+        // background, so an armed drop target still fills the row inside its outline.
+        return new Border
+        {
+            Child = container,
+            BorderBrush = isCurrent ? CurrentRowRing : Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            // Slightly rounded rather than square, matching the bar's own 8px corners. At one
+            // pixel the difference is barely there; it just stops the corners looking sharper
+            // than the window they sit in.
+            CornerRadius = new CornerRadius(3),
+        };
     }
 
     // ~20% white: enough to read as "this row is armed" against the bar's #99202020
@@ -982,24 +1008,18 @@ public partial class FloatingBar : Window
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        // Petre: "maybe even circle that workspace so i know it's active."
+        // What used to be a pill around the current row's label ("maybe even circle that
+        // workspace so i know it's active") is now a box around the whole ROW, drawn in
+        // GroupRow. Petre: "when looking at the left edge, i can't really see what's active" --
+        // the pill sat in the right-hand gutter, which is the far side of the bar from the icons
+        // anyone actually looks at.
         //
-        // A pill around the current row's label. Present on EVERY row, always, with the same
-        // thickness and the same padding -- only the BRUSH changes -- for the identical reason
-        // the weight above stopped changing: a ring that appeared only on the current row would
-        // add its thickness and padding to that row's measure, and re-introduce on switch the
-        // exact width jump this pair of changes exists to remove. Same trick the icons use for
-        // their active outline.
-        //
-        // The label's old left margin moves onto this border, so the gutter between icons and
-        // label is unchanged and the ring sits snug around the text rather than around the gap.
+        // This Border survives as pure spacing, with no brush of its own: it carries the label's
+        // padding and margin, which the ring used to justify. Collapsing it into the TextBlock
+        // would work and is not worth the churn.
         var pill = new Border
         {
             Child = textBlock,
-            BorderBrush = isCurrent ? CurrentRowRing : Brushes.Transparent,
-            BorderThickness = new Thickness(1),
-            // Half the pill's height, so the ends are true semicircles rather than soft corners.
-            CornerRadius = new CornerRadius(8),
             Padding = new Thickness(5, 1, 5, 1),
             VerticalAlignment = VerticalAlignment.Center,
             // 8 -> 6 on the left: the gutter still has to separate the label from the icons,
