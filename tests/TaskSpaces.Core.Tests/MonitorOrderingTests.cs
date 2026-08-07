@@ -95,20 +95,33 @@ public class MonitorOrderingTests
         // Front to back: A (mon 1), B (mon 2), C (mon 1). So A leads monitor 1, B leads monitor 2.
         var rows = Rows([A, B, C], Facts([(A, 1), (B, 2), (C, 1)], frontToBack: [A, B, C]));
 
-        Assert.True(rows.Single(r => r.Window.Handle == A.Handle).IsFrontmostOnMonitor);
-        Assert.True(rows.Single(r => r.Window.Handle == B.Handle).IsFrontmostOnMonitor);
-        Assert.False(rows.Single(r => r.Window.Handle == C.Handle).IsFrontmostOnMonitor);
+        Assert.True(rows.Single(r => r.Window.Handle == A.Handle).IsFrontmostOnMonitor.Value);
+        Assert.True(rows.Single(r => r.Window.Handle == B.Handle).IsFrontmostOnMonitor.Value);
+        Assert.False(rows.Single(r => r.Window.Handle == C.Handle).IsFrontmostOnMonitor.Value);
     }
 
     // EnumWindows skips cloaked windows, and every window on a non-current desktop is cloaked --
-    // so z-order simply does not exist for them. Nothing may be marked front-most on the
-    // strength of missing data.
+    // so z-order simply does not exist there. The flag must come back UNKNOWN rather than FALSE,
+    // and the distinction is not academic: Petre dims the windows that are behind, so reporting
+    // "not known to be in front" as "behind" would render every icon on every other workspace
+    // dimmed at once.
     [Fact]
-    public void Nothing_is_frontmost_when_z_order_is_unknown()
+    public void Frontmost_is_unknown_rather_than_false_when_there_is_no_z_order()
     {
         var rows = Rows([A, B], Facts([(A, 1), (B, 1)])); // no z-order supplied
 
-        Assert.DoesNotContain(rows, r => r.IsFrontmostOnMonitor);
+        Assert.All(rows, r => Assert.False(r.IsFrontmostOnMonitor.HasValue));
+    }
+
+    // ...but on a desktop that DOES have z-order, a window behind another must say so plainly,
+    // or it would never dim.
+    [Fact]
+    public void A_covered_window_reports_false_rather_than_unknown()
+    {
+        var rows = Rows([A, B], Facts([(A, 1), (B, 1)], frontToBack: [A, B]));
+
+        Assert.True(rows.Single(r => r.Window.Handle == A.Handle).IsFrontmostOnMonitor.Value);
+        Assert.False(rows.Single(r => r.Window.Handle == B.Handle).IsFrontmostOnMonitor.Value);
     }
 
     // Everything above is additive: with no screen facts at all -- compatibility mode, or any
@@ -119,6 +132,6 @@ public class MonitorOrderingTests
         var rows = Rows([C, A, B], ScreenFacts.Empty);
 
         Assert.Equal([C.Handle, A.Handle, B.Handle], rows.Select(r => r.Window.Handle));
-        Assert.DoesNotContain(rows, r => r.Monitor.HasValue || r.IsMinimized || r.IsFrontmostOnMonitor);
+        Assert.DoesNotContain(rows, r => r.Monitor.HasValue || r.IsMinimized || r.IsFrontmostOnMonitor.HasValue);
     }
 }

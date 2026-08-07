@@ -35,7 +35,7 @@ public static class OverviewBuilder
         // `desktopId` is null for rows that belong to no single desktop -- pinned windows, and
         // the "Unplaced" catch-all below -- which is exactly the set that can never carry a
         // landing marker.
-        WindowRow Row(WindowInfo w, Guid? desktopId = null, bool frontmost = false) =>
+        WindowRow Row(WindowInfo w, Guid? desktopId = null, Maybe<bool> frontmost = default) =>
             new(w,
                 originalTitleOf(w.Handle),
                 activeWindow.Map(active => active == w.Handle).GetValueOrDefault(false),
@@ -86,14 +86,25 @@ public static class OverviewBuilder
 
             // "On top" is per MONITOR, not per row: with two monitors there are two front-most
             // windows on screen at once, and marking only one of them would be a lie about the
-            // other. Empty for every desktop but the current one -- see ScreenFacts.ZOrder.
+            // other.
             var frontmost = here
                 .Where(w => facts.ZOrder.ContainsKey(w.Handle) && MonitorOf(w).HasValue)
                 .GroupBy(w => MonitorOf(w).Value)
                 .Select(monitor => monitor.MinBy(w => facts.ZOrder[w.Handle])!.Handle)
                 .ToHashSet();
 
-            return here.Select(w => Row(w, desktopId, frontmost.Contains(w.Handle))).ToList();
+            // Whether this desktop can answer the question AT ALL, asked once for the group
+            // rather than per window. Every desktop but the current one is made of cloaked
+            // windows, which EnumWindows does not return, so none of them has any z-order --
+            // and "no window here is known to be in front" must not be reported as "every
+            // window here is behind". Petre dims the ones that are behind; that distinction is
+            // the difference between one dimmed icon per monitor and an entire workspace
+            // rendering greyed out.
+            var known = here.Any(w => facts.ZOrder.ContainsKey(w.Handle));
+
+            return here
+                .Select(w => Row(w, desktopId, known ? frontmost.Contains(w.Handle) : Maybe<bool>.None))
+                .ToList();
         }
 
         var workspaceGroups = state.Workspaces

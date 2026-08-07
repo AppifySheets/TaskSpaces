@@ -28,7 +28,12 @@ public sealed record WindowRow(
     bool WillActivate = false,
     Maybe<int> Monitor = default,
     bool IsMinimized = false,
-    bool IsFrontmostOnMonitor = false);
+    // Tri-state on purpose, and the third state is load-bearing. None means "z-order is not
+    // knowable here", which is every desktop but the current one -- EnumWindows skips cloaked
+    // windows and that is what a window on another desktop is. Petre wants non-front windows
+    // dimmed; without the distinction, "not known to be front" would collapse into "behind" and
+    // every icon on every other workspace would render dimmed at once.
+    Maybe<bool> IsFrontmostOnMonitor = default);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);

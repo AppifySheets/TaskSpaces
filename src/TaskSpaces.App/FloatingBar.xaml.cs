@@ -311,19 +311,6 @@ public partial class FloatingBar : Window
         RefreshBackButton();
         manager.WindowsByWorkspace().Tap(overview =>
         {
-            // Decided ONCE per rebuild, from every row in the overview, so that every icon in
-            // the bar agrees about whether badges are on. Computing it per row would let a
-            // workspace whose windows all sit on one monitor drop its badges while its
-            // neighbour kept them, which reads as a rendering bug rather than as information.
-            showMonitorBadges = overview.Pinned
-                .Concat(overview.Workspaces.SelectMany(w => w.Running))
-                .Concat(overview.OtherDesktops.SelectMany(d => d.Windows))
-                .Select(r => r.Monitor)
-                .Where(m => m.HasValue)
-                .Select(m => m.Value)
-                .Distinct()
-                .Skip(1)
-                .Any();
 
             // Task 11 fix round 5 (Petre: "the rows are indistinguishable... i want to
             // tell which workspace i'm going to"): build the rows into a list first
@@ -489,8 +476,25 @@ public partial class FloatingBar : Window
         IconRowLimit.Lines(rows.ToList()).ToList().ForEach(line =>
         {
             var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            // Petre: "sort icons in workspaces by monitors", then -- after the numbered badges
+            // that first carried it were rejected -- "let's go with the hairline separator", and
+            // "let that separator be not in the middle, each workspace has its own place for it".
+            //
+            // So it is drawn where THIS row's own monitor boundary falls, not at any shared
+            // column: rows are sorted by monitor already, so the boundary is simply the point
+            // where the number changes. A row whose windows all sit on one screen has no
+            // boundary and therefore no separator, and pays nothing -- which is also why this
+            // needs no "do we have multiple monitors" flag.
+            //
+            // Never leading: a change detected on the first icon of a LINE is a wrap, not a
+            // boundary, and the line break has already done the separating.
+            Maybe<int> previous = Maybe<int>.None;
             line.ToList().ForEach(r =>
             {
+                if (linedUp.Children.Count > 0 && previous.HasValue && r.Monitor.HasValue && r.Monitor.Value != previous.Value)
+                    linedUp.Children.Add(MonitorSeparator());
+                previous = r.Monitor;
+
                 var button = IconButton(groupLabel, groupKey, r);
                 iconButtons.Add(button);
                 linedUp.Children.Add(button);
@@ -880,7 +884,7 @@ public partial class FloatingBar : Window
         // invisible here. Asking the window itself (see IconCache) fixes most of them
         // outright -- WM_GETICON works whether or not we can read the file -- and this
         // placeholder covers whatever is left.
-        button.Content = WithMonitorBadge(
+        button.Content = WithState(
             icon is not null
                 ? new Image { Source = icon, Width = 20, Height = 20 }
                 : Placeholder(row.Window),
@@ -941,77 +945,92 @@ public partial class FloatingBar : Window
             .Select(text => text.Trim()[..1].ToUpperInvariant())
             .FirstOrDefault() ?? "?";
 
-    // Petre: "i want to have the monitor number on the icon", and -- for "which one is on top?"
-    // -- "maybe we can do 1 in bold, if it's on top".
+    // The window's state, drawn onto its icon. Petre: "can you also identify which window is
+    // minimized, vs not? or which one is on top?"
     //
-    // The badge is an OVERLAY, in a Grid cell shared with the artwork and given a fixed size, so
-    // nothing it does can change how wide an icon measures. That is what makes it safe to vary
-    // its weight, which is the very thing we just removed from the row labels: there, bold
-    // widened the row and moved the whole SizeToContent bar; here the digit is boxed inside the
-    // 20px cell and cannot.
+    // A numbered badge carried both the monitor number and (in bold) the front-most flag for one
+    // round. It went -- "those numbers are bad" -- and monitor grouping moved to the separator
+    // between groups in GroupRow, which says the same thing without writing on the artwork.
     //
-    // Weight is also the right channel for "front-most": the icon is already carrying up to two
-    // outline states, and a fourth separate mark on a 20px square would be unreadable. Bolding
-    // something already on screen adds nothing new to look at.
-    //
-    // Hidden entirely on a single-monitor machine. A "1" on every icon would be pure noise, and
-    // this surface is dense enough already. Note this keys off how many monitors WINDOWS are
-    // actually spread across, not how many are plugged in -- if everything happens to be on one
-    // screen, the number answers a question nobody is asking.
-    UIElement WithMonitorBadge(UIElement artwork, WindowRow row)
+    // What could not move to the separator is "front-most", since that is per WINDOW.
+    static UIElement WithState(UIElement artwork, WindowRow row)
     {
-        // Petre: "can you also identify which window is minimized, vs not?" Opacity is a channel
-        // nothing else on the icon uses, so it cannot be confused with the active highlight or
-        // the landing-spot outline -- and a faded icon reading as "put away" needs no legend.
-        if (row.IsMinimized) artwork.Opacity = MinimizedIconOpacity;
+        // Petre: "make non-topmost apps on each monitor dim", on top of the earlier ask to dim
+        // minimised ones. Two asks, one channel -- so rather than two competing meanings for
+        // "faded", opacity became a LADDER, and it reads as a single question: how present is
+        // this window on screen right now?
+        //
+        //   front-most on its monitor  -> full strength
+        //   open but behind something  -> dimmed
+        //   minimised                  -> dimmest, because it is not on screen at all
+        //
+        // The ordering is what makes it legible without a legend: a minimised window is further
+        // away than a merely covered one, and it looks it.
+        //
+        // GetValueOrDefault(TRUE) is the important bit, and it is not a "sensible default": None
+        // means the desktop has no z-order to consult (see WindowRow.IsFrontmostOnMonitor), and
+        // treating unknown as "behind" would dim every icon on every other workspace at once.
+        // Unknown therefore renders exactly as it did before any of this existed.
+        artwork.Opacity =
+            row.IsMinimized ? MinimizedIconOpacity
+            : row.IsFrontmostOnMonitor.GetValueOrDefault(true) ? 1.0
+            : CoveredIconOpacity;
 
-        if (!showMonitorBadges || row.Monitor is not { HasValue: true } monitor) return artwork;
+        if (!row.IsFrontmostOnMonitor.GetValueOrDefault(false)) return artwork;
 
-        var badge = new TextBlock
+        // An UNDERLINE rather than the third outline this nearly became. The icon already
+        // carries two ring states (active, landing spot) and a third would be told apart only by
+        // brush strength -- unreadable at 20px. A bar under the icon is a different shape
+        // entirely, and it is the idiom Windows' own taskbar uses for exactly this, so it needs
+        // no explaining.
+        //
+        // Fixed size in a Grid cell shared with the artwork, so it overlays rather than occupies:
+        // a row of icons measures exactly as it did before any of this existed, which on a
+        // SizeToContent bar is the difference between a marker and a layout change.
+        var underline = new Border
         {
-            Text = monitor.Value.ToString(),
-            FontSize = 7,
-            FontWeight = row.IsFrontmostOnMonitor ? FontWeights.Bold : FontWeights.Normal,
-            Foreground = row.IsFrontmostOnMonitor ? BadgeFrontmostForeground : BadgeForeground,
+            Width = 10,
+            Height = 2,
+            CornerRadius = new CornerRadius(1),
+            Background = FrontmostUnderline,
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            // Nudged up a hair: at 7px the glyph's own baseline leaves it looking low in the box.
-            Margin = new Thickness(0, -1, 0, 0),
-        };
-
-        var plate = new Border
-        {
-            Child = badge,
-            // Fixed, so a bold digit cannot grow the cell -- see above.
-            Width = 9,
-            Height = 9,
-            CornerRadius = new CornerRadius(2),
-            Background = BadgeBackground,
-            HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom,
         };
 
-        // The badge sits ON the artwork rather than beside it, so a row of icons measures exactly
-        // as it did before badges existed.
         var cell = new Grid();
         cell.Children.Add(artwork);
-        cell.Children.Add(plate);
+        cell.Children.Add(underline);
         return cell;
     }
 
-    // Set once per rebuild, from the rows themselves: true only when the windows on screen are
-    // actually spread across more than one monitor.
-    bool showMonitorBadges;
+    // A hairline between two monitors' icons inside one row. Sized in the same spirit as
+    // everything else on this bar: 1px wide, and short enough that it reads as a divider between
+    // icons rather than as a full-height rule cutting the row in two.
+    //
+    // The margin is the whole visual effect, really -- the gap either side is what makes two
+    // clumps of icons read as two groups. Kept small because it is paid once per boundary and
+    // this bar counts pixels.
+    static UIElement MonitorSeparator() => new Border
+    {
+        Width = 1,
+        Height = 14,
+        Background = MonitorSeparatorBrush,
+        VerticalAlignment = VerticalAlignment.Center,
+        Margin = new Thickness(3, 0, 3, 0),
+    };
+
+    static readonly Brush MonitorSeparatorBrush = Frozen(0x40, 0xFF, 0xFF, 0xFF);
 
     // Faded enough to read as "put away" at a glance, not so faded the icon stops being
     // identifiable -- it still has to be a click target.
     const double MinimizedIconOpacity = 0.4;
 
-    // A plate behind the digit, because the digit sits on top of arbitrary app artwork and would
-    // otherwise be illegible against a light icon.
-    static readonly Brush BadgeBackground = Frozen(0xCC, 0x20, 0x20, 0x24);
-    static readonly Brush BadgeForeground = Frozen(0xCC, 0xFF, 0xFF, 0xFF);
-    static readonly Brush BadgeFrontmostForeground = Frozen(0xFF, 0xFF, 0xFF, 0xFF);
+    // Open, just not in front. Deliberately much closer to full than to minimised: this is the
+    // NORMAL state for most icons on the bar at any moment, so it has to read as ordinary rather
+    // than as something being wrong.
+    const double CoveredIconOpacity = 0.72;
+
+    static readonly Brush FrontmostUnderline = Frozen(0xCC, 0xFF, 0xFF, 0xFF);
 
     // Opaque enough for dark text to sit on, since the bar behind it is dark.
     static readonly Brush PlaceholderBackground = Frozen(0xCC, 0xE8, 0xE8, 0xEC);
