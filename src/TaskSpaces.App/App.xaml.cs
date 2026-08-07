@@ -267,6 +267,11 @@ public partial class App : Application
                 // eyes: a highlight pointing at the wrong window is misinformation, not a
                 // missing feature, so up to five seconds of it is far worse than up to one.
                 manager.ResyncActiveWindow();
+                // ...and serve any rebuild the bar postponed while a mouse button was down. It
+                // flushes those on mouse-up, but a drag has no mouse-up to flush from -- the OLE
+                // drag loop eats it -- so without a heartbeat a dropped window stayed drawn in
+                // its old row until something unrelated happened to pulse.
+                floatingBar.FlushIfIdle();
             };
             topmost.Start();
         }

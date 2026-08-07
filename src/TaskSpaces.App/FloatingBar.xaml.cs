@@ -243,14 +243,38 @@ public partial class FloatingBar : Window
     void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         dragStart = null;
+        FlushDeferredRebuild();
+    }
 
-        // Serve any rebuild that was postponed while the button was down (see Rebuild). Queued
-        // rather than run inline, and that matters: this is a PREVIEW handler, so the Button's
-        // own Click has not been raised yet -- rebuilding here would destroy the Button an
-        // instant before it fires, which is the exact bug being fixed.
+    // Serve any rebuild that was postponed while a mouse button was down (see Rebuild).
+    //
+    // Queued rather than run inline, and that matters on the mouse-up path: that is a PREVIEW
+    // handler, so the Button's own Click has not been raised yet, and rebuilding there would
+    // destroy the Button an instant before it fires -- which is the very bug the deferral exists
+    // to prevent.
+    void FlushDeferredRebuild()
+    {
         if (!rebuildRequested || rebuilding) return;
         rebuildRequested = false;
         Dispatcher.BeginInvoke(new Action(() => { if (IsVisible) Rebuild(); }));
+    }
+
+    // Petre: "drag and drop doesn't work now."
+    //
+    // It did work -- the window moved -- but the bar never redrew, so nothing appeared to happen.
+    // The deferral above was flushed only from the mouse-up handler, and a drag has no mouse-up
+    // to flush from: DoDragDrop runs a modal OLE loop that intercepts the terminating click as a
+    // native message, so WPF never turns it into a routed event at all (WindowDragSource
+    // documents this at length -- it is the same fact that stops a dragged icon raising Click).
+    // The pending rebuild then sat there until some unrelated window event happened along.
+    //
+    // So the flush no longer depends on an event that may never arrive. Called from the same 1s
+    // heartbeat that re-asserts topmost, it bounds staleness at one second for EVERY way a
+    // mouse-up can go missing, not just the one that was noticed.
+    public void FlushIfIdle()
+    {
+        if (Mouse.LeftButton == MouseButtonState.Pressed) return;
+        FlushDeferredRebuild();
     }
 
     void OnPreviewMouseMove(object sender, MouseEventArgs e)
