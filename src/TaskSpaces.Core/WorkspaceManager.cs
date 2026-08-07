@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -14,7 +14,7 @@ using TaskSpaces.Core.Rules;
 namespace TaskSpaces.Core;
 
 // The heart of TaskSpaces: subscribes to window lifecycle events and applies the
-// data-flow from the spec —
+// data-flow from the spec --
 //   Appeared      -> workspace rule -> move to desktop -> add/move roster entry
 //   Appeared      -> rename rule    -> apply short name (ledger keeps the original)
 //   TitleChanged  -> renamed window -> re-apply short name (apps rewrite their titles)
@@ -58,8 +58,8 @@ public sealed class WorkspaceManager(
 
     // Windows Petre deliberately dragged OUT of every workspace onto a plain OS desktop
     // (MoveToDesktop). Without this, removing the membership alone would make the window
-    // auto-placeable again, so the very next rule evaluation — for a browser, its next
-    // title change, i.e. seconds later — would yank it straight back to the workspace he
+    // auto-placeable again, so the very next rule evaluation -- for a browser, its next
+    // title change, i.e. seconds later -- would yank it straight back to the workspace he
     // just dragged it out of. Live-only, exactly like `memberships`: a restart re-derives
     // placement from the OS, and rules legitimately own a window again next launch.
     readonly HashSet<WindowHandle> detached = [];
@@ -164,10 +164,10 @@ public sealed class WorkspaceManager(
             });
 
     // Finding 1 (reviewer, Critical): split out of Start() so the composition root can
-    // load persisted state WITHOUT reconciling desktops or subscribing to the monitor —
+    // load persisted state WITHOUT reconciling desktops or subscribing to the monitor --
     // needed for compatibility mode (Finding 2: still list workspaces read-only, no
     // desktop operations) and so a failed load can be distinguished from a failed
-    // reconcile/subscribe. Deliberately does NOT touch `State` on failure — a corrupt
+    // reconcile/subscribe. Deliberately does NOT touch `State` on failure -- a corrupt
     // store must never quietly become "empty workspace list" in the field the UI reads;
     // the caller (App) decides what to do (back up the corrupt file, inform the user,
     // retry) before anything gets a chance to persist over it.
@@ -226,15 +226,15 @@ public sealed class WorkspaceManager(
 
         // Fire-and-forget: the event pipeline has no caller waiting on a Result, and a
         // failed auto-placement (e.g. stale workspace, desktop move rejected) has
-        // nowhere to surface here — it's silently skipped, unlike the UI-facing
+        // nowhere to surface here -- it's silently skipped, unlike the UI-facing
         // AssignWindow, which must propagate the same failure to the caller.
         // Precedence (Petre: "last placement beats rules, last placement IS the rule"):
-        //   1. last placement  — an explicit act by Petre, keyed by identity. Beats rules:
+        //   1. last placement  -- an explicit act by Petre, keyed by identity. Beats rules:
         //                        a standing guess must never yank back a window he moved
         //                        by hand. This is also what re-pins an app whose window
         //                        was destroyed and recreated (Electron closing to tray),
         //                        which the OS pin cannot survive since it is HWND-keyed.
-        //   2. rule            — first sight only: the one case memory cannot cover, since
+        //   2. rule            -- first sight only: the one case memory cannot cover, since
         //                        a never-seen window has no placement to remember.
         //
         // There used to be a tier above both: a pending LAUNCH ("we started this app for
@@ -251,7 +251,7 @@ public sealed class WorkspaceManager(
 
         // Fix wave (reviewer, Important): pulse unconditionally, even when neither branch
         // above ran (no placement rule, no rename rule). Persist() above already pulses
-        // when it fires, so this can double-pulse — harmless, a tray-menu/panel rebuild
+        // when it fires, so this can double-pulse -- harmless, a tray-menu/panel rebuild
         // triggered by StateChanged is a cheap, idempotent re-read of current state. What
         // it fixes: an open panel/Windows tab must learn a new window appeared even when
         // nothing about it was auto-placed or renamed, or its row never shows up.
@@ -341,23 +341,23 @@ public sealed class WorkspaceManager(
         knownWindows[window.Handle] = window;
         if (previouslyUnknown) { OnAppeared(window); return; } // became taskbar-worthy late
 
-        // Fire-and-forget: same rationale as OnAppeared — no caller awaits this path.
+        // Fire-and-forget: same rationale as OnAppeared -- no caller awaits this path.
         if (ledger.NeedsReapply(window.Handle, window.Title))
             ledger.AppliedName(window.Handle).Tap(name => { titles.Set(window.Handle, name); });
         else if (ledger.AppliedName(window.Handle).HasNoValue)
-            // Not renamed yet — but the new title may now match a rename rule.
+            // Not renamed yet -- but the new title may now match a rename rule.
             RulesEngine.MatchRename(window, State.RenameRules)
                 .Tap(shortName => { ApplyRename(window, shortName); });
 
         // Late placement (spec): a window that appeared bare may only now reveal what it
-        // is showing — Rider loading a solution rewrites its title. Only UNPLACED windows
+        // is showing -- Rider loading a solution rewrites its title. Only UNPLACED windows
         // are eligible: once placed (rule, launch, or hand), a title change must never
         // teleport a window between workspaces (browsers rewrite titles every tab switch).
         //
         // Fix round 1 (reviewer, Important): ApplyRename's titles.Set produces a genuine
         // NAMECHANGE, which re-enters here as an "echo" carrying OUR OWN short name as
         // window.Title. A still-unplaced window must not have workspace rules run
-        // against that synthetic title — only titles the APP itself wrote are legitimate
+        // against that synthetic title -- only titles the APP itself wrote are legitimate
         // placement signals. `ledger.AppliedName(...) != window.Title` guards this: if we
         // renamed this window and the observed title IS our applied name, skip late
         // placement entirely (no rename recorded, or observed title differs from what we
@@ -369,7 +369,7 @@ public sealed class WorkspaceManager(
     }
 
     // Finding 3 (reviewer, Important): a window that merely left the taskbar (e.g.
-    // Discord/Outlook minimizing to tray) still EXISTS — its hwnd stays valid and it may
+    // Discord/Outlook minimizing to tray) still EXISTS -- its hwnd stays valid and it may
     // reappear later. Drop it from live-window bookkeeping exactly like Disappeared
     // (it's not on any desktop's visible taskbar right now, so tracking it as "known" or
     // "placed" would be misleading), but deliberately do NOT touch the rename
@@ -377,16 +377,16 @@ public sealed class WorkspaceManager(
     // re-application would record our OWN short name as the "original", permanently
     // breaking restore. Only a genuine Disappeared (the window is actually gone) forgets
     // the ledger entry. RestoreAllTitles on app exit still finds and restores hidden
-    // windows because their ledger entry — and their hwnd — are both still valid. The
+    // windows because their ledger entry -- and their hwnd -- are both still valid. The
     // roster (spec) is unaffected either way: it lists what BELONGS to a workspace, not
     // what's currently live, so Hidden never touches it.
     void OnHidden(WindowInfo window)
     {
         knownWindows.Remove(window.Handle);
-        memberships.Remove(window.Handle); // roster entry stays — that's the point (spec)
+        memberships.Remove(window.Handle); // roster entry stays -- that's the point (spec)
 
         // Fix wave (reviewer, Important): the live panel/Windows tab must lose this row
-        // (it's no longer a live window) — nothing else in this path calls Persist(), so
+        // (it's no longer a live window) -- nothing else in this path calls Persist(), so
         // without this pulse the UI would keep showing a window that's gone to tray.
         stateChanged.OnNext(Unit.Default);
     }
@@ -395,13 +395,13 @@ public sealed class WorkspaceManager(
     {
         knownWindows.Remove(window.Handle);
         ledger = ledger.Remove(window.Handle);
-        memberships.Remove(window.Handle); // roster entry stays — ▶ Start relaunches it
+        memberships.Remove(window.Handle); // roster entry stays -- ▶ Start relaunches it
         // A closed window's hwnd can be recycled by Windows for an entirely different
         // window later; a stale "detached" entry would silently exempt that new window
         // from rules. Cleared here for the same reason memberships is.
         detached.Remove(window.Handle);
 
-        // Fix wave (reviewer, Important): same rationale as OnHidden above — a closed
+        // Fix wave (reviewer, Important): same rationale as OnHidden above -- a closed
         // window's running-row must disappear from any open panel/Windows tab, and a
         // workspace header's running-count must drop, even though this path doesn't
         // otherwise call Persist().
@@ -424,7 +424,7 @@ public sealed class WorkspaceManager(
             });
 
     // Returns Result: a failed WM_SETTEXT (hung/closed window) must not leave a ledger
-    // entry claiming the rename succeeded — order matters here. We attempt the actual
+    // entry claiming the rename succeeded -- order matters here. We attempt the actual
     // write FIRST, and only update the ledger (which captures the original title) once
     // that succeeds; RenameWindow propagates the failure, OnAppeared/OnTitleChanged
     // discard it deliberately (see comments there).
@@ -587,11 +587,11 @@ public sealed class WorkspaceManager(
     void RememberVisit(Guid desktopId) =>
         State.Workspaces.TryFirst(w => w.DesktopId == desktopId).Tap(w => mru = mru.Touch(w.Id));
 
-    // Floating-bar fix round 6 (Petre: the bar must "show tabs from all workspaces" —
+    // Floating-bar fix round 6 (Petre: the bar must "show tabs from all workspaces" --
     // including windows on UNBOUND desktops like his "Main"): a desktop group's label
     // needs a click-to-go-there affordance just like a workspace label, but Switch()
     // above takes a WORKSPACE id. This is the raw-desktop counterpart for
-    // Overview.DesktopGroup rows — same delegate, no persistence (like Switch, "current
+    // Overview.DesktopGroup rows -- same delegate, no persistence (like Switch, "current
     // workspace" is always derived live from CurrentDesktop, never stored).
     public Result SwitchToDesktop(Guid desktopId) => desktops.Switch(desktopId);
 
@@ -615,8 +615,8 @@ public sealed class WorkspaceManager(
     // Reviewer (fix round 1, Critical): duplicate names used to be unchecked, so two
     // workspaces could share a name; ManageWindow.OnSaveRules' `ToDictionary(w => w.Name)`
     // then threw ArgumentException with no handler, killing the process before renamed
-    // titles could be restored. Guarded here (case-insensitive, trimmed) — the ROOT CAUSE
-    // fix — with a defense-in-depth duplicate-safe dictionary added in ManageWindow too,
+    // titles could be restored. Guarded here (case-insensitive, trimmed) -- the ROOT CAUSE
+    // fix -- with a defense-in-depth duplicate-safe dictionary added in ManageWindow too,
     // and a last-ditch DispatcherUnhandledException handler in App as a backstop.
     public Result RenameWorkspace(Guid id, string name) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
@@ -653,12 +653,12 @@ public sealed class WorkspaceManager(
     }
 
     // Case-insensitive, trim-tolerant name collision check. `excluding` lets
-    // RenameWorkspace allow renaming a workspace to (a variant of) its own current name —
+    // RenameWorkspace allow renaming a workspace to (a variant of) its own current name --
     // it must only reject collisions with *other* workspaces.
     bool NameTaken(string name, Guid? excluding) =>
         State.Workspaces.Any(w => w.Id != excluding && w.Name.Trim().Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    // Removing a workspace never removes its desktop implicitly — windows live there.
+    // Removing a workspace never removes its desktop implicitly -- windows live there.
     // The desktop merge behavior (Windows moves its windows to the previous desktop)
     // is exactly what we want, so removal = remove desktop + forget definition.
     public Result RemoveWorkspace(Guid id) =>
@@ -685,7 +685,7 @@ public sealed class WorkspaceManager(
     }
 
     // Task 11 (floating icon bar): called after every drag (position) and every
-    // tray-menu toggle (visibility) — same fire-and-persist shape as SetRules above.
+    // tray-menu toggle (visibility) -- same fire-and-persist shape as SetRules above.
     // Persist() already pulses StateChanged, which nothing here needs to react to
     // (the bar's own drag/toggle handlers already know their own new state), but any
     // future surface that reads FloatingBar gets live updates for free.
@@ -698,21 +698,21 @@ public sealed class WorkspaceManager(
     public Result AssignWindow(WindowHandle window, Guid workspaceId) =>
         knownWindows.TryGetValue(window, out var info)
             // Explicitly moving a pinned window to ONE workspace is a statement that it
-            // should no longer be on ALL of them — unpin first, then place (spec).
+            // should no longer be on ALL of them -- unpin first, then place (spec).
             ? desktops.IsPinned(window)
                 .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
                 .Bind(() => Place(info, workspaceId))
             : Result.Failure("Window no longer exists.");
 
     // Drag-and-drop onto a plain OS desktop row (e.g. Petre's unbound "Main"): the
-    // counterpart to AssignWindow for destinations that aren't workspaces. Same shape —
+    // counterpart to AssignWindow for destinations that aren't workspaces. Same shape --
     // unpin first, because putting a window on ONE desktop contradicts "on all of
-    // them" — then move it and drop the workspace membership.
+    // them" -- then move it and drop the workspace membership.
     //
     // The workspace's ROSTER entry is deliberately left alone: a roster lists what
     // BELONGS to a workspace even when it isn't running there (spec), and it has its own
     // explicit editing UI ("Add app…" / "Remove from workspace"). A drag says where this
-    // window should be right now, not what the workspace is made of — so ▶ Start still
+    // window should be right now, not what the workspace is made of -- so ▶ Start still
     // relaunches the app later, exactly as before the drag.
     public Result MoveToDesktop(WindowHandle window, Guid desktopId) =>
         desktops.IsPinned(window)
@@ -784,8 +784,8 @@ public sealed class WorkspaceManager(
             () => false);
 
     // Rules (and late placement) only touch windows that are neither ours, placed, pinned,
-    // nor deliberately detached: pinned windows live on ALL desktops — moving one to a
-    // workspace desktop would silently defeat the pin Petre set by hand — and a detached
+    // nor deliberately detached: pinned windows live on ALL desktops -- moving one to a
+    // workspace desktop would silently defeat the pin Petre set by hand -- and a detached
     // window is one he dragged out of every workspace by hand (see `detached`).
     bool AutoPlaceable(WindowHandle handle) =>
         !IsOurs(handle)
@@ -878,7 +878,7 @@ public sealed class WorkspaceManager(
         knownWindows.TryGetValue(window, out var info)
             ? ApplyRename(info, shortName)
                 // Manual renames persist (spec: survive restarts). Rule-based renames never
-                // pass through here — the rule itself is already durable. Keyed by process +
+                // pass through here -- the rule itself is already durable. Keyed by process +
                 // the title the window had before ANY rename (ledger's original).
                 .Tap(() =>
                 {
@@ -912,7 +912,7 @@ public sealed class WorkspaceManager(
         return RestoreTitleOnly(window)
             .Tap(() => original.Tap(originalTitle =>
             {
-                // Only remove the persisted entry if we know the process name — better a stale
+                // Only remove the persisted entry if we know the process name -- better a stale
                 // persisted rename than deleting another app's entry if the window is hidden.
                 var processName = knownWindows.TryGetValue(window, out var info) ? info.ProcessName : null;
                 if (processName is not null)
@@ -958,7 +958,7 @@ public sealed class WorkspaceManager(
     // --- overview / switcher-facing operations -----------------------------------
 
     // Ground truth for "which workspace is this window in": ASK THE OS which desktop
-    // it is on (memberships only knows what WE placed). Pinned first — pinned windows
+    // it is on (memberships only knows what WE placed). Pinned first -- pinned windows
     // are on all desktops, DesktopOf is meaningless for them.
     public Result<Core.Overview.Overview> WindowsByWorkspace() =>
         desktops.GetDesktops().Bind(live => desktops.CurrentDesktop().Map(current =>
@@ -1046,7 +1046,7 @@ public sealed class WorkspaceManager(
     // Roster (spec): a workspace lists the apps that BELONG to it even when they are
     // not running. An entry is added/updated when a window is PLACED here and SURVIVES
     // the window closing; identity = path+args (browser: path+profile), and the same
-    // identity landing in another workspace MOVES (a window can't belong to two —
+    // identity landing in another workspace MOVES (a window can't belong to two --
     // last placement wins). Entries leave only via user removal or workspace deletion.
     void RosterAdd(WindowInfo window, Guid workspaceId)
     {
@@ -1081,7 +1081,7 @@ public sealed class WorkspaceManager(
     // --- placement memory (identity-keyed, so it outlives any single window handle) ------
 
     // Records "Petre put this app HERE": pinned to every workspace, or detached onto a plain
-    // desktop. The workspace case needs nothing extra — Place() -> RosterAdd() -> AddEntry()
+    // desktop. The workspace case needs nothing extra -- Place() -> RosterAdd() -> AddEntry()
     // already writes identity -> workspace into Inventory.
     void RememberPlacement(WindowHandle window, bool pinned) =>
         EntryFor(window).Match(

@@ -15,7 +15,7 @@ public class WindowActivatorTests(ITestOutputHelper output)
         try
         {
             // FIX (code review, round 1): bounded to ~5s (50 * 100ms) instead of spinning
-            // forever — an unbounded wait here would hang past the finally block if winver
+            // forever -- an unbounded wait here would hang past the finally block if winver
             // never surfaces a window (e.g. blocked by a dialog, killed externally), leaving
             // the process running and the test stuck. A clear Assert message pinpoints the
             // timeout as the cause instead of a bare NullReferenceException further down.

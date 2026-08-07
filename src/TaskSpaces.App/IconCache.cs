@@ -8,13 +8,13 @@ using TaskSpaces.Windows.Monitoring;
 namespace TaskSpaces.App;
 
 // Small frozen ImageSources for the icon surfaces (floating bar, Manage rows), cached
-// forever — icons don't change while an app runs, and the cache is tiny. Frozen so rows
+// forever -- icons don't change while an app runs, and the cache is tiny. Frozen so rows
 // on any thread can share them.
 //
 // Petre: "i also don't see an icon for whatsapp app". Root cause, and the reason this
 // class grew a second lookup path: WhatsApp is a Store app whose WhatsApp.Root.exe is a
-// launcher stub with NO embedded icon. Icon.ExtractAssociatedIcon does not FAIL on it —
-// it quietly returns the generic Windows default — so "extract from the exe, and fall
+// launcher stub with NO embedded icon. Icon.ExtractAssociatedIcon does not FAIL on it --
+// it quietly returns the generic Windows default -- so "extract from the exe, and fall
 // back if that fails" could never have fixed it. There was nothing to fall back from.
 //
 // So the order is inverted: ASK THE WINDOW FIRST, and only ask the file if the window has
@@ -31,7 +31,7 @@ public static class IconCache
     // Keyed by (hwnd, exe path), not by hwnd alone: Windows recycles hwnds, and a recycled
     // handle belonging to a DIFFERENT app would otherwise inherit the previous window's
     // icon. Same app on a recycled handle shares an icon anyway, so the pair is exact
-    // enough. This is the cache that matters for cost — one entry means zero P/Invoke on
+    // enough. This is the cache that matters for cost -- one entry means zero P/Invoke on
     // every subsequent rebuild, and the bar rebuilds on every window event.
     static readonly Dictionary<(nint Hwnd, string Path), ImageSource?> byWindow = [];
     // HICON -> bitmap. Every window of an app usually reports the SAME icon handle, so this

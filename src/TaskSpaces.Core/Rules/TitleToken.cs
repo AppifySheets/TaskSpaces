@@ -9,7 +9,7 @@ namespace TaskSpaces.Core.Rules;
 //
 // WHY this exists at all: placement is otherwise keyed on RosterIdentity (exe path + args),
 // and an app launched WITHOUT arguments has one identity no matter what it has loaded. Three
-// VS Code windows started from the Start menu are indistinguishable that way — which is
+// VS Code windows started from the Start menu are indistinguishable that way -- which is
 // exactly what collapsed all three of Petre's into one workspace. The container name in the
 // title is the only per-window signal available, so this extracts it.
 //
@@ -18,7 +18,7 @@ namespace TaskSpaces.Core.Rules;
 // windows. Same reasoning (and same shape) as RosterIdentity's browser set.
 //
 // Deliberately EXCLUDED, per Petre:
-//   - Browsers. "browser tabs are a bad way to identify which tab to assign it to" — a tab
+//   - Browsers. "browser tabs are a bad way to identify which tab to assign it to" -- a tab
 //     title is the page, not a container, and it changes on every navigation. The honest fix
 //     for browsers is UIA reading the address bar (already parked in the spec as a spike),
 //     not a cleverer title heuristic.
@@ -27,7 +27,7 @@ namespace TaskSpaces.Core.Rules;
 //     learning would add risk and no value.
 public static class TitleToken
 {
-    // How an app arranges its title. Not cosmetic — the container is at OPPOSITE ends for
+    // How an app arranges its title. Not cosmetic -- the container is at OPPOSITE ends for
     // VS Code and for JetBrains IDEs, so one "take the last segment" rule cannot serve both.
     enum Shape
     {
@@ -59,7 +59,7 @@ public static class TitleToken
             ["datagrip64"] = Shape.LeadingContainer,
             ["studio64"] = Shape.LeadingContainer,
 
-            // Petre's own: "Remote Desktop Manager [server-01 - fhd]" — the session is
+            // Petre's own: "Remote Desktop Manager [server-01 - fhd]" -- the session is
             // bracketed, and note it contains a " - " of its own, which is precisely why the
             // bracket rule has to run BEFORE any splitting.
             ["remotedesktopmanager"] = Shape.Bracketed,
@@ -72,13 +72,13 @@ public static class TitleToken
 
     // Split on the delimiter WITH its surrounding spaces, never on the bare character.
     // "Corne-Config" is one word and splitting on a lone '-' would shred it into
-    // "Corne" and "Config" — the exact folder name Petre needs to match on.
+    // "Corne" and "Config" -- the exact folder name Petre needs to match on.
     static readonly Regex Delimiters = new(@" - | – | \| ", RegexOptions.Compiled);
 
     static readonly Regex Bracketed = new(@"\[(?<container>[^\]]+)\]", RegexOptions.Compiled);
 
     // The container a window currently has loaded, or None when there is nothing to learn:
-    // an app we do not track, or a window with no container yet. The second case matters —
+    // an app we do not track, or a window with no container yet. The second case matters --
     // a freshly opened VS Code is titled just "Visual Studio Code", and returning None for
     // it is what lets the folder-load a moment later be the thing that places the window.
     public static Maybe<string> For(string processName, string title)

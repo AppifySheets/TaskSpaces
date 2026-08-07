@@ -31,7 +31,7 @@ public partial class ManageWindow : Window
         WorkspaceRulesGrid.ItemsSource = workspaceRules;
         RenameRulesGrid.ItemsSource = renameRules;
         // Task 10: the Windows tab is now the shared WindowGroupsView (same control the
-        // switcher panel uses). No runChildDialog/afterAction override needed — this
+        // switcher panel uses). No runChildDialog/afterAction override needed -- this
         // window doesn't hide-on-deactivate like the panel does, so the default
         // pass-through dialog runner and a no-op afterAction are exactly right; live
         // refresh on manager.StateChanged is the view's own responsibility now.
@@ -40,9 +40,9 @@ public partial class ManageWindow : Window
 
     // Reviewer (fix round 1, Important): reassigning ItemsSource wholesale drops the
     // current selection, so every button click ("Rename", "Remove", ...) silently
-    // deselects the very row the user just acted on — annoying for the common case of
+    // deselects the very row the user just acted on -- annoying for the common case of
     // doing several operations on the same workspace in a row. Capture the selected
-    // *identity* (Id — never the object reference, since Reload() always rebuilds fresh
+    // *identity* (Id -- never the object reference, since Reload() always rebuilds fresh
     // instances) before rebinding, and re-select the matching item after.
     void Reload()
     {
@@ -129,8 +129,8 @@ public partial class ManageWindow : Window
         // Reviewer (fix round 1, Critical, defense in depth): WorkspaceManager now rejects
         // duplicate names going forward, but state.json written before that guard existed
         // may still contain duplicates on disk. A plain `ToDictionary(w => w.Name, ...)`
-        // throws ArgumentException on any duplicate key and — with no unhandled-exception
-        // handler at the time this bug was found — took the whole process down mid-save.
+        // throws ArgumentException on any duplicate key and -- with no unhandled-exception
+        // handler at the time this bug was found -- took the whole process down mid-save.
         // GroupBy never throws on duplicates; first-match-wins here is an accepted, silent
         // tie-break (the root-cause fix means new duplicates can no longer be created).
         var byName = manager.State.Workspaces

@@ -2,7 +2,7 @@ namespace TaskSpaces.Core.Rehydration;
 
 // A recorded command line is the ORIGINAL full line ("exe" args...). The exe part is
 // noise for both relaunching (ProcessStartInfo takes args separately) and identity
-// (quoting differs between captures) — this strips it, leaving only the arguments.
+// (quoting differs between captures) -- this strips it, leaving only the arguments.
 public static class CommandLines
 {
     public static string ArgumentsOf(string? commandLine, string processPath)
@@ -17,6 +17,6 @@ public static class CommandLines
         }
         return trimmed.StartsWith(processPath, StringComparison.OrdinalIgnoreCase)
             ? trimmed[processPath.Length..].TrimStart()
-            : ""; // command line doesn't start with the known exe — safer to treat as bare
+            : ""; // command line doesn't start with the known exe -- safer to treat as bare
     }
 }

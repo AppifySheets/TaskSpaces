@@ -3,10 +3,10 @@ using Xunit.Abstractions;
 
 namespace TaskSpaces.Windows.Tests;
 
-// MUTATES REAL VIRTUAL DESKTOPS — excluded from normal runs. Execute manually with:
+// MUTATES REAL VIRTUAL DESKTOPS -- excluded from normal runs. Execute manually with:
 //   dotnet test tests/TaskSpaces.Windows.Tests --filter "Category=Integration"
 //
-// THREADING NOTE (spike finding): every body below runs via StaThread.Run(...) — xunit's
+// THREADING NOTE (spike finding): every body below runs via StaThread.Run(...) -- xunit's
 // test-runner thread is MTA by default, and VirtualDesktop.Configure() requires STA (it
 // builds a WPF HwndSource internally). Without this wrapper, Initialize() would return a
 // Result failure ("The calling thread must be STA...") instead of exercising the real API.
@@ -25,7 +25,7 @@ public class VirtualDesktopServiceTests(ITestOutputHelper output)
             Assert.True(created.IsSuccess);
 
             // FIX (code review, round 1): everything after a successful Create() now runs
-            // inside try/finally — same cleanup discipline the Task 1 spike used — so a
+            // inside try/finally -- same cleanup discipline the Task 1 spike used -- so a
             // failed Assert partway through the lifecycle can't leave a stray desktop
             // behind on the real machine. `removed` tracks whether the happy-path Remove()
             // already ran so the finally block doesn't attempt a redundant (and noisy)
@@ -74,7 +74,7 @@ public class VirtualDesktopServiceTests(ITestOutputHelper output)
             try
             {
                 // FIX (code review, round 1): bounded to ~5s (50 * 100ms) instead of spinning
-                // forever — an unbounded wait here would hang past the finally block if winver
+                // forever -- an unbounded wait here would hang past the finally block if winver
                 // never surfaces a window (e.g. blocked by a dialog, killed externally), leaving
                 // the process running and the test stuck. A clear Assert message pinpoints the
                 // timeout as the cause instead of a bare NullReferenceException further down.
@@ -91,7 +91,7 @@ public class VirtualDesktopServiceTests(ITestOutputHelper output)
                 Assert.False(service.IsPinned(handle).Value);
                 Assert.True(service.Pin(handle).IsSuccess);
                 Assert.True(service.IsPinned(handle).Value);
-                output.WriteLine("pinned OK — check visually: winver should now follow desktop switches");
+                output.WriteLine("pinned OK -- check visually: winver should now follow desktop switches");
                 Assert.True(service.Unpin(handle).IsSuccess);
                 Assert.False(service.IsPinned(handle).Value);
 

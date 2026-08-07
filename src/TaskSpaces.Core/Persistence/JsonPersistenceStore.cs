@@ -7,7 +7,7 @@ namespace TaskSpaces.Core.Persistence;
 public sealed class JsonPersistenceStore(string baseDirectory) : IPersistenceStore
 {
     // Finding 5 (reviewer, Important): without a string converter, RuleMatchKind (and any
-    // future enum) serializes as a bare int — unreadable in state.json and a silent
+    // future enum) serializes as a bare int -- unreadable in state.json and a silent
     // renumbering hazard if the enum's member order ever changes. JsonStringEnumConverter
     // still DESERIALIZES bare ints too (back-compat with any state.json written before this
     // fix), it just never WRITES them again.

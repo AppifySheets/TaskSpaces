@@ -1,4 +1,4 @@
-﻿using TaskSpaces.Core.Domain;
+using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
 
@@ -97,7 +97,7 @@ public class WorkspaceManagerTests
 
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, Chrome(title: "Amy related")));
 
-        Assert.Empty(titles.Titles); // no write happened — loop is broken
+        Assert.Empty(titles.Titles); // no write happened -- loop is broken
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public class WorkspaceManagerTests
         Assert.True(manager.MoveToDesktop(new WindowHandle(0x10), main.Id).IsSuccess);
 
         Assert.Equal(main.Id, desktops.WindowPlacements[new WindowHandle(0x10)]);
-        // The ROSTER entry deliberately survives — the app still belongs to the workspace
+        // The ROSTER entry deliberately survives -- the app still belongs to the workspace
         // (▶ Start relaunches it); only the live placement changed.
         Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
     }
@@ -151,7 +151,7 @@ public class WorkspaceManagerTests
         var main = desktops.Create("Main").Value;
         Assert.True(manager.MoveToDesktop(new WindowHandle(0x10), main.Id).IsSuccess);
 
-        // "On one desktop" contradicts "on all desktops" — same rule AssignWindow follows.
+        // "On one desktop" contradicts "on all desktops" -- same rule AssignWindow follows.
         Assert.DoesNotContain(new WindowHandle(0x10), desktops.PinnedWindows);
         Assert.Equal(main.Id, desktops.WindowPlacements[new WindowHandle(0x10)]);
     }
@@ -202,7 +202,7 @@ public class WorkspaceManagerTests
     [Fact]
     public void SwitchToDesktop_delegates_raw_desktop_id()
     {
-        // Floating-bar unbound-desktop rows switch by DESKTOP id, not workspace id —
+        // Floating-bar unbound-desktop rows switch by DESKTOP id, not workspace id --
         // no workspace lookup involved, any guid goes straight to the service.
         var (manager, _) = StartedWithWorkWorkspace();
         var unboundDesktop = Guid.NewGuid();
@@ -214,7 +214,7 @@ public class WorkspaceManagerTests
     public void Disappeared_window_keeps_its_roster_entry()
     {
         // Superseded v1 behavior: inventory used to be "currently running members" and
-        // emptied on close. The roster spec inverts this on purpose — a workspace lists
+        // emptied on close. The roster spec inverts this on purpose -- a workspace lists
         // what BELONGS to it even when it isn't running (that's what ▶ Start launches).
         var (manager, work) = StartedWithWorkWorkspace();
         manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
@@ -340,7 +340,7 @@ public class WorkspaceManagerTests
     {
         var (manager, work) = StartedWithWorkWorkspace();
 
-        // Same name, different case/whitespace — renaming a workspace to (a variant of)
+        // Same name, different case/whitespace -- renaming a workspace to (a variant of)
         // its own current name must not be rejected as a "duplicate" of itself.
         var result = manager.RenameWorkspace(work.Id, "Work");
 
@@ -409,7 +409,7 @@ public class WorkspaceManagerTests
     public void Start_retried_after_a_failed_load_succeeds_once_the_store_recovers()
     {
         // Mirrors the composition root's actual recovery path: Start() fails on a corrupt
-        // file, the caller backs it up (out of scope for Core), then retries Start() —
+        // file, the caller backs it up (out of scope for Core), then retries Start() --
         // which must now succeed because the store no longer reports a failure.
         store.FailLoad = true;
         var manager = Manager();
@@ -436,7 +436,7 @@ public class WorkspaceManagerTests
         Assert.Equal("Amy related", titles.Titles[new WindowHandle(0x10)]);
 
         // Hide-to-tray: the window still exists and still wears our short name (nothing
-        // restored it in between) — the monitor reports Hidden, not Disappeared.
+        // restored it in between) -- the monitor reports Hidden, not Disappeared.
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome(title: "Amy related")));
         // Re-shown later (e.g. user opens it from the tray again).
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome(title: "Amy related")));
@@ -454,7 +454,7 @@ public class WorkspaceManagerTests
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome(title: "Amy related")));
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome(title: "Amy related")));
 
-        // Ledger entry is gone — nothing left to restore (this is the pre-existing,
+        // Ledger entry is gone -- nothing left to restore (this is the pre-existing,
         // still-correct behavior for a window that's truly gone).
         Assert.True(manager.RestoreTitle(new WindowHandle(0x10)).IsFailure);
     }
@@ -481,7 +481,7 @@ public class WorkspaceManagerTests
     // v1's inventory-persisting Appeared/Disappeared path used to pulse StateChanged as
     // a side effect of Persist(). The roster rewrite added paths that don't necessarily
     // call Persist (e.g. Appeared with no rule match at all, Hidden, Disappeared with no
-    // matching workspace rule) — an open panel/Windows tab then goes stale: dead rows for
+    // matching workspace rule) -- an open panel/Windows tab then goes stale: dead rows for
     // windows that closed, missing rows for windows that opened, stale running-counts in
     // workspace headers. Every lifecycle event must pulse regardless of whether it also
     // happened to mutate persisted state.
@@ -517,7 +517,7 @@ public class WorkspaceManagerTests
         Assert.True(pulses > afterHidden);
     }
 
-    // --- Task 11: floating icon bar — position/visibility persistence --------------
+    // --- Task 11: floating icon bar -- position/visibility persistence --------------
 
     [Fact]
     public void SaveFloatingBar_persists_state_and_pulses_StateChanged()

@@ -74,7 +74,7 @@ public class PlacementMemoryTests
         Assert.False(PlacementMemory.For(BeeperWindow(), StateWith()).HasValue);
 
     // Defensive: AddEntry maintains one-workspace-per-identity, so this only arises from a
-    // hand-edited state.json. Skip rather than guess — a wrong guess moves a window
+    // hand-edited state.json. Skip rather than guess -- a wrong guess moves a window
     // somewhere Petre never put it.
     [Fact]
     public void An_identity_claimed_by_two_workspaces_is_skipped_not_guessed()
@@ -87,7 +87,7 @@ public class PlacementMemoryTests
     }
 
     // Identity is path+args, so the same exe showing different content is remembered
-    // separately — the content-based membership decision, applied to placement memory.
+    // separately -- the content-based membership decision, applied to placement memory.
     [Fact]
     public void The_same_exe_with_different_arguments_is_a_different_identity()
     {

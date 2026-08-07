@@ -1,5 +1,5 @@
 <!-- ThemeMode="System": WPF's Windows 11 Fluent theme, following the OS light/dark
-     setting — dark title bars and dark-styled controls in every window (Manage,
+     setting - dark title bars and dark-styled controls in every window (Manage,
      prompts, the future switcher) with zero per-window styling. Petre runs dark;
      the default white Manage window was hostile. -->
 <Application x:Class="TaskSpaces.App.App"

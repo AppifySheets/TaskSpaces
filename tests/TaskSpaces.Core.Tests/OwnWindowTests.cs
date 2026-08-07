@@ -23,10 +23,10 @@ public class OwnWindowTests
     readonly FakeStore store = new();
 
     static WindowInfo Ours(nint hwnd = 1) =>
-        new(new WindowHandle(hwnd), OurPid, "TaskSpaces.App", @"C:\apps\TaskSpaces.App.exe", "TaskSpaces — Manage", null);
+        new(new WindowHandle(hwnd), OurPid, "TaskSpaces.App", @"C:\apps\TaskSpaces.App.exe", "TaskSpaces: Manage", null);
 
     static WindowInfo Theirs(nint hwnd = 2) =>
-        new(new WindowHandle(hwnd), TheirPid, "notepad", @"C:\windows\notepad.exe", "TaskSpaces — Manage", null);
+        new(new WindowHandle(hwnd), TheirPid, "notepad", @"C:\windows\notepad.exe", "TaskSpaces: Manage", null);
 
     WorkspaceManager Started() =>
         new WorkspaceManager(desktops, monitor, titles, store, ownProcessId: OurPid) is var manager

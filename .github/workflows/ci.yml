@@ -2,7 +2,7 @@
 #
 # WHY this exists separately from release.yml: a release workflow only tells you something was
 # broken at the moment you tried to ship, which is far too late. This one fails on the PR that
-# introduced the problem. It matters more now that the app is being shared with other people —
+# introduced the problem. It matters more now that the app is being shared with other people --
 # nobody else can see the local test run on Petre's machine.
 name: CI
 

@@ -20,7 +20,7 @@
   <img src="docs/images/floating-bar-1.4.0.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. Every label is bold and the current workspace's is ringed. Icons are grouped by monitor, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom." />
 </p>
 
-<p align="center"><em>Everything you have open, grouped by workspace — one row each, the current
+<p align="center"><em>Everything you have open, grouped by workspace: one row each, the current
 one ringed, the focused window outlined. Icons fade as they recede: full strength in front,
 dimmer when covered, dimmest when minimised. Click any icon to jump straight to that window from
 anywhere, click it again to put it away; drag it to another row to move the window there.</em></p>
@@ -28,7 +28,7 @@ anywhere, click it again to put it away; drag it to another row to move the wind
 **TaskSpaces is a layer over Windows' own virtual desktops.** Every workspace *is* a real
 virtual desktop, so Windows keeps doing the window management it already does well and
 TaskSpaces adds the parts it never had: names, colours, one chord to switch, rules that put
-new windows where they belong, and the bar above — the thing plain virtual desktops cannot
+new windows where they belong, and the bar above, the thing plain virtual desktops cannot
 give you, a view of *every* desktop's windows at once instead of only the one you are on.
 
 Nothing is hidden by trickery, which is the point. Quit TaskSpaces and your windows are still
@@ -39,7 +39,7 @@ sitting on their desktops, reachable through Task View exactly as before.
 > organise windows on fundamentally different models, so there is no port waiting to be
 > written. If you are not on Windows 11, this is not the tool for you.
 
-Group your running apps into workspaces — one per project, so **Work**, **Personal** and
+Group your running apps into workspaces, one per project, so **Work**, **Personal** and
 **YouTube** each keep their own windows. Move between them with `Win+Ctrl+Tab`, exactly the way
 `Alt+Tab` moves between windows: hold `Win+Ctrl`, tap `Tab` to walk your workspaces in
 most-recently-used order, release to land. One tap takes you back to wherever you just were.
@@ -47,13 +47,13 @@ Or click a row on the bar. The chord deliberately neighbours Windows' own `Win+C
 
 **They stay out of each other's way.** While you are in one workspace, its windows are the only
 ones on your taskbar and the only ones `Alt+Tab` walks through. Everything else is still running,
-still untouched — just not in front of you. Work does not bleed into Personal, a screen share of
+still untouched, just not in front of you. Work does not bleed into Personal, a screen share of
 one shows nothing of the others, and a project you are not on today cannot clutter the one you
 are. That separation is Windows' own, not something this app fakes: the taskbar has always
 filtered per desktop, and TaskSpaces simply makes the desktops worth using.
 
 Switching does not merely filter the taskbar: you come back to a workspace with everything
-still open and still where you put it, because nothing was ever closed or minimised — and
+still open and still where you put it, because nothing was ever closed or minimised. And
 **focus lands back on the window you were last using there**, so you arrive typing rather than
 hunting. The expensive part of changing task is rebuilding what you had open, and here there is
 nothing to rebuild. Workspaces survive reboots.
@@ -126,19 +126,19 @@ single ~74 MB exe in `artifacts/publish`.
   Every workspace label is bold, with the current one ringed. Always on: it is the only
   surface that lists your windows, so there is nothing to switch off.
 
-  **↩ goes back**, to the workspace you were on before this one — the same thing one tap
+  **↩ goes back**, to the workspace you were on before this one: the same thing one tap
   of `Win+Ctrl+Tab` does, for when your hand is already on the mouse. Press it twice and
   you are where you started.
 
   **What each icon tells you.** The focused window is outlined and filled. A fainter
   outline on another workspace's row marks the window you will land on if you switch
   there. Icons fade as they recede: full strength in front, dimmer when covered, dimmest
-  when minimised. An amber dot means that app is asking for you — someone messaged, or it
+  when minimised. An amber dot means that app is asking for you: someone messaged, or it
   wants attention. Several windows of one app each get a coloured bar along the bottom, so
   you can tell three browsers apart and watch one drop back as you use another.
 
   **The order means something.** Within each row, icons sit in the order the windows are
-  stacked on screen — front-most first, the one you are looking at leftmost, whatever is
+  stacked on screen: front-most first, the one you are looking at leftmost, whatever is
   buried behind it last. That order is live: use a different window and its icon moves up.
   Only the workspace you are on can be ordered this way, because Windows only reports the
   stacking of windows you can actually see, so every other row keeps a stable order. This
@@ -150,7 +150,7 @@ single ~74 MB exe in `artifacts/publish`.
 
   A workspace with more than five windows **wraps onto another line** rather than making
   the whole bar wider, so one busy workspace cannot stretch every other lane into empty
-  space. **`Ctrl`+drag or middle-drag moves the bar** — from anywhere on it, rows and icons
+  space. **`Ctrl`+drag or middle-drag moves the bar**, from anywhere on it, rows and icons
   included, so a plain press is only ever the click of whatever is under it. Drop it wherever
   you like, including on top of a taskbar; it stays put.
 - **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
@@ -158,23 +158,23 @@ single ~74 MB exe in `artifacts/publish`.
 - **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
   workspaces in **most-recently-used** order; release to switch. Add `Shift` to walk
   backwards. One tap therefore returns you to wherever you just were, however your list
-  is arranged — which is the whole reason Alt+Tab is worth using.
+  is arranged, which is the whole reason Alt+Tab is worth using.
 
   **You arrive in the window you left.** Landing on a workspace puts focus back on
   whichever window had it last time you were there, so you can start typing instead of
-  hunting for it. The bar tells you where you will land before you go — see the fainter
+  hunting for it. The bar tells you where you will land before you go; see the fainter
   outline described above. Somewhere you have not been yet this session gets the
   front-most window on your main monitor, rather than whatever Windows happens to pick.
 
   `Win+Ctrl+Tab` was chosen by testing every `*+Tab` chord against Windows: it is the only
   one left unclaimed, and it neighbours `Win+Ctrl+←/→`, which Windows already uses for
   desktops. Change it on Manage → **Shortcuts** if you prefer. Whatever you pick becomes
-  **exclusive** while TaskSpaces runs, so avoid chords other apps need — `Ctrl+Tab` would
+  **exclusive** while TaskSpaces runs, so avoid chords other apps need. `Ctrl+Tab` would
   stop reaching browsers, editors and Explorer. It is the *only* shortcut TaskSpaces
   registers; everything else is on the bar, one click away.
 - **Renaming.** Give a window a short name so the taskbar shows `RDP` instead of
   `Remote Desktop Manager [server-01 - fhd]`. Right-click an icon for either
-  **Rename this window** or **Rename all *app* windows** — prefer the second for
+  **Rename this window** or **Rename all *app* windows**. Prefer the second for
   anything that rewrites its own title (browsers, chat apps, editors, Remote Desktop
   Manager), because a single-window rename is keyed to the exact title it had at the
   time and lapses the moment the app changes it. App-wide renames are keyed to the

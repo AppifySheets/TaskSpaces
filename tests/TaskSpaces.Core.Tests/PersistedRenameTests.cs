@@ -118,7 +118,7 @@ public class PersistedRenameTests
         Assert.Equal("Amy related", persistedBefore.ShortName);
 
         // App exit: RestoreAllTitles restores the original title but must NOT delete the
-        // persisted entry — the durable record survives so renames re-apply at next start.
+        // persisted entry -- the durable record survives so renames re-apply at next start.
         first.RestoreAllTitles();
 
         // Persisted rename still in store (not wiped by exit-time restoration)

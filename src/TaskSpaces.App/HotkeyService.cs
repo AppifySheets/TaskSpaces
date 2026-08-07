@@ -35,7 +35,7 @@ public sealed class HotkeyService : IDisposable
     readonly List<string> failures = [];
 
     // Failed registrations (another app already owns that chord) are recorded here rather
-    // than thrown — spec: "Registration failures ... surface once as a warning — never a
+    // than thrown -- spec: "Registration failures ... surface once as a warning -- never a
     // crash, never silent." The composition root reads this once, after construction, to show
     // a single MessageBox if non-empty. At most one entry now that there is one chord.
     public IReadOnlyList<string> Failures => failures;

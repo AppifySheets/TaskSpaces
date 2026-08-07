@@ -4,7 +4,7 @@ using TaskSpaces.Core.Persistence;
 
 namespace TaskSpaces.Core.Overview;
 
-// One row per live window. OriginalTitle is present when WE renamed it — the UI shows
+// One row per live window. OriginalTitle is present when WE renamed it -- the UI shows
 // both names (Petre: "show me what the new name is vs the original title").
 // IsActive marks the focused window so the surfaces can highlight it (Petre: "active window
 // should be highlighted in the floating window"). Defaulted, so the many existing
@@ -54,7 +54,7 @@ public sealed record WindowRow(
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);
 
-// A desktop that is NOT a TaskSpaces workspace still has a name ("Desktop 1") — its
+// A desktop that is NOT a TaskSpaces workspace still has a name ("Desktop 1") -- its
 // windows group under that name, never under a generic "Unassigned" (Petre's ask).
 public sealed record DesktopGroup(Guid DesktopId, string Name, bool IsCurrent, IReadOnlyList<WindowRow> Windows);
 

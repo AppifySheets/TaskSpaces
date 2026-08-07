@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 # The default GITHUB_TOKEN is read-only for contents; uploading a release asset needs write.
-# Nothing else is granted — least privilege, since this workflow builds untrusted-by-default
+# Nothing else is granted -- least privilege, since this workflow builds untrusted-by-default
 # code and then writes to the repo's releases.
 permissions:
   contents: write
@@ -59,8 +59,8 @@ jobs:
       - name: Test
         # Category=Integration is EXCLUDED deliberately: those tests create, switch and delete
         # REAL Windows virtual desktops. On a CI runner that is at best meaningless and at
-        # worst hangs the agent. Everything else — the whole domain, rules engine, roster,
-        # placement memory, title tokens and the WPF surfaces — does run here.
+        # worst hangs the agent. Everything else -- the whole domain, rules engine, roster,
+        # placement memory, title tokens and the WPF surfaces -- does run here.
         run: dotnet test TaskSpaces.sln -c Release --no-build --filter "Category!=Integration" --verbosity normal
 
       - name: Publish a self-contained executable
@@ -99,7 +99,7 @@ jobs:
           $name = "TaskSpaces-${{ steps.version.outputs.version }}-win-x64.exe"
           Move-Item artifacts/publish/TaskSpaces.App.exe "artifacts/publish/$name"
           "name=$name" >> $env:GITHUB_OUTPUT
-          "{0} — {1:N1} MB" -f $name, ((Get-Item "artifacts/publish/$name").Length / 1MB)
+          "{0} ({1:N1} MB)" -f $name, ((Get-Item "artifacts/publish/$name").Length / 1MB)
 
       - name: Keep the build even when there is no release to attach it to
         # So a workflow_dispatch run still leaves something downloadable to inspect.

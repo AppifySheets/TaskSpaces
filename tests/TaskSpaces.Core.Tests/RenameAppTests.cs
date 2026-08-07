@@ -148,7 +148,7 @@ public class RenameAppTests
     [Fact]
     public void Renaming_our_own_app_writes_no_title()
     {
-        var ours = new WindowInfo(new WindowHandle(0x1), 4242, "TaskSpaces.App", @"C:\apps\TaskSpaces.App.exe", "TaskSpaces — Manage", null);
+        var ours = new WindowInfo(new WindowHandle(0x1), 4242, "TaskSpaces.App", @"C:\apps\TaskSpaces.App.exe", "TaskSpaces: Manage", null);
         monitor.InitialWindows.Add(ours);
         var manager = Started();
 

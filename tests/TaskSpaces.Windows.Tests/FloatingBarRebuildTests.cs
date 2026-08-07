@@ -1,4 +1,4 @@
-﻿using System.Reactive.Subjects;
+using System.Reactive.Subjects;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -22,7 +22,7 @@ namespace TaskSpaces.Windows.Tests;
 //
 //   1. WindowMonitor hooks with WINEVENT_OUTOFCONTEXT, so its callbacks are delivered on
 //      the UI thread *while messages are being pumped*.
-//   2. WorkspaceManager.stateChanged is a plain Rx Subject — OnNext calls subscribers
+//   2. WorkspaceManager.stateChanged is a plain Rx Subject -- OnNext calls subscribers
 //      synchronously, on the calling thread.
 //   3. The bar's subscription uses Dispatcher.Invoke, which runs the delegate INLINE when
 //      the caller is already on the dispatcher thread (it does not queue).
@@ -30,13 +30,13 @@ namespace TaskSpaces.Windows.Tests;
 //      thread pump the message queue.
 //
 // So a window appearing mid-query re-enters Rebuild: the nested call clears an
-// already-empty panel, adds ITS rows, returns — and then the outer call appends its own
+// already-empty panel, adds ITS rows, returns -- and then the outer call appends its own
 // rows on top. Every row appears twice until the next clean pulse repairs it, which is
 // exactly why the bug was transient and self-healing.
 //
 // The test reproduces that call stack with no COM and no message pump at all: the
 // desktop-service stub fires one window event from inside DesktopOf, which
-// WindowsByWorkspace calls — precisely the point where the real pump used to let a
+// WindowsByWorkspace calls -- precisely the point where the real pump used to let a
 // WinEvent callback in.
 public class FloatingBarRebuildTests
 {
@@ -91,13 +91,13 @@ public class FloatingBarRebuildTests
         // three groups and the "not doubled" assertion would succeed while testing nothing.
         var firstGroupBefore = rows.Children[0];
 
-        // ARM: the next DesktopOf call — made from inside the OUTER rebuild's query —
+        // ARM: the next DesktopOf call -- made from inside the OUTER rebuild's query --
         // delivers a window event, standing in for the WinEvent that a real COM call's
         // message pump used to let through. One-shot, so the nested rebuild it provokes
         // cannot recurse forever.
         desktops.PulseOnNextDesktopOf = () => monitor.Pump.OnNext(new WindowEvent(WindowEventKind.Appeared, rdm));
 
-        // ACT: trigger the outer rebuild exactly as production does — a window event
+        // ACT: trigger the outer rebuild exactly as production does -- a window event
         // pulses StateChanged, whose subscription rebuilds the bar.
         monitor.Pump.OnNext(new WindowEvent(WindowEventKind.Appeared, beeper));
 

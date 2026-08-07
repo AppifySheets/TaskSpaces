@@ -173,7 +173,7 @@ public sealed class JsonPersistenceStoreTests : IDisposable
     }
 
     // Finding 5 (reviewer, Important): RuleMatchKind (and any future enum) must serialize
-    // as its name, not a bare int — unreadable on disk and a silent renumbering hazard.
+    // as its name, not a bare int -- unreadable on disk and a silent renumbering hazard.
     [Fact]
     public void Enum_fields_serialize_as_names_not_bare_ints()
     {

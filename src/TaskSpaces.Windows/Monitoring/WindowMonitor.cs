@@ -16,7 +16,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     // WindowInfo on DESTROY, when the hwnd can no longer be queried.
     readonly Dictionary<nint, WindowInfo> known = new();
     // Finding 3 (reviewer, Important): hwnds currently HIDden but not yet destroyed
-    // (e.g. Discord/Outlook minimized to tray — the window still exists, it just left
+    // (e.g. Discord/Outlook minimized to tray -- the window still exists, it just left
     // the taskbar). Tracked separately from `known` so a later DESTROY of a hidden
     // window still emits Disappeared (using the last-known WindowInfo still sitting in
     // `known`), and so a later re-SHOW of a hidden window is recognised as "came back"
@@ -25,7 +25,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     // OUR OWN chrome, opted out by hwnd (see Ignore below).
     readonly HashSet<nint> ignored = [];
     // CRITICAL: the delegate must be kept alive in a field. If the GC collects it,
-    // the hook silently dies — the classic SetWinEventHook bug.
+    // the hook silently dies -- the classic SetWinEventHook bug.
     readonly WinEventProc callback;
     readonly List<nint> hooks = [];
 
@@ -178,7 +178,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         if (@event == EVENT_SYSTEM_FOREGROUND) foreground.OnNext(hwnd);
 
         // INVARIANT: no managed exception may ever escape a native callback. OnWinEvent is
-        // invoked directly by user32 via the SetWinEventHook out-of-context callback — an
+        // invoked directly by user32 via the SetWinEventHook out-of-context callback -- an
         // unhandled exception here unwinds through native stack frames and takes down the
         // whole process, not just this monitor. Swallow anything unexpected and log it;
         // losing one event is far better than crashing the app that's hosting the monitor.
@@ -190,23 +190,23 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                     TryAppear(hwnd);
                     break;
 
-                // Finding 3 (reviewer, Important): HIDE on a window we still track — and
-                // haven't already flagged hidden — does NOT mean the window is gone. Apps
+                // Finding 3 (reviewer, Important): HIDE on a window we still track -- and
+                // haven't already flagged hidden -- does NOT mean the window is gone. Apps
                 // that minimize to the tray (Discord, Outlook, ...) fire HIDE while the
                 // window (and its hwnd) keep existing; only DESTROY means "gone for real",
                 // handled separately below. Emitting Disappeared here (as this code used to)
                 // made WorkspaceManager forget the rename ledger's original-title entry, so a
                 // later re-show would permanently mistake our own short name for the
-                // original. `known` deliberately keeps the entry — DESTROY still needs it.
+                // original. `known` deliberately keeps the entry -- DESTROY still needs it.
                 // Note: moving a window to another virtual desktop CLOAKS it (DWM), it does
-                // not fire HIDE — so our own desktop moves never produce a false Hidden either.
+                // not fire HIDE -- so our own desktop moves never produce a false Hidden either.
                 case EVENT_OBJECT_HIDE when known.TryGetValue(hwnd, out var w) && hidden.Add(hwnd):
                     events.OnNext(new WindowEvent(WindowEventKind.Hidden, w));
                     break;
 
                 // DESTROY always means gone for real, whether or not HIDE preceded it (some
                 // apps close directly without hiding first). Remove from both trackers and
-                // emit Disappeared with the last-known WindowInfo — the hwnd can no longer
+                // emit Disappeared with the last-known WindowInfo -- the hwnd can no longer
                 // be queried at this point.
                 case EVENT_OBJECT_DESTROY when known.Remove(hwnd, out var gone):
                     hidden.Remove(hwnd);
@@ -231,7 +231,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                 // also lands on things that are not taskbar candidates at all, and our own
                 // chrome is filtered at the top of this method, so clicking the bar itself
                 // never clears the highlight. Focus moving to an UNtracked window emits
-                // nothing, deliberately — the highlight then stays on the last real window,
+                // nothing, deliberately -- the highlight then stays on the last real window,
                 // which is the useful answer to "which window am I in".
                 case EVENT_SYSTEM_FOREGROUND when known.TryGetValue(hwnd, out var activated):
                     events.OnNext(new WindowEvent(WindowEventKind.Activated, activated));
@@ -284,7 +284,7 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         {
             // Re-query first (title/process may have changed while hidden); fall back to
             // the last-known snapshot if the hwnd is suddenly unqueryable, and give up
-            // silently only if we have neither — it's gone again already.
+            // silently only if we have neither -- it's gone again already.
             WindowInfoFactory.FromHwnd(hwnd)
                 .Or(() => known.TryGetValue(hwnd, out var last) ? Maybe<WindowInfo>.From(last) : Maybe<WindowInfo>.None)
                 .Tap(info =>

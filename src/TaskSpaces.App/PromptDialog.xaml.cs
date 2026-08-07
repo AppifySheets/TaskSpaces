@@ -8,7 +8,7 @@ public partial class PromptDialog : Window
 {
     public PromptDialog() => InitializeComponent();
 
-    // owner (Task 12): needed by the floating bar, which is Topmost — an unowned dialog can
+    // owner (Task 12): needed by the floating bar, which is Topmost -- an unowned dialog can
     // open BEHIND it, leaving the rename prompt invisible under the very surface that
     // launched it. An owned window always renders above its owner, topmost or not. Optional
     // so the existing WindowGroupsView call sites (hosted in ordinary windows, and already

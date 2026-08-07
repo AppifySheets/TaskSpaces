@@ -4,7 +4,7 @@ using TaskSpaces.Core.Domain;
 
 namespace TaskSpaces.Core.Rules;
 
-// Pure functions: window metadata + rule list in, decision out. No I/O, no state —
+// Pure functions: window metadata + rule list in, decision out. No I/O, no state --
 // this is the spec's "RulesEngine" component and the most heavily unit-tested code.
 public static class RulesEngine
 {

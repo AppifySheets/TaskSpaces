@@ -35,7 +35,7 @@ public class RosterIdentityTests
     [Fact]
     public void Firefox_identity_uses_generic_args_not_profile_directory()
     {
-        // Firefox has no --profile-directory (that's Chromium-only) — it uses -P/-profile,
+        // Firefox has no --profile-directory (that's Chromium-only) -- it uses -P/-profile,
         // which BrowserProfile doesn't parse. Routing Firefox through the Chromium
         // profile-only path would collapse every Firefox window to the same identity
         // regardless of profile; it must go through the generic args-based path instead,

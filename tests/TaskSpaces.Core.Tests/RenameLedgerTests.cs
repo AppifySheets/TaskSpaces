@@ -44,7 +44,7 @@ public class RenameLedgerTests
     [Fact]
     public void No_reapply_when_observed_title_is_our_own_short_name()
     {
-        // Our WM_SETTEXT also fires NAMECHANGE — this check breaks the infinite loop.
+        // Our WM_SETTEXT also fires NAMECHANGE -- this check breaks the infinite loop.
         var ledger = RenameLedger.Empty.Apply(H, "Old Page - Chrome", "Amy related");
         Assert.False(ledger.NeedsReapply(H, "Amy related"));
     }

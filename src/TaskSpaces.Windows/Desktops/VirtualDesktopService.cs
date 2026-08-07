@@ -11,19 +11,19 @@ namespace TaskSpaces.Windows.Desktops;
 // on Win11 build 26200. Every member call is wrapped: if Windows Update changes the
 // COM shape, callers get Result.Failure, not a crash.
 //
-// PRECONDITION (spike finding): the thread that calls Initialize() — and, in practice,
-// every other member on this instance — must be STA. VirtualDesktop.Configure() builds a
+// PRECONDITION (spike finding): the thread that calls Initialize() -- and, in practice,
+// every other member on this instance -- must be STA. VirtualDesktop.Configure() builds a
 // WPF HwndSource internally (to listen for explorer.exe restarts), and WPF's InputManager
 // throws InvalidOperationException on an MTA thread. A real host (WPF/WinForms tray app)
 // already runs its UI thread as STA, so this falls out naturally there. If the caller is
 // NOT on an STA thread, Configure() throws and Initialize() turns that into a Result
-// failure — the app degrades to compatibility mode instead of crashing, per spec.
+// failure -- the app degrades to compatibility mode instead of crashing, per spec.
 public sealed class VirtualDesktopService : IVirtualDesktopService
 {
     // DEVIATION from the brief's draft (Initialize body): the draft only touched
     // VirtualDesktop.Current to force the interop compile. The spike found that
-    // VirtualDesktop.Configure() — documented only in the package's XML doc comments,
-    // not the README — "should always be called first"; skipping it doesn't fail
+    // VirtualDesktop.Configure() -- documented only in the package's XML doc comments,
+    // not the README -- "should always be called first"; skipping it doesn't fail
     // immediately, it fails later from inside Configure()'s own implicit call chain.
     // Configure() is therefore called explicitly, first, here.
     public Result Initialize() =>
@@ -80,10 +80,10 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
 
     // DEVIATION from the brief's draft: the draft subscribed to the static
     // VirtualDesktop.CurrentChanged event eagerly, in a property initializer that runs
-    // in the constructor — i.e. before any caller has a chance to call Initialize().
+    // in the constructor -- i.e. before any caller has a chance to call Initialize().
     // That touches the undocumented COM type before Configure() has run and outside any
     // Result.Try, which could throw straight out of the constructor (violating "Initialize()
-    // failure = compatibility mode, never a crash" — a constructor throw isn't a Result
+    // failure = compatibility mode, never a crash" -- a constructor throw isn't a Result
     // failure, it's an unhandled exception). Observable.Defer delays the event subscription
     // (VirtualDesktop.CurrentChanged +=) until a consumer actually subscribes, by which
     // point Initialize() is expected to have already run.
@@ -95,11 +95,11 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
                 .Select(e => e.EventArgs.NewDesktop.Id));
 
     // CORRECTION (against the package's real surface, not the spike doc's "not exercised"
-    // guess): VirtualDesktop.PinWindow/UnpinWindow return bool, not void — per the package's
+    // guess): VirtualDesktop.PinWindow/UnpinWindow return bool, not void -- per the package's
     // shipped XML doc, false means "target window not found or not ready", which is an
     // expected, everyday failure (window closed mid-call), not exceptional. Result.Try alone
     // would yield Result<bool> (a compile mismatch against this interface's `Result` return),
-    // and would also report a false return as IsSuccess — wrong. Bind + Result.SuccessIf
+    // and would also report a false return as IsSuccess -- wrong. Bind + Result.SuccessIf
     // folds both the exceptional path (Result.Try) and the expected-false path into one
     // Result, matching Win32WindowTitles.Set's SuccessIf style for the same "bool means
     // expected outcome" shape.
@@ -128,8 +128,8 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
             e => $"Could not determine the current desktop: {e.Message}");
 
     // Shared lookup: every mutating operation needs the live VirtualDesktop instance for
-    // a Guid, and "desktop no longer exists" is an expected, everyday Result failure —
-    // not an exception — since desktops can vanish between UI render and user click.
+    // a Guid, and "desktop no longer exists" is an expected, everyday Result failure --
+    // not an exception -- since desktops can vanish between UI render and user click.
     static Result<VirtualDesktop> Find(Guid desktopId) =>
         Result.Try(() => VirtualDesktop.FromId(desktopId), e => e.Message)
             .Ensure(d => d is not null, $"Desktop {desktopId} no longer exists.")

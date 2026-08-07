@@ -2,7 +2,7 @@ using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Tests;
 
-// Real titles from Petre's machine wherever possible — the heuristic is only worth anything
+// Real titles from Petre's machine wherever possible -- the heuristic is only worth anything
 // if it survives the actual formats, not invented ones.
 public class TitleTokenTests
 {
@@ -27,7 +27,7 @@ public class TitleTokenTests
         Assert.Equal("my-cool-repo", TitleToken.For("Code", "main.ts - my-cool-repo - Visual Studio Code").Value);
 
     // "so i open vscode, then i load a folder in it, that should take it to the correct
-    // workspace" — the FIRST half of that flow must yield nothing, or we would learn garbage
+    // workspace" -- the FIRST half of that flow must yield nothing, or we would learn garbage
     // from a window that has loaded no folder at all.
     [Fact]
     public void A_freshly_opened_VS_Code_has_no_container() =>
@@ -97,7 +97,7 @@ public class TitleTokenTests
     public void Single_window_apps_are_never_tokenised(string process, string title) =>
         Assert.False(TitleToken.For(process, title).HasValue);
 
-    // An unknown app keeps today's behaviour rather than being guessed at — the reason this
+    // An unknown app keeps today's behaviour rather than being guessed at -- the reason this
     // is an allowlist and not a blocklist.
     [Fact]
     public void An_unknown_app_is_never_tokenised() =>
@@ -128,7 +128,7 @@ public class TitleTokenTests
     public void A_learned_token_matches_a_decorated_container() =>
         Assert.True(TitleToken.Matches("Code", "x.ts - TaskSpaces [WSL] - Visual Studio Code", "TaskSpaces"));
 
-    // A token must never match via the FILE name — that would place a window because of
+    // A token must never match via the FILE name -- that would place a window because of
     // whatever document happened to be open.
     [Fact]
     public void A_learned_token_does_not_match_against_the_file_name() =>

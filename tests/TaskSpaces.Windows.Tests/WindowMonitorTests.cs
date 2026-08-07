@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 
 namespace TaskSpaces.Windows.Tests;
 
-// Spawns a real window (winver) — manual run only:
+// Spawns a real window (winver) -- manual run only:
 //   dotnet test tests/TaskSpaces.Windows.Tests --filter "Category=Integration"
 [Trait("Category", "Integration")]
 public class WindowMonitorTests(ITestOutputHelper output)
@@ -18,7 +18,7 @@ public class WindowMonitorTests(ITestOutputHelper output)
         var disappeared = new TaskCompletionSource<WindowInfo>();
         // A plain nullable field written by the STA thread and read by the test thread would
         // race: WindowMonitor.Start()'s Snapshot() enumerates every top-level window and calls
-        // GetWindowText on each, which has no timeout — if any window on the box is slow to
+        // GetWindowText on each, which has no timeout -- if any window on the box is slow to
         // answer WM_GETTEXT, Start() (and therefore the Dispatcher assignment below) can take
         // several seconds, well past the point the test thread is ready to shut it down. Signal
         // dispatcher readiness through a TaskCompletionSource so cleanup genuinely waits for it
@@ -48,7 +48,7 @@ public class WindowMonitorTests(ITestOutputHelper output)
             winver = Process.Start("winver.exe");
             // xUnit1031 (avoid blocking Task.Wait in test methods) doesn't apply cleanly here:
             // the monitor lives on a dedicated STA/dispatcher thread, not the test thread, so
-            // there is no async continuation to deadlock — this is a synchronous cross-thread wait.
+            // there is no async continuation to deadlock -- this is a synchronous cross-thread wait.
 #pragma warning disable xUnit1031
             Assert.True(appeared.Task.Wait(TimeSpan.FromSeconds(10)), "winver window never appeared");
             winver.Kill();
@@ -57,13 +57,13 @@ public class WindowMonitorTests(ITestOutputHelper output)
         }
         finally
         {
-            // Both cleanups MUST run even when an assertion above throws — otherwise a
+            // Both cleanups MUST run even when an assertion above throws -- otherwise a
             // timed-out first Wait leaves winver.exe running and strands the STA/dispatcher
             // thread in Dispatcher.Run() forever (leaked process + leaked thread per failed run).
             if (winver is { HasExited: false }) winver.Kill();
 
             // Wait for the dispatcher to actually exist (see comment above) before asking it to
-            // shut down — bounded generously since Start()'s enumeration is the slow part, not
+            // shut down -- bounded generously since Start()'s enumeration is the slow part, not
             // anything unbounded. If it never shows up, there is nothing left to shut down safely.
 #pragma warning disable xUnit1031
             if (dispatcherReady.Task.Wait(TimeSpan.FromSeconds(15)))
@@ -73,7 +73,7 @@ public class WindowMonitorTests(ITestOutputHelper output)
 #pragma warning restore xUnit1031
 
             // Bound the shutdown wait too: if the dispatcher thread is somehow wedged, don't
-            // hang the whole test run — report it and let the process move on.
+            // hang the whole test run -- report it and let the process move on.
             if (!thread.Join(TimeSpan.FromSeconds(5)))
                 output.WriteLine("WARNING: WindowMonitor dispatcher thread did not shut down within 5s");
         }

@@ -2,7 +2,7 @@ using Microsoft.Win32;
 
 namespace TaskSpaces.App;
 
-// "Start with Windows" via HKCU Run — per-user, no admin, trivially reversible.
+// "Start with Windows" via HKCU Run -- per-user, no admin, trivially reversible.
 public static class StartupRegistration
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";

@@ -1,13 +1,13 @@
 using System.Diagnostics;
 using WindowsDesktop;
 
-// SPIKE — is Slions.VirtualDesktop usable on THIS machine (Win11 build 26200 / 25H2)?
+// SPIKE -- is Slions.VirtualDesktop usable on THIS machine (Win11 build 26200 / 25H2)?
 // The library runtime-compiles COM interop matched to the OS build; 6.9.2 documents
 // builds up to 26100. Each numbered check prints OK/FAIL so a partial run still tells
 // us exactly which capability broke. Findings go to
 // docs/superpowers/notes/2026-08-01-virtualdesktop-spike.md.
 //
-// This spike creates a real virtual desktop and switches the active desktop — expected
+// This spike creates a real virtual desktop and switches the active desktop -- expected
 // and authorized. Everything from "Create" onward runs inside try/finally so the created
 // desktop and the guinea-pig process are torn down even if a check throws partway through.
 //
@@ -18,7 +18,7 @@ using WindowsDesktop;
 // so this had to become an explicit class with a [STAThread] Main.
 //
 // SECOND CORRECTION, non-obvious: [STAThread] is silently ignored by the CLR when Main is
-// declared `async Task`/`async Task<int>` — verified independently with a throwaway repro
+// declared `async Task`/`async Task<int>` -- verified independently with a throwaway repro
 // (Thread.CurrentThread.GetApartmentState() reports MTA even with the attribute present).
 // Main must stay synchronous; the async body is moved to RunAsync() and blocked on here.
 internal static class Program
@@ -86,7 +86,7 @@ internal static class Program
 
             try
             {
-                // Switch away and back — visually confirms the taskbar swap that the whole product rides on.
+                // Switch away and back -- visually confirms the taskbar swap that the whole product rides on.
                 created.Switch();
                 await Task.Delay(1500);
                 var switched = VirtualDesktop.Current.Id == created.Id;
@@ -135,7 +135,7 @@ internal static class Program
 
             try
             {
-                // Event check — Task 4 exposes this as an RX observable.
+                // Event check -- Task 4 exposes this as an RX observable.
                 VirtualDesktop.CurrentChanged += (_, e) => Console.WriteLine($"7. CurrentChanged fired: OK - -> {e.NewDesktop.Id}");
                 created.Switch();
                 await Task.Delay(1500);

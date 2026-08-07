@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Controls;
@@ -601,7 +601,7 @@ public partial class FloatingBar : Window
         Opacity = 0.2,
     };
 
-    // groupLabel is the group's full human name ("Pinned", "GEPHA", "Main") — used in the
+    // groupLabel is the group's full human name ("Pinned", "GEPHA", "Main") -- used in the
     // hover info line and as the drop-target readout, where the visualLabel "📌" would be
     // too terse. groupKey/onDrop mirror WindowGroupsView.AddGroup: a null onDrop means
     // "rows here drag FROM this group, but nothing can be dropped ONTO it" (the Unplaced
@@ -812,8 +812,8 @@ public partial class FloatingBar : Window
     static readonly Brush WillActivateBorder = Frozen(0x38, 0xFF, 0xFF, 0xFF);
 
     // Every shared brush here is FROZEN. A Freezable that is still mutable takes on the
-    // thread affinity of whoever created it, and these are `static` — created once, on
-    // whichever thread happens to touch this class first — so an unfrozen brush assigned to
+    // thread affinity of whoever created it, and these are `static` -- created once, on
+    // whichever thread happens to touch this class first -- so an unfrozen brush assigned to
     // a control on any other thread throws "Cannot use a DependencyObject that belongs to a
     // different thread than its parent Freezable" during Arrange. That surfaced as
     // order-dependent test failures (each bar test passing alone, failing in a suite, since
@@ -871,8 +871,8 @@ public partial class FloatingBar : Window
         Info.Inlines.Clear();
         Info.Inlines.Add(new Run(row.Window.Title));
         var detail = row.OriginalTitle.HasValue
-            ? $"  —  {row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
-            : $"  —  {row.Window.ProcessName} · {groupLabel}";
+            ? $"  ·  {row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
+            : $"  ·  {row.Window.ProcessName} · {groupLabel}";
         Info.Inlines.Add(new Run(detail) { Foreground = DimForeground });
     }
 

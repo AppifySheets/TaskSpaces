@@ -1,4 +1,4 @@
-﻿using TaskSpaces.Core.Abstractions;
+using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
@@ -73,7 +73,7 @@ public class OverviewTests
         manager.AddRosterEntry(work.Id, @"C:\rider\rider64.exe", "X.sln");
         manager.AddRosterEntry(work.Id, @"C:\rider\rider64.exe", "Y.sln");
 
-        // X.sln is running — in NO workspace at all — Y.sln is not.
+        // X.sln is running -- in NO workspace at all -- Y.sln is not.
         Appear(new WindowInfo(new WindowHandle(0x20), 7, "rider64", @"C:\rider\rider64.exe", "X", "\"C:\\rider\\rider64.exe\" X.sln"));
 
         var notRunning = manager.NotRunningRoster(work.Id);
@@ -138,12 +138,12 @@ public class OverviewTests
         Assert.Empty(desktops.WindowPlacements); // pinned = on ALL desktops; rules keep out
     }
 
-    // --- Task 10: bug fix — missing windows in the non-workspace section ---------
+    // --- Task 10: bug fix -- missing windows in the non-workspace section ---------
 
     // Suspect (a): a desktop the user never manually renamed reports Name == "" from the
     // OS (Windows' Task View label "Desktop 2" is a shell-UI overlay, not the COM Name
-    // property). Confirmed as a real implementation gap (not reproduced live — Petre's
-    // own desktops are all named — but the original code had no fallback at all). Fixed
+    // property). Confirmed as a real implementation gap (not reproduced live -- Petre's
+    // own desktops are all named -- but the original code had no fallback at all). Fixed
     // by falling back to "Desktop {index+1}" using GetDesktops order.
     [Fact]
     public void Unnamed_desktop_falls_back_to_positional_name()
@@ -163,7 +163,7 @@ public class OverviewTests
         Assert.Equal("Desktop 2", group.Name); // index 1 in GetDesktops order -> "Desktop 2"
     }
 
-    // Suspect (b): CONFIRMED live on Petre's machine — a real, visible, taskbar-candidate
+    // Suspect (b): CONFIRMED live on Petre's machine -- a real, visible, taskbar-candidate
     // window ("Windows Input Experience") for which DesktopOf failed (VirtualDesktop.
     // FromHwnd returned null) was silently absent from Pinned, every workspace, AND
     // OtherDesktops. WindowsByWorkspace() only ever populates `desktopOf` for successful

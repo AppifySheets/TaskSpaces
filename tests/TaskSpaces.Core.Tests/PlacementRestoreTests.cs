@@ -184,7 +184,7 @@ public class PlacementRestoreTests
         Assert.Equal(manager.State.Workspaces.Single().DesktopId, desktops.WindowPlacements[window.Handle]);
     }
 
-    // A pin is ADDITIVE — it makes a window appear everywhere rather than moving it — so it
+    // A pin is ADDITIVE -- it makes a window appear everywhere rather than moving it -- so it
     // is re-applied regardless of which desktop the window currently sits on. Without this,
     // the "only sweep windows on unbound desktops" guard below would leave Petre's Beeper
     // unpinned exactly when it came back inside a workspace, which is the reported bug.

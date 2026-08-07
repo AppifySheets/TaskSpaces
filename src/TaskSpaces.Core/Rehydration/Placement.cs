@@ -10,12 +10,12 @@ public enum PlacementKind
 {
     Workspace, // in workspace WorkspaceId
     Pinned,    // on ALL workspaces (Windows' own pin)
-    Detached,  // deliberately dragged onto a plain desktop — no workspace owns it
+    Detached,  // deliberately dragged onto a plain desktop -- no workspace owns it
 }
 
 public sealed record Placement(PlacementKind Kind, Guid WorkspaceId)
 {
-    // Pinned/Detached carry no workspace, hence Guid.Empty — used here purely as "not
+    // Pinned/Detached carry no workspace, hence Guid.Empty -- used here purely as "not
     // applicable", never as a lookup key (that overload of Guid.Empty already means the
     // "Unplaced" catch-all over in OverviewBuilder, which is a different notion entirely).
     public static Placement Pinned { get; } = new(PlacementKind.Pinned, Guid.Empty);
@@ -26,8 +26,8 @@ public sealed record Placement(PlacementKind Kind, Guid WorkspaceId)
 // Reads the persisted placement of a window BY IDENTITY (exe path + args) rather than by
 // window handle. That distinction is the whole point:
 //
-// Petre's defect — "move Beeper to pinned, close the app, open again, it is incorrectly
-// placed in GEPHA workspace" — happened because Windows' pin is keyed to the HWND, and
+// Petre's defect -- "move Beeper to pinned, close the app, open again, it is incorrectly
+// placed in GEPHA workspace" -- happened because Windows' pin is keyed to the HWND, and
 // Beeper is an Electron app that closes to tray, destroying and recreating its window. The
 // pin died with the old handle and the fresh window appeared on whatever desktop was
 // current. Nothing in TaskSpaces recorded the pin, because AppState had nowhere to put it.

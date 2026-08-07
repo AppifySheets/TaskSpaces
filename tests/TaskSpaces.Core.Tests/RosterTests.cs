@@ -77,7 +77,7 @@ public class RosterTests
     // Fix round 1 (reviewer, Important): ApplyRename's titles.Set produces a genuine
     // NAMECHANGE, which re-enters OnTitleChanged as an "echo" carrying OUR OWN short
     // name as window.Title. If the window is still unplaced, late placement must NOT
-    // run workspace rules against that synthetic title — only titles the APP itself
+    // run workspace rules against that synthetic title -- only titles the APP itself
     // wrote are legitimate placement signals.
     [Fact]
     public void Late_placement_does_not_fire_on_the_echo_of_our_own_rename()
@@ -92,11 +92,11 @@ public class RosterTests
         Assert.Empty(desktops.WindowPlacements);         // rename applied, not placed
 
         // WM_SETTEXT echo: the OS reports our own rename back as a NAMECHANGE, with
-        // Title now "Amy related" — which WOULD match the workspace's TitleRegex "Amy"
+        // Title now "Amy related" -- which WOULD match the workspace's TitleRegex "Amy"
         // if late placement blindly re-ran rules against it.
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, bare with { Title = "Amy related" }));
 
-        Assert.Empty(desktops.WindowPlacements); // must stay unplaced — that title is ours, not the app's
+        Assert.Empty(desktops.WindowPlacements); // must stay unplaced -- that title is ours, not the app's
     }
 
     [Fact]

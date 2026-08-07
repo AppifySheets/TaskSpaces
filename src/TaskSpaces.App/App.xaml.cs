@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using System.IO;
 using System.Windows;
 using System.Windows.Interop;
@@ -16,7 +16,7 @@ using TaskSpaces.Windows.Renaming;
 
 namespace TaskSpaces.App;
 
-// Composition root. Explicit wiring instead of a DI container — five objects don't
+// Composition root. Explicit wiring instead of a DI container -- five objects don't
 // justify one, and the construction ORDER documents the architecture.
 public partial class App : Application
 {
@@ -84,13 +84,13 @@ public partial class App : Application
         }
 
         // Reviewer (fix round 1, Critical, last-ditch backstop): an unhandled exception on
-        // the dispatcher thread — e.g. the ArgumentException a duplicate-name dictionary
-        // build used to throw — otherwise takes the whole process down immediately, with
+        // the dispatcher thread -- e.g. the ArgumentException a duplicate-name dictionary
+        // build used to throw -- otherwise takes the whole process down immediately, with
         // every window still wearing its renamed title. WPF's default behavior for an
         // unhandled dispatcher exception is to terminate the process once this handler
         // returns with e.Handled left false, so this is NOT a crash suppressor: it is the
-        // last opportunity to run RestoreAllTitles() — "leave every window as we found
-        // it" — before that termination happens, plus a MessageBox so the failure isn't
+        // last opportunity to run RestoreAllTitles() -- "leave every window as we found
+        // it" -- before that termination happens, plus a MessageBox so the failure isn't
         // silent. e.Handled is deliberately left false: we still want the crash (and its
         // real stack trace/telemetry), just not a window stuck with the wrong title.
         DispatcherUnhandledException += (_, args) =>
@@ -98,7 +98,7 @@ public partial class App : Application
             manager?.RestoreAllTitles();
             MessageBox.Show($"TaskSpaces hit an unexpected error and must close:\n{args.Exception.Message}",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Error);
-            args.Handled = false; // let it die — titles are already restored
+            args.Handled = false; // let it die -- titles are already restored
         };
 
         var stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces");
@@ -118,13 +118,13 @@ public partial class App : Application
             activator: new WindowActivator(), screenLayout: new ScreenLayout(), attention: attentionMonitor);
 
         // Spec §Error handling: if the COM API is unrecognized (post-Windows-Update),
-        // degrade to listing workspaces with a banner — never crash, never move windows.
+        // degrade to listing workspaces with a banner -- never crash, never move windows.
         compatibilityMode = desktops.Initialize().IsFailure;
         if (compatibilityMode)
         {
             // Finding 2 (reviewer, Important): compatibility mode still lists workspaces
             // per spec ("switcher still lists workspaces but shows a compatibility
-            // banner") — it just can't reconcile desktops (there are none to reconcile
+            // banner") -- it just can't reconcile desktops (there are none to reconcile
             // onto) or start the window monitor (no desktop moves/renames will ever
             // happen, so there's nothing for it to drive). LoadState() alone gives the
             // tray menu and Manage window a read-only view of what's on disk.
@@ -141,9 +141,9 @@ public partial class App : Application
             // tell the difference and refuse to silently overwrite the user's data. If we
             // ignored the failure here, State would stay empty and the very next action
             // that persists (adding a workspace, a window appearing, ...) would happily
-            // write that empty state straight over the corrupt file — destroying whatever
+            // write that empty state straight over the corrupt file -- destroying whatever
             // was recoverable in it. Instead: back the corrupt file up (rename, never
-            // delete), tell the user, and only THEN retry — the retry succeeds because
+            // delete), tell the user, and only THEN retry -- the retry succeeds because
             // Load() now sees a missing file, which is the normal "first run" case.
             var started = manager.Start();
             if (started.IsFailure)
@@ -158,7 +158,7 @@ public partial class App : Application
             }
 
             // Finding 1(b): monitor.Start() was also unchecked. A failure here means
-            // WinEvent hooks never registered — the app would run silently believing it
+            // WinEvent hooks never registered -- the app would run silently believing it
             // sees every window when it in fact sees none. Never fatal (v1 can limp along
             // with manual "Refresh" in Manage), but never silent either.
             monitor.Start().TapError(err => MessageBox.Show(
@@ -192,7 +192,7 @@ public partial class App : Application
         trayIcon.TrayLeftMouseUp += (_, _) => OpenManage();
         // H.NotifyIcon 2.x creates the shell icon lazily: with no window/XAML tree, a
         // code-built TaskbarIcon never registers with the tray until ForceCreate() is
-        // called (see the library's own Wpf.Windowless sample — found the hard way when
+        // called (see the library's own Wpf.Windowless sample -- found the hard way when
         // the app ran headless with no icon at all). Efficiency mode stays OFF: it puts
         // the process under EcoQoS throttling, and we need WinEvent callbacks handled
         // promptly to re-apply renames and route new windows without visible lag.
@@ -334,8 +334,8 @@ public partial class App : Application
         }
 
         // Safety-net sweep (spec §5): event-driven handling is the fast path, this is the
-        // truth. Every 5s it re-asserts drifted titles, adopts persisted renames, and —
-        // added after Petre found two windows missing from his Personal row — reconciles the
+        // truth. Every 5s it re-asserts drifted titles, adopts persisted renames, and --
+        // added after Petre found two windows missing from his Personal row -- reconciles the
         // window list itself against what the OS actually lists.
         //
         // That second job matters because WinEvents are lossy in two different ways: an
@@ -376,7 +376,7 @@ public partial class App : Application
         //
         // Fix round 1 (reviewer, minor): deliberately does NOT call hotkeys?.Dispose()
         // here, unlike ExitApp() below. SessionEnding means Windows is tearing the whole
-        // process down for logoff/shutdown regardless of what we do — RegisterHotKey's
+        // process down for logoff/shutdown regardless of what we do -- RegisterHotKey's
         // registrations are per-process and vanish with it, so unregistering first would
         // be pure ceremony with nothing left to observe the result. ExitApp is the
         // orderly, still-running-normally exit path (tray menu -> Exit), where disposing
@@ -390,7 +390,7 @@ public partial class App : Application
 
     // Finding 1 (reviewer, Critical): renames (never deletes) a corrupt state.json so the
     // user's data stays recoverable, and tells them about it. Called once, right before
-    // the retried manager.Start() — by the time this returns, nothing has had a chance to
+    // the retried manager.Start() -- by the time this returns, nothing has had a chance to
     // persist an empty state over the original file.
     static void BackupCorruptState(string statePath, string loadError)
     {
@@ -399,7 +399,7 @@ public partial class App : Application
             if (File.Exists(statePath))
             {
                 var backupPath = statePath + ".bak";
-                // Don't clobber a previous backup's forensic value — an already-backed-up
+                // Don't clobber a previous backup's forensic value -- an already-backed-up
                 // corruption episode gets its own timestamped name instead.
                 if (File.Exists(backupPath))
                     backupPath = $"{statePath}.{DateTime.Now:yyyyMMddHHmmss}.bak";
@@ -409,7 +409,7 @@ public partial class App : Application
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Best effort: even if the rename itself fails (e.g. file locked by another
-            // process), the MessageBox below still fires — the user is never left thinking
+            // process), the MessageBox below still fires -- the user is never left thinking
             // everything is fine when it isn't.
         }
 

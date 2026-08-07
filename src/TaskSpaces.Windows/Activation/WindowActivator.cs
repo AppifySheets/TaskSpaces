@@ -9,7 +9,7 @@ using static NativeMethods;
 
 // "Bring it to me": restore if minimized, then foreground. Called from a click inside
 // OUR focused panel, which is exactly the situation where Windows grants
-// SetForegroundWindow permission — outside that, it degrades to a taskbar flash,
+// SetForegroundWindow permission -- outside that, it degrades to a taskbar flash,
 // which is acceptable best-effort behavior, not an error worth failing loudly on.
 public sealed class WindowActivator : IWindowActivator
 {
@@ -20,7 +20,7 @@ public sealed class WindowActivator : IWindowActivator
             SetForegroundWindow(window.Value);
         }, e => $"Could not activate window {window.Value}: {e.Message}");
 
-    // SW_MINIMIZE, emphatically NOT SW_HIDE — a hidden window can be orphaned by a crash with
+    // SW_MINIMIZE, emphatically NOT SW_HIDE -- a hidden window can be orphaned by a crash with
     // no way back, which is the reason this codebase is built on virtual desktops in the first
     // place (see the spec). A minimized window is still on the taskbar and still on its desktop;
     // it has simply been put down.

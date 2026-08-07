@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace TaskSpaces.Windows.Monitoring;
@@ -32,26 +32,26 @@ public static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wparam, string lparam, uint flags, uint timeoutMs, out nint result);
 
-    // Same export, integer lparam — WM_GETICON takes no string. A separate declaration
+    // Same export, integer lparam -- WM_GETICON takes no string. A separate declaration
     // rather than a marshalling trick: EntryPoint pins it to the same "W" function the
     // string overload above resolves to, and the two signatures stay independently readable.
     //
     // TIMEOUT, not SendMessage: WM_GETICON is answered by the OWNING process's UI thread,
-    // so a hung app would otherwise block ours indefinitely — and this is called from the
+    // so a hung app would otherwise block ours indefinitely -- and this is called from the
     // floating bar's rebuild, which runs on the dispatcher thread on every window event.
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
     public static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wparam, nint lparam, uint flags, uint timeoutMs, out nint result);
 
     // The class-level icon, the fallback for windows that answer WM_GETICON with nothing.
     // "Ptr" suffix is real on x64 user32 (on 32-bit it is only a macro for GetClassLongW),
-    // which is fine — this project is x64-only, as the file header already notes.
+    // which is fine -- this project is x64-only, as the file header already notes.
     [DllImport("user32.dll", EntryPoint = "GetClassLongPtrW", SetLastError = true)]
     public static extern nint GetClassLongPtr(nint hwnd, int index);
 
     public const uint EVENT_OBJECT_DESTROY = 0x8001, EVENT_OBJECT_SHOW = 0x8002, EVENT_OBJECT_HIDE = 0x8003, EVENT_OBJECT_NAMECHANGE = 0x800C;
     // Petre: "active window should be highlighted in the floating window". Note this one is
     // in the SYSTEM range (0x0003), far below the OBJECT events above, so it needs its own
-    // hook rather than widening an existing range — a single hook spanning 0x0003..0x800C
+    // hook rather than widening an existing range -- a single hook spanning 0x0003..0x800C
     // would subscribe us to every event in between.
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     // Fires ONCE, when the user lets go of a window they were dragging or resizing -- which is
@@ -82,7 +82,7 @@ public static class NativeMethods
 
     // Petre: "i also don't see an icon for whatsapp app". WhatsApp is a Store app whose
     // WhatsApp.Root.exe is a launcher stub with NO embedded icon, so
-    // Icon.ExtractAssociatedIcon does not fail — it quietly hands back the generic Windows
+    // Icon.ExtractAssociatedIcon does not fail -- it quietly hands back the generic Windows
     // default, which is why the bar showed a blank-looking placeholder rather than nothing.
     // The fix is to ask the WINDOW what it is displaying instead of asking the file.
     // ICON_BIG first (usually 32px, so it scales down cleanly to the bar's 20px) then the
@@ -113,7 +113,7 @@ public static class NativeMethods
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
 
     // Task 7 fix round 1 (reviewer, Important): the switcher panel used to clamp its
-    // position to (0,0) — the PRIMARY monitor's origin — which is wrong on any layout with
+    // position to (0,0) -- the PRIMARY monitor's origin -- which is wrong on any layout with
     // a monitor placed LEFT of primary (negative virtual-screen coordinates put the panel on
     // the wrong screen entirely). These let the panel ask Windows which monitor the cursor is
     // actually on, and clamp inside THAT monitor's work area (which excludes the taskbar).
@@ -189,7 +189,7 @@ public static class NativeMethods
 
     // The app's one global chord: the Alt+Tab-style workspace switcher (Win+Ctrl+Tab by default).
     // RegisterHotKey delivers WM_HOTKEY to the given window's message queue regardless
-    // of focus — exactly what a background tray app needs (no window ever has to be
+    // of focus -- exactly what a background tray app needs (no window ever has to be
     // foreground for the chord to fire).
     [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint vk);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool UnregisterHotKey(nint hwnd, int id);
