@@ -35,7 +35,12 @@ public sealed class WorkspaceManager(
     // this pipeline like anyone else's. Which means this class has to know which windows
     // are OURS, because three things it does to every other window must never happen to
     // one of ours. See IsOurs below. Injectable purely so tests can name a pid.
-    int? ownProcessId = null)
+    int? ownProcessId = null,
+    // Petre: "when switching workspaces, i want you to activate the window which was last
+    // active last time this workspace was active." Optional and last so every pre-existing
+    // caller and test compiles unchanged; null simply means "restore nothing", which is what
+    // compatibility mode wants anyway (no desktops to switch between).
+    IWindowActivator? activator = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
     readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
@@ -53,6 +58,24 @@ public sealed class WorkspaceManager(
     // The focused window, for the active-row highlight. Live-only: focus is a fact about
     // right now, so there is nothing to persist or reconcile.
     Maybe<WindowHandle> activeWindow = Maybe<WindowHandle>.None;
+
+    // Petre: "when switching workspaces, i want you to activate the window which was last
+    // active last time this workspace was active", and "so i know what i'm going to have
+    // activated when i land on that workspace" -- the bar marks the same window, so this map
+    // drives BOTH the restore and the marker, and they therefore cannot disagree.
+    //
+    // Keyed by DESKTOP id, not workspace id: Petre's own windows largely live on the unbound
+    // "Main" desktop, so a workspaces-only version would not cover the desktop he uses most.
+    //
+    // Live-only, like `activeWindow` and the MRU above: which window you were last looking at
+    // is a fact about this session, and a handle does not survive a restart anyway.
+    readonly Dictionary<Guid, WindowHandle> lastActiveByDesktop = [];
+
+    // Where we are RIGHT NOW, so a desktop change can stamp the desktop being LEFT. Kept here
+    // rather than asked of the OS at switch time because by the time CurrentChanged fires,
+    // CurrentDesktop() already reports the new one -- the outgoing id is only knowable if we
+    // were already holding it.
+    Maybe<Guid> currentDesktopId = Maybe<Guid>.None;
     // Alt+Tab-style switching order. Live-only for the reason WorkspaceMru documents:
     // "where I was a moment ago" is a fact about this session.
     WorkspaceMru mru = WorkspaceMru.Empty;
@@ -96,12 +119,20 @@ public sealed class WorkspaceManager(
                 // the first tap somewhere Petre did not expect.
                 currentDesktop = desktops.CurrentChanged.Subscribe(desktopId =>
                 {
+                    OnDesktopChanged(desktopId);
                     RememberVisit(desktopId);
                     stateChanged.OnNext(Unit.Default);
                 });
                 // Seed it with wherever we started, so the very first switcher tap of a session
                 // already knows which workspace it is leaving.
-                desktops.CurrentDesktop().Tap(RememberVisit);
+                desktops.CurrentDesktop().Tap(id =>
+                {
+                    RememberVisit(id);
+                    // Seeded for the same reason RememberVisit is: the FIRST switch away from
+                    // wherever we launched must be able to stamp that desktop, and it can only
+                    // do that if we were already holding its id.
+                    currentDesktopId = id;
+                });
                 ReapplyRenames();
                 RestorePlacements();
             });
@@ -398,6 +429,61 @@ public sealed class WorkspaceManager(
     public Result SetSwitcherShortcut(string shortcut) =>
         Chord.Parse(shortcut)
             .Tap(chord => Persist(State with { SwitcherShortcut = chord.ToString() }));
+
+    // Petre: "when switching workspaces, i want you to activate the window which was last
+    // active last time this workspace was active."
+    //
+    // Both halves live in one method because they are two ends of the same move and the order
+    // between them matters: the desktop being LEFT must be stamped before `currentDesktopId`
+    // advances, or the stamp lands on the wrong desktop.
+    //
+    // Driven off CurrentChanged rather than Switch() so it covers switches made by ANY means --
+    // our hotkey, the bar, Win+Ctrl+arrows, Task View -- for the same reason the MRU is fed
+    // from here. A restore that only worked for our own switches would be the kind of
+    // half-working that is worse than absent.
+    void OnDesktopChanged(Guid arriving)
+    {
+        currentDesktopId.Tap(RecordLastActive);
+        currentDesktopId = arriving;
+        RestoreLastActive(arriving);
+    }
+
+    // Stamp the desktop we are leaving with whatever had focus there.
+    //
+    // Recorded on the way OUT rather than on every activation, which is what makes this cheap:
+    // no DesktopOf COM call per focus change, just one stamp per desktop switch. It is also
+    // the more accurate reading of the ask -- "last active last time this workspace was
+    // active" is by definition the state at the moment you left.
+    //
+    // Pinned windows are skipped: a pinned window follows you to every desktop, so it is
+    // already wherever you land and "restoring" it would say nothing, while its marker would
+    // claim a landing spot that was never in question.
+    void RecordLastActive(Guid leaving) =>
+        activeWindow
+            .Where(w => !desktops.IsPinned(w).GetValueOrDefault(false))
+            .Tap(w => lastActiveByDesktop[leaving] = w);
+
+    // ...and put focus back on arrival.
+    //
+    // Re-validated against the OS rather than trusted: the remembered window may have been
+    // closed, or dragged to another desktop, since we left. DesktopOf answers both at once (it
+    // fails outright for a dead hwnd), and a stale entry is DROPPED rather than merely skipped
+    // so the bar's marker stops promising a landing spot that no longer exists.
+    //
+    // Best-effort by design, exactly like every other Activate call here. SetForegroundWindow
+    // is only granted to a process that currently holds foreground rights, and on a switch WE
+    // did not initiate (Win+Ctrl+arrows, Task View) we may well not -- in which case this
+    // degrades to a taskbar flash rather than failing loudly.
+    void RestoreLastActive(Guid arriving)
+    {
+        if (activator is null || !lastActiveByDesktop.TryGetValue(arriving, out var window)) return;
+        if (desktops.DesktopOf(window).GetValueOrDefault() != arriving)
+        {
+            lastActiveByDesktop.Remove(arriving);
+            return;
+        }
+        activator.Activate(window);
+    }
 
     // A desktop became current: if it belongs to a workspace, that is a visit.
     void RememberVisit(Guid desktopId) =>
@@ -788,7 +874,7 @@ public sealed class WorkspaceManager(
                 .Select(w => (w.Handle, Desktop: desktops.DesktopOf(w.Handle)))
                 .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);
-            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow);
+            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop);
         }));
 
     // Both now RECORD the placement as well as performing it. Petre's defect: "move Beeper
@@ -809,6 +895,16 @@ public sealed class WorkspaceManager(
         desktops.IsPinned(window).Bind(pinned => pinned
             ? activator.Activate(window) // pinned windows are already wherever Petre is
             : desktops.DesktopOf(window)
+                // Claim the target as its desktop's last-active BEFORE switching, and that
+                // ordering is the whole point. Switching fires CurrentChanged, whose
+                // RestoreLastActive would otherwise activate whatever was remembered from the
+                // previous visit -- racing this method's own Activate below for the same
+                // foreground, with the winner decided by when the OS delivers the COM
+                // notification. Writing the answer first makes the two agree instead of
+                // compete: the restore either no-ops on the same handle or is beaten by an
+                // identical call. Recording it is correct on its own terms anyway -- jumping
+                // to a window IS that desktop's most recent focus.
+                .Tap(desktopId => lastActiveByDesktop[desktopId] = window)
                 .Bind(desktopId => desktops.CurrentDesktop()
                     .Bind(current => desktopId == current ? Result.Success() : desktops.Switch(desktopId)))
                 .Bind(() => activator.Activate(window)));

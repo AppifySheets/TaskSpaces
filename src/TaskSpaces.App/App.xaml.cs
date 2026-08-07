@@ -9,6 +9,7 @@ using TaskSpaces.Core;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
+using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Monitoring;
 using TaskSpaces.Windows.Renaming;
@@ -100,7 +101,12 @@ public partial class App : Application
         var statePath = Path.Combine(stateDir, "state.json");
         desktops = new VirtualDesktopService();
         monitor = new WindowMonitor();
-        manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir));
+        // The activator is what lets a desktop switch put focus back on the window that had it
+        // last time you were there (WorkspaceManager.RestoreLastActive). Same WindowActivator
+        // the bar's icons use -- one definition of "bring it to me", so a restored window and a
+        // clicked one behave identically.
+        manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir),
+            activator: new WindowActivator());
 
         // Spec §Error handling: if the COM API is unrecognized (post-Windows-Update),
         // degrade to listing workspaces with a banner — never crash, never move windows.

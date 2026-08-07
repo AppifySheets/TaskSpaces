@@ -279,21 +279,22 @@ public class FloatingBarRebuildTests
         using var bar = harness.ShowBar();
         var row = RowFor(bar.Rows, "Sparrow");
         var label = TextBlocks(row).Single(t => t.Text == "Sparrow");
-        var resting = label.Opacity;
+        var resting = Strength(label);
 
         row.RaiseEvent(MouseEnter());
-        var hovered = label.Opacity;
+        var hovered = Strength(label);
 
         row.RaiseEvent(MouseLeave());
 
         Assert.True(hovered > resting, $"hover should brighten the label; was {resting}, hovered {hovered}");
         // Rises to exactly the strength the CURRENT row is drawn at, and no further: the two
-        // values are shared through one const precisely so hover cannot drift past "current".
-        Assert.Equal(TextBlocks(RowFor(bar.Rows, "GEPHA")).Single(t => t.Text == "GEPHA").Opacity, hovered);
-        Assert.Equal(resting, label.Opacity); // restored, not left stuck bright
-        // Weight never moves: bold already means "this is the workspace you are on", and a
-        // hover that also went bold would impersonate it.
-        Assert.Equal(FontWeights.Normal, label.FontWeight);
+        // values are shared through one brush precisely so hover cannot drift past "current".
+        Assert.Equal(Strength(TextBlocks(RowFor(bar.Rows, "GEPHA")).Single(t => t.Text == "GEPHA")), hovered);
+        Assert.Equal(resting, Strength(label)); // restored, not left stuck bright
+        // Weight never moves -- and now it never moves for ANY reason, not just hover. Petre:
+        // "let's make all text bold and only change its color if it's active", because a bold
+        // current row measured wider and the SizeToContent bar resized on every switch.
+        Assert.Equal(FontWeights.Bold, label.FontWeight);
     });
 
     // Clicking an icon jumps to a WINDOW, not to a workspace, so the icons punch holes in the
@@ -308,13 +309,53 @@ public class FloatingBarRebuildTests
         using var bar = harness.ShowBar();
         var row = RowFor(bar.Rows, "Sparrow");
         var label = TextBlocks(row).Single(t => t.Text == "Sparrow");
-        var resting = label.Opacity;
+        var resting = Strength(label);
 
         row.RaiseEvent(MouseEnter());                              // into the row: bright
         IconButtons(row).Single().RaiseEvent(MouseEnter());         // onto its icon: back to rest
 
-        Assert.Equal(resting, label.Opacity);
+        Assert.Equal(resting, Strength(label));
     });
+
+    // Petre: "when switching workspaces, because the caption of the workspace gets bolded, it
+    // increases the width of the floating window a little if that workspace is full, which is a
+    // little bad."
+    //
+    // The bar is SizeToContent, so anything that differs BETWEEN the current row and the others
+    // and participates in measure moves the whole window on every switch. This pins the fix at
+    // the level the bug actually lived at -- not "is it bold" but "does current-ness cost width
+    // anywhere" -- so a future marker that reintroduces the problem fails here rather than in
+    // Petre's peripheral vision.
+    //
+    // Colour is exempt by construction: a brush cannot change a measure. That is the whole
+    // reason the state moved into brushes.
+    [Fact]
+    public void Being_the_current_workspace_costs_no_width() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var current = TextBlocks(RowFor(bar.Rows, "GEPHA")).Single(t => t.Text == "GEPHA");
+        var other = TextBlocks(RowFor(bar.Rows, "Sparrow")).Single(t => t.Text == "Sparrow");
+
+        Assert.Equal(other.FontWeight, current.FontWeight);
+        Assert.Equal(other.FontSize, current.FontSize);
+        Assert.Equal(other.Margin, current.Margin);
+
+        // ...and the same for the pill drawn around each label: present on both rows at the
+        // same thickness and padding, differing only in the brush.
+        var currentPill = (Border)VisualTreeHelper.GetParent(current);
+        var otherPill = (Border)VisualTreeHelper.GetParent(other);
+        Assert.Equal(otherPill.BorderThickness, currentPill.BorderThickness);
+        Assert.Equal(otherPill.Padding, currentPill.Padding);
+        Assert.Equal(otherPill.Margin, currentPill.Margin);
+        Assert.NotEqual(Strength(otherPill.BorderBrush), Strength(currentPill.BorderBrush));
+    });
+
+    // The current-row state lives entirely in brush ALPHA now, so "brighter" is a number these
+    // tests can compare rather than something only an eye can judge.
+    static byte Strength(TextBlock label) => Strength(label.Foreground);
+
+    static byte Strength(Brush brush) => ((SolidColorBrush)brush).Color.A;
 
     // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
     // once, without the kb."

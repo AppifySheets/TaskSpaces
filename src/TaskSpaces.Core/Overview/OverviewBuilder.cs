@@ -20,16 +20,39 @@ public static class OverviewBuilder
         Guid currentDesktopId,
         // Optional and last so every pre-existing caller and test compiles unchanged; None
         // simply means "nothing is highlighted".
-        Maybe<WindowHandle> activeWindow = default)
+        Maybe<WindowHandle> activeWindow = default,
+        // Which window each desktop will restore focus to when you land on it (see
+        // WorkspaceManager.RestoreLastActive). Optional and last, same reason as activeWindow:
+        // null means "mark nothing", and every pre-existing caller and test keeps compiling.
+        IReadOnlyDictionary<Guid, WindowHandle>? lastActiveByDesktop = null)
     {
-        WindowRow Row(WindowInfo w) =>
-            new(w, originalTitleOf(w.Handle), activeWindow.Map(active => active == w.Handle).GetValueOrDefault(false));
+        // `desktopId` is null for rows that belong to no single desktop -- pinned windows, and
+        // the "Unplaced" catch-all below -- which is exactly the set that can never carry a
+        // landing marker.
+        WindowRow Row(WindowInfo w, Guid? desktopId = null) =>
+            new(w,
+                originalTitleOf(w.Handle),
+                activeWindow.Map(active => active == w.Handle).GetValueOrDefault(false),
+                WillActivate(w, desktopId));
 
-        var pinnedRows = windows.Where(w => pinned.Contains(w.Handle)).Select(Row).ToList();
+        // Suppressed on the CURRENT desktop, and not as a detail: the map is stamped on the way
+        // OUT, so while you are standing on a desktop its entry still names whatever you were
+        // looking at when you last LEFT. Rendering that would put a "you will land here" marker
+        // on one icon while a different icon on the same row wears the live IsActive highlight
+        // -- two contradictory claims about one row. There is also nothing to predict about the
+        // desktop you are already on.
+        bool WillActivate(WindowInfo w, Guid? desktopId) =>
+            desktopId is { } d
+            && d != currentDesktopId
+            && lastActiveByDesktop is not null
+            && lastActiveByDesktop.TryGetValue(d, out var last)
+            && last == w.Handle;
+
+        var pinnedRows = windows.Where(w => pinned.Contains(w.Handle)).Select(w => Row(w)).ToList();
 
         List<WindowRow> OnDesktop(Guid desktopId) => windows
             .Where(w => !pinned.Contains(w.Handle) && desktopOf.TryGetValue(w.Handle, out var d) && d == desktopId)
-            .Select(Row).ToList();
+            .Select(w => Row(w, desktopId)).ToList();
 
         var workspaceGroups = state.Workspaces
             .Select(ws => new WorkspaceGroup(
@@ -77,7 +100,7 @@ public static class OverviewBuilder
         //     instead of disappearing.
         var unplacedRows = windows
             .Where(w => !pinned.Contains(w.Handle) && !desktopOf.ContainsKey(w.Handle))
-            .Select(Row)
+            .Select(w => Row(w))
             .ToList();
         if (unplacedRows.Count > 0)
             otherDesktops = [.. otherDesktops, new DesktopGroup(Guid.Empty, "Unplaced", false, unplacedRows)];

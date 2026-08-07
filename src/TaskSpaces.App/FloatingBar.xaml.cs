@@ -576,6 +576,20 @@ public partial class FloatingBar : Window
     static readonly Brush ActiveBackground = Frozen(0x22, 0xFF, 0xFF, 0xFF);
     static readonly Brush ActiveBorder = Frozen(0x99, 0xFF, 0xFF, 0xFF);
 
+    // Petre: "make the last active window in that workspace look a bit different... so i know
+    // what i'm going to have activated when i land on that workspace."
+    //
+    // Outline only, no background, at roughly a third of ActiveBorder's strength. The two
+    // markers are deliberately the SAME SHAPE at different weights rather than two different
+    // shapes, because they mean the same thing at different tenses -- "you are here" and "you
+    // will be here". Reading them as a pair is the point; a differently-shaped badge would read
+    // as an unrelated piece of information.
+    //
+    // Costs no layout, which is why it can be a border at all: BorderThickness is already 1 on
+    // every icon with a transparent brush (see the icon button below), so filling that brush in
+    // cannot nudge the row -- and the bar is SizeToContent, so a nudged row moves the window.
+    static readonly Brush WillActivateBorder = Frozen(0x38, 0xFF, 0xFF, 0xFF);
+
     // Every shared brush here is FROZEN. A Freezable that is still mutable takes on the
     // thread affinity of whoever created it, and these are `static` — created once, on
     // whichever thread happens to touch this class first — so an unfrozen brush assigned to
@@ -698,13 +712,48 @@ public partial class FloatingBar : Window
     // highlight, no click, one null check.
     (UIElement Element, Action<bool>? SetHover) RowLabel(string text, bool isCurrent, Func<Result>? switchTo)
     {
-        var resting = isCurrent ? CurrentRowOpacity : 0.5;
+        // Petre: "when switching workspaces, because the caption of the workspace gets bolded,
+        // it increases the width of the floating window a little if that workspace is full,
+        // which is a little bad. let's make all text bold and only change its color if it's
+        // active."
+        //
+        // Weight used to carry "this is the row you are on", and weight participates in MEASURE:
+        // a bold label is wider than the same text regular, the row is wider by the difference,
+        // and the bar is SizeToContent -- so every workspace switch resized the whole window and
+        // shifted it. Colour carries no width at all, so the bar now measures identically
+        // whichever row is current. Same reasoning as the icons' constant BorderThickness.
+        //
+        // Bold for EVERY row rather than regular for every row: the bar is small, translucent
+        // and read at a glance, and the labels were already the hardest thing on it to read.
+        var resting = isCurrent ? CurrentRowForeground : RestingRowForeground;
         var textBlock = new TextBlock
         {
             Text = text,
             FontSize = 10,
-            Opacity = resting,
-            FontWeight = isCurrent ? FontWeights.Bold : FontWeights.Normal,
+            Foreground = resting,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        // Petre: "maybe even circle that workspace so i know it's active."
+        //
+        // A pill around the current row's label. Present on EVERY row, always, with the same
+        // thickness and the same padding -- only the BRUSH changes -- for the identical reason
+        // the weight above stopped changing: a ring that appeared only on the current row would
+        // add its thickness and padding to that row's measure, and re-introduce on switch the
+        // exact width jump this pair of changes exists to remove. Same trick the icons use for
+        // their active outline.
+        //
+        // The label's old left margin moves onto this border, so the gutter between icons and
+        // label is unchanged and the ring sits snug around the text rather than around the gap.
+        var pill = new Border
+        {
+            Child = textBlock,
+            BorderBrush = isCurrent ? CurrentRowRing : Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            // Half the pill's height, so the ends are true semicircles rather than soft corners.
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(5, 1, 5, 1),
             VerticalAlignment = VerticalAlignment.Center,
             // 8 -> 6 on the left: the gutter still has to separate the label from the icons,
             // but it was the widest single gap on the bar.
@@ -717,14 +766,14 @@ public partial class FloatingBar : Window
             // workspace, so there's no single place a click could go) and the
             // "Unplaced" catch-all (Guid.Empty is not a real desktop). A Button here
             // would be dead chrome pretending to do something.
-            return (textBlock, null);
+            return (pill, null);
 
-        // Hover raises the label to the same near-full strength the CURRENT row is drawn at,
-        // and only the opacity moves: weight already means "this is the workspace you are on",
-        // so a hover that also went bold would impersonate it. On the current row itself the
-        // hovered and resting values coincide, which is correct -- there is no state to
-        // preview when you are already there.
-        void SetHover(bool hovered) => textBlock.Opacity = hovered ? CurrentRowOpacity : resting;
+        // Hover raises the label to the same strength the CURRENT row is drawn at, and only the
+        // colour moves: the ring already means "this is the workspace you are on", so a hover
+        // that also drew one would impersonate it. On the current row itself the hovered and
+        // resting values coincide, which is correct -- there is no state to preview when you are
+        // already there.
+        void SetHover(bool hovered) => textBlock.Foreground = hovered ? CurrentRowForeground : resting;
 
         // Brief: "if it's trivial to make it switch to the workspace via
         // manager.Switch, DO make it switch -- that's an obvious affordance." A label
@@ -735,7 +784,7 @@ public partial class FloatingBar : Window
         // rows, manager.SwitchToDesktop for unbound-desktop rows -- fix round 6).
         var button = new Button
         {
-            Content = textBlock,
+            Content = pill,
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
@@ -746,10 +795,22 @@ public partial class FloatingBar : Window
         return (button, SetHover);
     }
 
-    // The strength the current row's label is drawn at, and therefore also the strength a
-    // hovered label rises to. Named because two places have to agree on it exactly: if they
-    // drift, hover starts reading as "this row is current".
-    const double CurrentRowOpacity = 0.95;
+    // The colour the current row's label is drawn in, and therefore also the colour a hovered
+    // label rises to. Two places have to agree on it exactly: if they drift, hover starts
+    // reading as "this row is current".
+    //
+    // These replaced an element Opacity, and the swap is not cosmetic. Weight was carrying the
+    // current-row state and weight changes the measure; Petre asked for colour to carry it
+    // instead, so the state now lives entirely in brushes -- none of which can change how wide
+    // anything is. Alpha rather than grey values so the labels sit on the bar's translucency the
+    // same way the rest of its chrome does.
+    static readonly Brush CurrentRowForeground = Frozen(0xF2, 0xFF, 0xFF, 0xFF);
+    static readonly Brush RestingRowForeground = Frozen(0x80, 0xFF, 0xFF, 0xFF);
+
+    // Deliberately dimmer than the text it encircles: the ring is a locator, not a thing to
+    // read, and at full strength it competed with the label for attention on a surface this
+    // small.
+    static readonly Brush CurrentRowRing = Frozen(0x66, 0xFF, 0xFF, 0xFF);
 
     UIElement IconButton(string groupLabel, string groupKey, WindowRow row)
     {
@@ -768,8 +829,11 @@ public partial class FloatingBar : Window
             // otherwise unanswerable. BorderThickness stays 1 for EVERY icon with a
             // transparent brush when inactive, so gaining the highlight cannot nudge the
             // row's layout (and thus the whole SizeToContent bar's position) by 2px.
+            // Three states, and IsActive wins where both could apply. An icon can only be both
+            // if the suppression in OverviewBuilder.WillActivate ever lapses, and "you are in
+            // this window" is the stronger, more immediate claim of the two.
             Background = row.IsActive ? ActiveBackground : Brushes.Transparent,
-            BorderBrush = row.IsActive ? ActiveBorder : Brushes.Transparent,
+            BorderBrush = row.IsActive ? ActiveBorder : row.WillActivate ? WillActivateBorder : Brushes.Transparent,
             BorderThickness = new Thickness(1),
             ToolTip = $"{groupLabel} · {row.Window.Title}",
             Tag = IconTag, // marks this as an icon: press-drag moves the WINDOW, not the bar
