@@ -166,6 +166,9 @@ public static class NativeMethods
     public const int MDT_EFFECTIVE_DPI = 0;
 
     public const int SW_RESTORE = 9; // NEVER SW_HIDE anywhere in this codebase (spec)
+    // Puts a window down without hiding it: still on the taskbar, still on its desktop, still
+    // recoverable if we crash. That last point is why SW_HIDE stays banned and this does not.
+    public const int SW_MINIMIZE = 6;
 
     // The app's one global chord: the Alt+Tab-style workspace switcher (Win+Ctrl+Tab by default).
     // RegisterHotKey delivers WM_HOTKEY to the given window's message queue regardless

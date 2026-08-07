@@ -956,6 +956,22 @@ public sealed class WorkspaceManager(
                     .Bind(current => desktopId == current ? Result.Success() : desktops.Switch(desktopId)))
                 .Bind(() => activator.Activate(window)));
 
+    // Petre: "i want to be able to minimize windows from the floating bar", clicking the icon of
+    // the window he is already in -- the taskbar's own toggle, and the reason JumpTo has always
+    // restored a minimized window on the way in. Both halves of the gesture now exist.
+    //
+    // The bar only calls this for a row that IsActive, and Petre's condition -- "but only if
+    // we're on that workspace" -- is already carried by that flag rather than needing a check of
+    // its own: a window cannot hold focus on a desktop you are not looking at. That also means
+    // pinned windows keep working, which an explicit is-this-row-current test would have broken
+    // (the Pinned row is deliberately never "current", being no workspace at all).
+    //
+    // Pulsing rather than trusting the OS to tell us: minimizing fires no window event this app
+    // hooks -- EVENT_OBJECT_HIDE does not fire, the window is still visible in the taskbar sense
+    // -- so without this the icon would not dim until focus happened to land somewhere else.
+    public Result MinimizeWindow(WindowHandle window, IWindowActivator windowActivator) =>
+        windowActivator.Minimize(window).Tap(() => stateChanged.OnNext(Unit.Default));
+
     // Which of a workspace's roster apps are not currently running anywhere. Checks ALL
     // known windows rather than just this workspace's, because Rider-on-X sitting in another
     // workspace still counts as running.

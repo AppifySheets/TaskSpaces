@@ -900,7 +900,23 @@ public partial class FloatingBar : Window
         // rights Windows normally restricts; the activator then hands that foreground
         // privilege on to the target window. Same rationale as SwitcherPanel's
         // running-row click.
-        button.Click += (_, _) => Report(manager.JumpTo(row.Window.Handle, activator));
+        //
+        // ...unless you are already IN that window, in which case the click puts it away
+        // instead. Petre: "i want to be able to minimize windows from the floating bar", and
+        // "only if we're on that workspace" -- which IsActive already guarantees, since a window
+        // cannot hold focus on a desktop you are not looking at.
+        //
+        // This is the taskbar's own toggle, and the bar now has both halves of it: Activate has
+        // always restored a minimized window on the way in.
+        //
+        // Known rough edge, left alone deliberately rather than pre-solved: a DOUBLE-click on a
+        // 20px icon is jump-then-minimize, so the window appears to vanish. The fix is a short
+        // guard ignoring a toggle that lands within a few hundred ms of the jump that focused
+        // the window -- worth adding if it turns out to bite in practice, not worth the extra
+        // state if it does not.
+        button.Click += (_, _) => Report(row.IsActive
+            ? manager.MinimizeWindow(row.Window.Handle, activator)
+            : manager.JumpTo(row.Window.Handle, activator));
 
         // Petre: "i also want to be able to drag them around across tabs" -- the same drag
         // source the switcher panel's rows use, so an icon dragged onto another row lands

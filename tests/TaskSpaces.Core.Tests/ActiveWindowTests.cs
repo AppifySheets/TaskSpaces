@@ -158,6 +158,37 @@ public class ActiveWindowTests
         Assert.Equal(0, pulses);
     }
 
+    // Petre: "i want to be able to minimize windows from the floating bar." Minimizing fires no
+    // window event this app hooks, so without an explicit pulse the icon would not dim until
+    // focus happened to land somewhere else -- the action would look like it had done nothing.
+    [Fact]
+    public void Minimizing_a_window_pulses_so_the_bar_can_redraw_it()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        var activator = new FakeActivator();
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        Assert.True(manager.MinimizeWindow(new WindowHandle(0x1), activator).IsSuccess);
+
+        Assert.Equal(new WindowHandle(0x1), Assert.Single(activator.Minimized));
+        Assert.Equal(1, pulses);
+    }
+
+    // Minimizing is presentational, exactly like activation: where a window BELONGS is not
+    // changed by putting it down.
+    [Fact]
+    public void Minimizing_a_window_places_nothing_and_persists_nothing()
+    {
+        var (manager, desktopId) = StartedWithTwoCodeWindows();
+        var savesBefore = store.SaveCount;
+
+        Assert.True(manager.MinimizeWindow(new WindowHandle(0x1), new FakeActivator()).IsSuccess);
+
+        Assert.Equal(savesBefore, store.SaveCount);
+        Assert.Equal(desktopId, desktops.WindowPlacements[new WindowHandle(0x1)]);
+    }
+
     // Alt-tabbing fires foreground events continuously, and every pulse costs one DesktopOf
     // COM call per known window in each open surface. Re-activating the SAME window must
     // therefore be silent.

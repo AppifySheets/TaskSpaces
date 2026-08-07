@@ -97,7 +97,9 @@ public sealed class FakeStore : IPersistenceStore
 public sealed class FakeActivator : IWindowActivator
 {
     public List<WindowHandle> Activated { get; } = [];
+    public List<WindowHandle> Minimized { get; } = [];
     public Result Activate(WindowHandle w) { Activated.Add(w); return Result.Success(); }
+    public Result Minimize(WindowHandle w) { Minimized.Add(w); return Result.Success(); }
 }
 
 // Monitor numbers, minimised state and z-order, as the OS would report them. Tests set Facts
