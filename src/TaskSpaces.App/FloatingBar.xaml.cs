@@ -209,14 +209,39 @@ public partial class FloatingBar : Window
     // Clears a finished press so a later, unrelated move never measures distance from
     // a stale point -- same hardening WindowGroupsView.SetupDragSource applies to its
     // own dragStart (pitfall #2 in that file's comments).
-    void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => dragStart = null;
+    void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        dragStart = null;
+
+        // Serve any rebuild that was postponed while the button was down (see Rebuild). Queued
+        // rather than run inline, and that matters: this is a PREVIEW handler, so the Button's
+        // own Click has not been raised yet -- rebuilding here would destroy the Button an
+        // instant before it fires, which is the exact bug being fixed.
+        if (!rebuildRequested || rebuilding) return;
+        rebuildRequested = false;
+        Dispatcher.BeginInvoke(new Action(() => { if (IsVisible) Rebuild(); }));
+    }
 
     void OnPreviewMouseMove(object sender, MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
         var current = PointToScreen(e.GetPosition(this));
-        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
-            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        // Petre: "i'm clicking another workspace and it doesn't take me there... i need to click
+        // twice."
+        //
+        // The system drag threshold is about four pixels, and a press that crosses it hands the
+        // mouse to DragMove(), whose native loop eats the mouse-up -- so the row label's Click
+        // never fires and the workspace never switches. Four pixels of drift is well within an
+        // ordinary click, which made the gesture ambiguous exactly where it hurt: the row label
+        // is a click target FIRST and a drag handle second.
+        //
+        // Tripled rather than removed, because dragging the bar by its labels is a real feature
+        // the info line advertises ("drag labels to move"). At around twelve pixels a deliberate
+        // drag still starts immediately and a click no longer misfires. Icons are unaffected --
+        // a press on one is ignored above, since it drags the WINDOW instead.
+        const double clickTolerance = 3;
+        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance * clickTolerance
+            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance * clickTolerance) return;
         dragStart = null;
 
         // If the press landed on an icon Button, ButtonBase.OnMouseLeftButtonDown
@@ -281,6 +306,28 @@ public partial class FloatingBar : Window
             return;
         }
 
+        // Petre: "sometimes, quite often, i'm clicking another workspace and it doesn't take me
+        // there... i need to click twice, not always."
+        //
+        // Rebuilding throws away every row and builds new ones, so a rebuild that lands between
+        // a press and its release destroys the very Button that was pressed -- and a Button that
+        // no longer exists never raises Click. The press is simply lost, and the second click
+        // works because nothing happens to interrupt it.
+        //
+        // It became likely enough to notice once the icons started re-sorting by z-order, which
+        // makes almost any change of focus a reason to rebuild -- and clicking the bar changes
+        // focus. The mechanism was always there; nothing pulsed often enough to expose it.
+        //
+        // So a rebuild is postponed while a mouse button is down over the bar, and flushed on
+        // release. Deferring is safe in a way that skipping would not be: the same
+        // rebuildRequested flag the re-entrancy guard uses already means "there is news to serve
+        // later", and the release path below serves it.
+        if (Mouse.LeftButton == MouseButtonState.Pressed && IsMouseOver)
+        {
+            rebuildRequested = true;
+            return;
+        }
+
         rebuilding = true;
         try
         {
@@ -311,6 +358,20 @@ public partial class FloatingBar : Window
         RefreshBackButton();
         manager.WindowsByWorkspace().Tap(overview =>
         {
+            // Decided ONCE per rebuild, across every row, so the whole bar agrees. A machine
+            // with one display needs no marker at all -- there is no "which monitor" to answer
+            // -- and deciding per row instead would let a workspace whose windows happen to
+            // share a screen drop its markers while its neighbour kept them, which reads as a
+            // rendering fault rather than as information.
+            showMonitorMarkers = overview.Pinned
+                .Concat(overview.Workspaces.SelectMany(w => w.Running))
+                .Concat(overview.OtherDesktops.SelectMany(d => d.Windows))
+                .Select(r => r.Monitor)
+                .Where(m => m.HasValue)
+                .Select(m => m.Value)
+                .Distinct()
+                .Skip(1)
+                .Any();
 
             // Task 11 fix round 5 (Petre: "the rows are indistinguishable... i want to
             // tell which workspace i'm going to"): build the rows into a list first
@@ -491,8 +552,16 @@ public partial class FloatingBar : Window
             Maybe<int> previous = Maybe<int>.None;
             line.ToList().ForEach(r =>
             {
-                if (linedUp.Children.Count > 0 && previous.HasValue && r.Monitor.HasValue && r.Monitor.Value != previous.Value)
-                    linedUp.Children.Add(MonitorSeparator());
+                // Drawn LEADING each group rather than between groups (Petre: "show a hairline
+                // at the beginning or end"), which is what lets a row whose windows are all on
+                // one screen still say WHICH screen -- the case that had no answer when this was
+                // only ever a divider.
+                //
+                // Emitted at the start of every LINE too, not just at a change of monitor: a
+                // wrapped row's second line would otherwise carry icons with no marker above
+                // them to inherit from.
+                if (showMonitorMarkers && r.Monitor.HasValue && (linedUp.Children.Count == 0 || r.Monitor.Value != previous.GetValueOrDefault(-1)))
+                    linedUp.Children.Add(MonitorMarker(r.Monitor.Value));
                 previous = r.Monitor;
 
                 var button = IconButton(groupLabel, groupKey, r);
@@ -1106,23 +1175,45 @@ public partial class FloatingBar : Window
         Frozen(0xFF, 0xFF, 0xF1, 0x76), // yellow
     ];
 
-    // A hairline between two monitors' icons inside one row. Sized in the same spirit as
-    // everything else on this bar: 1px wide, and short enough that it reads as a divider between
-    // icons rather than as a full-height rule cutting the row in two.
+    // Which monitor the icons after it are on, drawn as a TALLY: one hairline for monitor 1, two
+    // for monitor 2, and so on.
     //
-    // The margin is the whole visual effect, really -- the gap either side is what makes two
-    // clumps of icons read as two groups. Kept small because it is paid once per boundary and
-    // this bar counts pixels.
-    static UIElement MonitorSeparator() => new Border
+    // Petre: "when all windows are on one screen, i can't tell which monitor has those windows
+    // and i need to." The plain divider this replaces could only appear at a BOUNDARY, so a row
+    // whose windows all sat on one screen showed nothing at all -- the grouping was visible but
+    // never which group.
+    //
+    // A tally rather than the obvious alternatives, both of which were tried and rejected on
+    // this bar already. A digit is what the monitor badges were ("numbers are hard to read" at
+    // 7px on a 90%-scaled window). A colour would need a legend, and would compete with the
+    // same-app bands under the icons, which are already colour. Marks you can count need
+    // neither: two strokes means monitor two, and nothing has to be learned.
+    //
+    // It also absorbs the divider's old job. Every group now opens with its own mark, so the
+    // boundary between two groups is visible without anything being drawn between them.
+    static UIElement MonitorMarker(int monitor)
     {
-        Width = 1,
-        Height = 14,
-        Background = MonitorSeparatorBrush,
-        VerticalAlignment = VerticalAlignment.Center,
-        Margin = new Thickness(3, 0, 3, 0),
-    };
+        var tally = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        // Capped so a machine with many displays cannot widen every row without limit; past
+        // three, the exact count matters less than "not one of the first two".
+        Enumerable.Range(0, Math.Min(monitor, 3)).ToList().ForEach(_ => tally.Children.Add(new Border
+        {
+            Width = 1,
+            Height = 14,
+            Background = MonitorMarkerBrush,
+            Margin = new Thickness(0, 0, 1, 0),
+        }));
+        // Asymmetric on purpose: the mark belongs to the icons that FOLLOW it, so it sits closer
+        // to them than to whatever came before.
+        tally.Margin = new Thickness(3, 0, 2, 0);
+        return tally;
+    }
 
-    static readonly Brush MonitorSeparatorBrush = Frozen(0x40, 0xFF, 0xFF, 0xFF);
+    static readonly Brush MonitorMarkerBrush = Frozen(0x59, 0xFF, 0xFF, 0xFF);
+
+    // Set once per rebuild (see RebuildCore): true only when the windows on screen are actually
+    // spread across more than one display, since with one display there is nothing to say.
+    bool showMonitorMarkers;
 
     // Faded enough to read as "put away" at a glance, not so faded the icon stops being
     // identifiable -- it still has to be a click target.
