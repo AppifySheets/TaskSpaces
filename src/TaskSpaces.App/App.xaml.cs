@@ -300,7 +300,14 @@ public partial class App : Application
         //
         // Gated on !compatibilityMode: the switcher ends in manager.Switch, which needs a real
         // desktop to switch to, and compatibility mode has none.
-        if (!compatibilityMode)
+        //
+        // ...and gated on the BAR existing, which is a real dependency rather than a null check
+        // for the compiler's benefit: the gesture draws its candidate ring on the bar's rows and
+        // anchors its picker against the bar, so without one there is nothing for it to drive.
+        // Both are created under the same !compatibilityMode condition above, so this never
+        // actually excludes anything -- but writing it as a pattern rather than a `!` says why
+        // the pair travel together, and a suppression would only have said "trust me".
+        if (!compatibilityMode && floatingBar is { } bar)
         {
             // Win+Ctrl+Tab (the configured chord) walks workspaces in most-recently-used order
             // while the modifiers stay held, and switches on release -- Alt+Tab's gesture,
@@ -317,7 +324,7 @@ public partial class App : Application
             // anchors its picker against it (Petre: "show the previous list but ONLY next to the
             // floating window"). Ignored by the monitor for the same reason the bar is -- it is
             // our own chrome, and the hooks see our process.
-            switcher = new WorkspaceSwitchGesture(manager, boundSwitcher, floatingBar);
+            switcher = new WorkspaceSwitchGesture(manager, boundSwitcher, bar);
             monitor.Ignore(switcher.EnsureHandle());
 
             hotkeys = new HotkeyService(direction => switcher.Step(direction), boundSwitcher);
