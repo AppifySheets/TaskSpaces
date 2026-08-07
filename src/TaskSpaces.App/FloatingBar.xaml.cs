@@ -4,6 +4,7 @@ using System.Windows.Interop;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
@@ -560,7 +561,15 @@ public partial class FloatingBar : Window
                 // Emitted at the start of every LINE too, not just at a change of monitor: a
                 // wrapped row's second line would otherwise carry icons with no marker above
                 // them to inherit from.
-                if (showMonitorMarkers && r.Monitor.HasValue && (linedUp.Children.Count == 0 || r.Monitor.Value != previous.GetValueOrDefault(-1)))
+                // Nothing at all for the first monitor. Petre: "there should be no padding in the
+                // beginning of the icons if it's on the first monitor" -- a zero-stroke marker
+                // still reserved its gutter, which bought cross-row alignment at the price of an
+                // empty indent on the commonest row. He looked at both and chose flush.
+                //
+                // Only ever skipped at the START of a line, never mid-row: groups are sorted by
+                // monitor ascending, so monitor 1 can only be the first group there is.
+                var startsGroup = linedUp.Children.Count == 0 || r.Monitor.Value != previous.GetValueOrDefault(-1);
+                if (showMonitorMarkers && r.Monitor.HasValue && startsGroup && r.Monitor.Value > 1)
                     linedUp.Children.Add(MonitorMarker(r.Monitor.Value));
                 previous = r.Monitor;
 
@@ -872,6 +881,11 @@ public partial class FloatingBar : Window
         var button = new Button
         {
             Content = pill,
+            // Chrome-less: WPF's stock template would paint a square hover highlight around the
+            // rounded pill (see BareButton). Background stays Transparent rather than null so
+            // the whole label area is still hit-testable -- a null Background is invisible to
+            // the mouse, and this is a click target first.
+            Template = BareButton,
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
@@ -910,7 +924,15 @@ public partial class FloatingBar : Window
             // the active-window outline is drawn in it, so at 0 the highlight would touch the
             // artwork.
             Padding = new Thickness(1),
-            Margin = new Thickness(1),
+            // Petre: "the separation between icons should be much smaller." Horizontal margin
+            // dropped to nothing; vertical kept, because that one is separating wrapped LINES
+            // rather than neighbours and losing it would jam the lines together.
+            //
+            // Margins do not collapse in a StackPanel, so this was paid twice between every pair
+            // of icons: it takes the gap from 2px to 0, and what remains between two icons is
+            // each one's own 1px padding -- which has to stay, since the active-window outline is
+            // drawn in it and at zero the highlight would sit directly on the artwork.
+            Margin = new Thickness(0, 1, 0, 1),
             // Petre: "active window should be highlighted in the floating window". On an
             // icon-only surface with three identical VS Code glyphs, "which one am I in" is
             // otherwise unanswerable. BorderThickness stays 1 for EVERY icon with a
@@ -922,6 +944,10 @@ public partial class FloatingBar : Window
             Background = row.IsActive ? ActiveBackground : Brushes.Transparent,
             BorderBrush = row.IsActive ? ActiveBorder : row.WillActivate ? WillActivateBorder : Brushes.Transparent,
             BorderThickness = new Thickness(1),
+            // Chrome-less for the same reason as the row labels, and here it matters more: the
+            // stock template's hover layer would sit on top of the active-window fill and the
+            // landing-spot outline, muddying the two states this icon exists to show.
+            Template = BareButton,
             ToolTip = $"{groupLabel} · {row.Window.Title}",
             Tag = IconTag, // marks this as an icon: press-drag moves the WINDOW, not the bar
         };
@@ -1202,25 +1228,83 @@ public partial class FloatingBar : Window
     // draws nothing, so at the end of a row it is indistinguishable from monitor 1. That needs
     // MonitorFromWindow to have failed for a live window, which is rare enough not to buy a
     // permanent mark on every primary-monitor group.
+    // Only ever called for monitor 2 and up; the first monitor draws nothing and reserves nothing
+    // (see the caller). Width is still fixed so that a monitor-2 group and a monitor-3 group
+    // indent their icons identically -- the alignment that survived is between the groups that
+    // actually carry a mark.
+    //
+    // This began as the fix for "hairline is not in the middle always", which turned out not to
+    // be about the hairline at all: a zero-stroke marker was still being added for monitor 1, so
+    // those rows got an indent of its margin alone, matching no other row's. Reserving the gutter
+    // for every group fixed the alignment and left an empty indent on the commonest row; Petre
+    // saw both and chose flush.
     static UIElement MonitorMarker(int monitor)
     {
         var tally = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        // Capped so a machine with many displays cannot widen every row without limit; past the
-        // third, the exact count matters less than "not one of the first two".
-        Enumerable.Range(0, Math.Min(monitor - 1, 3)).ToList().ForEach(_ => tally.Children.Add(new Border
+        // Capped at two strokes, which is also what sets the reserved width below. Past the
+        // third display the exact count matters less than "not one of the first two", and an
+        // uncapped tally would widen every row on a machine with many screens.
+        // The gap goes BEFORE each stroke but the first, so two strokes measure exactly 3px with
+        // no trailing space. A trailing margin would pad the gutter from the inside, which is
+        // half of what made it too wide.
+        Enumerable.Range(0, Math.Clamp(monitor - 1, 0, 2)).ToList().ForEach(i => tally.Children.Add(new Border
         {
             Width = 1,
             Height = 14,
             Background = MonitorMarkerBrush,
-            Margin = new Thickness(0, 0, 1, 0),
+            Margin = new Thickness(i == 0 ? 0 : 1, 0, 0, 0),
         }));
-        // Asymmetric on purpose: the mark belongs to the icons that FOLLOW it, so it sits closer
-        // to them than to whatever came before.
-        tally.Margin = new Thickness(3, 0, 2, 0);
-        return tally;
+
+        return new Border
+        {
+            Child = tally,
+            // Two 1px strokes and the 1px between them. Constant whatever the count, so a
+            // monitor-1 group reserves exactly what a monitor-3 group occupies and no row's
+            // icons shift relative to another's.
+            Width = 3,
+            // Petre: "it has too much padding." Was 3 and 2 around a 4px box -- nine pixels per
+            // group, on a bar that counts them. Six now, and still asymmetric on purpose: the
+            // mark belongs to the icons that FOLLOW it, so it sits closer to them than to
+            // whatever came before.
+            Margin = new Thickness(1, 0, 2, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
     }
 
     static readonly Brush MonitorMarkerBrush = Frozen(0x59, 0xFF, 0xFF, 0xFF);
+
+    // Petre: "when hovering, it highlights outside the circle for the selected workspace."
+    //
+    // That grey rectangle is WPF's OWN button chrome, and setting Background="Transparent" does
+    // not remove it -- the stock template paints its own hover and pressed layers on top of
+    // whatever Background is bound. On the current workspace, whose label sits inside a rounded
+    // pill, that chrome is a square drawn around a circle, which is exactly what he saw.
+    //
+    // So both button kinds on this bar are re-templated down to what they actually need: a
+    // border that honours the Background/BorderBrush/BorderThickness the code sets -- those are
+    // load-bearing, they are how the active window and the landing spot are drawn -- wrapped
+    // round the content, and NO triggers of any kind. Every visual state on this surface is
+    // decided by us from the overview; there is nothing left for a theme to contribute.
+    //
+    // Built from markup rather than FrameworkElementFactory because TemplateBinding is
+    // unreadable that way, and Sealed so one instance can be shared by every button.
+    static readonly ControlTemplate BareButton = Sealed((ControlTemplate)XamlReader.Parse(
+        """
+        <ControlTemplate TargetType="Button" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+        """));
+
+    static ControlTemplate Sealed(ControlTemplate template)
+    {
+        template.Seal();
+        return template;
+    }
 
     // Set once per rebuild (see RebuildCore): true only when the windows on screen are actually
     // spread across more than one display, since with one display there is nothing to say.
