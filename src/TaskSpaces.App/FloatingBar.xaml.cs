@@ -1017,39 +1017,51 @@ public partial class FloatingBar : Window
         // Because the icons re-sort by z-order, this is what makes the movement legible: the
         // number belongs to the WINDOW, so watching 2 change places with 1 is watching the
         // window you left get demoted.
-        var plate = new Border
+        // A COLOUR BAND, not a digit. Petre: "instead of numbers, you could do different
+        // underline colors... numbers are hard to read." He is right, and the arithmetic says
+        // why: the digit rendered at 7px and his bar runs at 90% scale, so it was about six
+        // pixels of text to read on a translucent surface. A colour is not read at all, it is
+        // just seen -- and seeing is the entire job here, since the only question being asked is
+        // "is the one that was in front now second".
+        //
+        // The colour carries no meaning of its own and does not need to be memorised. It is a
+        // name for the window that happens not to be a word, and it is stable for as long as the
+        // window lives because Ordinal is.
+        //
+        // Reusing the underline slot the front-most marker used to occupy, which fell vacant
+        // when z-order sorting made it redundant -- so this costs no new visual channel.
+        var band = new Border
         {
-            Child = new TextBlock
-            {
-                Text = ordinal.Value.ToString(),
-                FontSize = 7,
-                Foreground = OrdinalForeground,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                // At 7px the glyph sits visually low in its box; this re-centres it.
-                Margin = new Thickness(0, -1, 0, 0),
-            },
-            // Fixed, and in a Grid cell shared with the artwork, so the badge overlays rather
-            // than occupies. A row of icons measures exactly as it did before -- which on a
-            // SizeToContent bar is the difference between a marker and the window resizing.
-            Width = 9,
-            Height = 9,
-            CornerRadius = new CornerRadius(2),
-            Background = OrdinalBackground,
-            HorizontalAlignment = HorizontalAlignment.Right,
+            Width = 16,
+            Height = 3,
+            CornerRadius = new CornerRadius(1),
+            Background = OrdinalBands[(ordinal.Value - 1) % OrdinalBands.Count],
+            HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom,
         };
 
+        // Fixed size in a Grid cell shared with the artwork, so it overlays rather than occupies
+        // -- a row of icons measures exactly as it did before, which on a SizeToContent bar is
+        // the difference between a marker and the window resizing.
         var cell = new Grid();
         cell.Children.Add(artwork);
-        cell.Children.Add(plate);
+        cell.Children.Add(band);
         return cell;
     }
 
-    // A plate behind the digit, because it sits on arbitrary app artwork and would otherwise be
-    // illegible against a light icon.
-    static readonly Brush OrdinalBackground = Frozen(0xCC, 0x20, 0x20, 0x24);
-    static readonly Brush OrdinalForeground = Frozen(0xE0, 0xFF, 0xFF, 0xFF);
+    // Bright and saturated, deliberately unlike WorkspacePalette's muted lane tints: those sit
+    // BEHIND icons and must not compete, while these are three-pixel slivers on top of arbitrary
+    // artwork and have to survive it. Ordered so the first two -- by far the commonest case, two
+    // windows of one app -- are as far apart in hue as the list allows.
+    static readonly IReadOnlyList<Brush> OrdinalBands =
+    [
+        Frozen(0xFF, 0x4F, 0xC3, 0xF7), // sky
+        Frozen(0xFF, 0xFF, 0xB7, 0x4D), // amber
+        Frozen(0xFF, 0x81, 0xC7, 0x84), // green
+        Frozen(0xFF, 0xF0, 0x62, 0x92), // pink
+        Frozen(0xFF, 0xBA, 0x68, 0xC8), // violet
+        Frozen(0xFF, 0xFF, 0xF1, 0x76), // yellow
+    ];
 
     // A hairline between two monitors' icons inside one row. Sized in the same spirit as
     // everything else on this bar: 1px wide, and short enough that it reads as a divider between
