@@ -976,31 +976,16 @@ public partial class FloatingBar : Window
             : row.IsFrontmostOnMonitor.GetValueOrDefault(true) ? 1.0
             : CoveredIconOpacity;
 
-        if (!row.IsFrontmostOnMonitor.GetValueOrDefault(false)) return artwork;
-
-        // An UNDERLINE rather than the third outline this nearly became. The icon already
-        // carries two ring states (active, landing spot) and a third would be told apart only by
-        // brush strength -- unreadable at 20px. A bar under the icon is a different shape
-        // entirely, and it is the idiom Windows' own taskbar uses for exactly this, so it needs
-        // no explaining.
+        // An underline used to mark the front-most window here, and before that a bold digit on
+        // a numbered badge. Both are gone -- Petre: "you can also take away the badges, i think,
+        // zindex does it well." Sorting each monitor's icons front-most-first means POSITION
+        // already says which window is on top, so a mark saying the same thing was one more
+        // thing to read on a 20px square for no new information.
         //
-        // Fixed size in a Grid cell shared with the artwork, so it overlays rather than occupies:
-        // a row of icons measures exactly as it did before any of this existed, which on a
-        // SizeToContent bar is the difference between a marker and a layout change.
-        var underline = new Border
-        {
-            Width = 10,
-            Height = 2,
-            CornerRadius = new CornerRadius(1),
-            Background = FrontmostUnderline,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Bottom,
-        };
-
-        var cell = new Grid();
-        cell.Children.Add(artwork);
-        cell.Children.Add(underline);
-        return cell;
+        // The opacity ladder above stays: position tells you which is in front, opacity tells
+        // you how far back the others are, and minimised windows still have to be distinguished
+        // from merely covered ones.
+        return artwork;
     }
 
     // A hairline between two monitors' icons inside one row. Sized in the same spirit as
@@ -1030,7 +1015,6 @@ public partial class FloatingBar : Window
     // than as something being wrong.
     const double CoveredIconOpacity = 0.72;
 
-    static readonly Brush FrontmostUnderline = Frozen(0xCC, 0xFF, 0xFF, 0xFF);
 
     // Opaque enough for dark text to sit on, since the bar behind it is dark.
     static readonly Brush PlaceholderBackground = Frozen(0xCC, 0xE8, 0xE8, 0xEC);

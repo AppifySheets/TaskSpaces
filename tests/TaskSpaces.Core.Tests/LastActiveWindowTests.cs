@@ -98,12 +98,14 @@ public class LastActiveWindowTests
     public void Landing_somewhere_unremembered_falls_back_to_the_front_window_on_the_main_monitor()
     {
         var manager = StartedWithScreen();
-        // Mail is in front on monitor 1; code is in front on monitor 2, which is PRIMARY.
-        screen.Facts = FakeScreenLayout.On(primary: 2, (mail.Handle, 1), (code.Handle, 2), (browser.Handle, 2));
+        desktops.WindowPlacements[browser.Handle] = personal; // two windows on Personal to choose between
+        // Browser is in front on monitor 1; mail is in front on monitor 2, which is PRIMARY --
+        // so the main monitor's front window is mail, even though browser is further forward.
+        screen.Facts = FakeScreenLayout.On(primary: 2, (browser.Handle, 1), (mail.Handle, 2));
 
         SwitchTo(personal);
 
-        Assert.Equal(code.Handle, Assert.Single(activator.Activated));
+        Assert.Equal(mail.Handle, Assert.Single(activator.Activated));
     }
 
     // ScreenLayout enumerates windows directly, so it has never heard of WindowMonitor's ignore
@@ -115,11 +117,53 @@ public class LastActiveWindowTests
     {
         var manager = StartedWithScreen();
         var ourBar = new WindowHandle(0xBA5);
-        screen.Facts = FakeScreenLayout.On(primary: 2, (ourBar, 2), (code.Handle, 2));
+        // Placed on Personal deliberately, so it would pass the desktop check and be activated
+        // if knownWindows were not doing the excluding. The bar really is topmost, so it really
+        // would head this list.
+        desktops.WindowPlacements[ourBar] = personal;
+        screen.Facts = FakeScreenLayout.On(primary: 2, (ourBar, 2), (mail.Handle, 2));
 
         SwitchTo(personal);
 
-        Assert.Equal(code.Handle, Assert.Single(activator.Activated));
+        Assert.Equal(mail.Handle, Assert.Single(activator.Activated));
+    }
+
+    // Petre: "i can't switch workspaces anymore... it pushes me back to the current workspace."
+    //
+    // The first version of the fallback took no DesktopOf calls, reasoning that we have already
+    // ARRIVED when it runs, so the un-cloaked windows in a screen snapshot must be this
+    // desktop's. Cloaking is not synchronous with the desktop-change notification: the snapshot
+    // still described the desktop just LEFT, the fallback activated a window over there, and
+    // activating a window on another virtual desktop makes Windows follow it. Every switch
+    // bounced back, which looks exactly like switching being broken.
+    //
+    // Modelled here by handing the fallback a snapshot full of windows that are NOT on the
+    // desktop being arrived at -- which is precisely what a stale snapshot is.
+    [Fact]
+    public void The_fallback_never_activates_a_window_on_another_desktop()
+    {
+        var manager = StartedWithScreen();
+        // A stale snapshot: code and browser both live on Work, but we are landing on Personal.
+        screen.Facts = FakeScreenLayout.On(primary: 2, (code.Handle, 2), (browser.Handle, 2));
+
+        SwitchTo(personal);
+
+        Assert.Empty(activator.Activated);
+    }
+
+    // ...and it must still find the right window when the snapshot has a mix, rather than giving
+    // up at the first candidate that fails the check.
+    [Fact]
+    public void The_fallback_skips_past_stale_candidates_to_one_actually_on_this_desktop()
+    {
+        var manager = StartedWithScreen();
+        desktops.WindowPlacements[mail.Handle] = personal;
+        // Front to back: code (Work -- stale), then mail (Personal -- the real answer).
+        screen.Facts = FakeScreenLayout.On(primary: 2, (code.Handle, 2), (mail.Handle, 2));
+
+        SwitchTo(personal);
+
+        Assert.Equal(mail.Handle, Assert.Single(activator.Activated));
     }
 
     // A remembered window always beats the fallback -- the fallback exists for the case where

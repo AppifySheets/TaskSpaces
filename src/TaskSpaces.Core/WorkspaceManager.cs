@@ -481,7 +481,7 @@ public sealed class WorkspaceManager(
     void RestoreLastActive(Guid arriving)
     {
         if (activator is null) return;
-        Remembered(arriving).Or(() => FrontmostOnMainMonitor()).Tap(window => activator.Activate(window));
+        Remembered(arriving).Or(() => FrontmostOnMainMonitor(arriving)).Tap(window => activator.Activate(window));
     }
 
     Maybe<WindowHandle> Remembered(Guid arriving)
@@ -501,21 +501,33 @@ public sealed class WorkspaceManager(
     // Applies on the first visit of a session to any desktop, which used to leave focus wherever
     // Windows happened to drop it.
     //
-    // No DesktopOf calls needed to work out which windows are candidates, because of a property
-    // that falls out of how Windows works: we have ALREADY arrived by the time this runs, so the
-    // windows on this desktop are exactly the ones that are not cloaked -- and a ScreenFacts
-    // snapshot is built from EnumWindows, which returns only those. The snapshot IS this
-    // desktop's windows, already in front-to-back order.
+    // EVERY candidate is checked against the desktop we are arriving on, and that check is the
+    // whole reason this method still works. Petre, on the first version: "i can't switch
+    // workspaces anymore... it pushes me back to the current workspace."
     //
-    // Narrowed to knownWindows, and that is not belt-and-braces: ScreenLayout enumerates through
-    // TopLevelWindows directly, which has never heard of WindowMonitor's ignore list, so the
-    // floating bar is in that snapshot -- and being permanently topmost, it sits at the very
-    // front of it. Without this filter the fallback would "restore focus" to our own bar every
-    // time. knownWindows is precisely the set with our chrome already excluded.
-    Maybe<WindowHandle> FrontmostOnMainMonitor() =>
+    // What went wrong is worth keeping, because the reasoning was plausible and wrong. That
+    // version took no DesktopOf calls at all, on the argument that we have already ARRIVED by
+    // the time this runs, so the un-cloaked windows a ScreenFacts snapshot reports must be this
+    // desktop's windows. Cloaking is not synchronous with the desktop-change notification. The
+    // snapshot still described the desktop we had just LEFT, so the fallback activated a window
+    // over there -- and activating a window on another virtual desktop makes Windows follow it.
+    // Every switch bounced straight back, which is indistinguishable from switching being
+    // broken outright.
+    //
+    // So the arrival is now asked about rather than inferred. Note the shape this restores:
+    // Remembered() has always validated its candidate this way, and the fallback was the one
+    // path that did not.
+    //
+    // Narrowed to knownWindows as well, and that is not belt-and-braces either: ScreenLayout
+    // enumerates through TopLevelWindows directly, which has never heard of WindowMonitor's
+    // ignore list, so the floating bar is in that snapshot -- and being permanently topmost, it
+    // heads it. Unfiltered, the fallback would hand focus to our own bar every time.
+    Maybe<WindowHandle> FrontmostOnMainMonitor(Guid arriving) =>
         screenLayout is null
             ? Maybe<WindowHandle>.None
-            : screenLayout.Snapshot().FrontmostOnPrimary(knownWindows.Keys);
+            : screenLayout.Snapshot()
+                .OnPrimaryFrontToBack(knownWindows.Keys)
+                .TryFirst(w => desktops.DesktopOf(w).GetValueOrDefault() == arriving);
 
     // A desktop became current: if it belongs to a workspace, that is a visit.
     void RememberVisit(Guid desktopId) =>

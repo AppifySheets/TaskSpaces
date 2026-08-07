@@ -30,13 +30,20 @@ public sealed record ScreenFacts(
         new HashSet<WindowHandle>(),
         new Dictionary<WindowHandle, int>());
 
-    // The front-most of the given windows on the main monitor, or None if none of them is
-    // there. Restricted to a caller-supplied set because ZOrder is built from a raw
-    // EnumWindows that has never heard of our own chrome: the floating bar is a taskbar
-    // candidate AND permanently topmost, so it would otherwise win this outright.
-    public Maybe<WindowHandle> FrontmostOnPrimary(IEnumerable<WindowHandle> candidates) =>
-        PrimaryMonitor.Bind(primary => candidates
-            .Where(w => ZOrder.ContainsKey(w) && MonitorOf.TryGetValue(w, out var m) && m == primary)
-            .OrderBy(w => ZOrder[w])
-            .TryFirst());
+    // The given windows that are on the main monitor, front to back.
+    //
+    // A LIST rather than just the front one, because the caller has to be able to keep looking:
+    // this snapshot cannot be trusted to describe only the desktop we are on (see
+    // WorkspaceManager.FrontmostOnMainMonitor), so the first candidate may have to be rejected.
+    //
+    // Restricted to a caller-supplied set because ZOrder comes from a raw EnumWindows that has
+    // never heard of our own chrome: the floating bar is a taskbar candidate AND permanently
+    // topmost, so it would otherwise head this list every time.
+    public IReadOnlyList<WindowHandle> OnPrimaryFrontToBack(IEnumerable<WindowHandle> candidates) =>
+        PrimaryMonitor
+            .Map(primary => (IReadOnlyList<WindowHandle>)candidates
+                .Where(w => ZOrder.ContainsKey(w) && MonitorOf.TryGetValue(w, out var m) && m == primary)
+                .OrderBy(w => ZOrder[w])
+                .ToList())
+            .GetValueOrDefault([]);
 }
