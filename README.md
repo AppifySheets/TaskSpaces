@@ -13,12 +13,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/floating-bar-1.1.0.png" width="290" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. The current workspace's name is bold and the focused window's icon is outlined." />
+  <img src="docs/images/floating-bar-1.4.0.png" width="290" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. Every label is bold and the current workspace's is ringed. Icons are grouped by monitor, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom." />
 </p>
 
 <p align="center"><em>Everything you have open, grouped by workspace — one row each, the current
-one in bold, the focused window outlined. Click any icon to jump straight to that window from
-anywhere; drag it to another row to move the window there.</em></p>
+one ringed, the focused window outlined. Icons fade as they recede: full strength in front,
+dimmer when covered, dimmest when minimised. Click any icon to jump straight to that window from
+anywhere, click it again to put it away; drag it to another row to move the window there.</em></p>
 
 **TaskSpaces is a layer over Windows' own virtual desktops.** Every workspace *is* a real
 virtual desktop, so Windows keeps doing the window management it already does well and
