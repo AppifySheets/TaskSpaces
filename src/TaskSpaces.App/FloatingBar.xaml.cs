@@ -1262,11 +1262,16 @@ public partial class FloatingBar : Window
             // monitor-1 group reserves exactly what a monitor-3 group occupies and no row's
             // icons shift relative to another's.
             Width = 3,
-            // Petre: "it has too much padding." Was 3 and 2 around a 4px box -- nine pixels per
-            // group, on a bar that counts them. Six now, and still asymmetric on purpose: the
-            // mark belongs to the icons that FOLLOW it, so it sits closer to them than to
-            // whatever came before.
-            Margin = new Thickness(1, 0, 2, 0),
+            // Petre: "it has too much padding", then "before and after the hairline space should
+            // be the same... before is good." Was 3 and 2 around a 4px box -- nine pixels per
+            // group, on a bar that counts them; five now.
+            //
+            // Symmetric, which reverses an earlier deliberate choice. The asymmetry was meant to
+            // tie the mark to the icons FOLLOWING it, since that is what it names -- but a
+            // one-pixel lean is not enough to read as meaning anything, and it was plainly
+            // visible as a lopsided gap. A mark that sits evenly between two clumps reads as
+            // separating them, which it also does.
+            Margin = new Thickness(1, 0, 1, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
     }
