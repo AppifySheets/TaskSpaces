@@ -668,8 +668,8 @@ public partial class FloatingBar : Window
             // Hover feedback is the LABEL brightening, never a row background: the background
             // already means "a dragged window will land here" (DropHighlight above), and one
             // channel cannot carry two meanings on a surface this small.
-            container.MouseEnter += (_, _) => setHover(true);
-            container.MouseLeave += (_, _) => setHover(false);
+            container.MouseEnter += (_, _) => { setHover(true); ShowRowActions(visualLabel); };
+            container.MouseLeave += (_, _) => { setHover(false); ClearInfo(); };
 
             // ...and the icons punch holes in that hover area. Clicking an icon jumps to a
             // WINDOW, so lighting the label there would advertise an action the click does not
@@ -685,7 +685,11 @@ public partial class FloatingBar : Window
             iconButtons.ForEach(icon =>
             {
                 icon.MouseEnter += (_, _) => setHover(false);
-                icon.MouseLeave += (_, _) => setHover(true);
+                // Restores the ROW's readout, not the bar-wide default. IconButton's own
+                // MouseLeave calls ClearInfo, and this handler is added after it, so it wins --
+                // without it, sliding off an icon into the empty part of the same row would drop
+                // you back to the generic hint while still standing on the row.
+                icon.MouseLeave += (_, _) => { setHover(true); ShowRowActions(visualLabel); };
             });
         }
 
@@ -821,6 +825,23 @@ public partial class FloatingBar : Window
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
+
+    // Petre: "show the ctrl+ thing in the notification pane when over an empty area of workspace."
+    //
+    // The bar-wide hint at the bottom names ctrl+drag, but it is only on screen when nothing is
+    // hovered -- which is never the moment you are reaching for the bar to move it. Hovering a
+    // row's bare area is exactly that moment: you are on the surface, you want to know what it
+    // does. So the readout answers both questions at once, the click that surface performs and
+    // the gesture that moves the bar instead.
+    //
+    // Only for rows that can be switched to. Pinned and Unplaced have no destination, and
+    // offering one would be a lie -- they never reach here (see the caller's null guard).
+    void ShowRowActions(string label)
+    {
+        Info.Inlines.Clear();
+        Info.Inlines.Add(new Run($"{label}  ") { Foreground = Brushes.White });
+        Info.Inlines.Add(new Run("click to switch · ctrl+drag to move") { Foreground = DimForeground });
+    }
 
     // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
     // once, without the kb." So this deliberately holds NO history of its own: it asks the same
