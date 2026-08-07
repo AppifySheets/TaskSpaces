@@ -83,22 +83,33 @@ public static class OverviewBuilder
         Maybe<int> MonitorOf(WindowInfo w) =>
             facts.MonitorOf.TryGetValue(w.Handle, out var number) ? number : Maybe<int>.None;
 
-        // Display numbers ordered so the PRIMARY comes first, then the rest ascending. A
-        // monitor's position in this list is how many strokes its marker draws, so the primary
-        // draws none.
+        // Displays in the order Petre's eye crosses them -- left to right, then down (see
+        // MonitorArrangement). A display's position in this list is BOTH where its icons sit in
+        // the row and how many strokes its hairline draws, so the leading group draws none.
         //
-        // Which display is silent used to be display 1, and that was arbitrary rather than
-        // considered. Windows numbers displays by how they were enumerated, not by how much you
-        // use them, so on any machine whose primary is not DISPLAY1 the marks landed on the main
-        // screen and the silence on the side one. The primary is the closest thing the OS offers
-        // to "the screen you mostly work on", and it is what the fallback restore already uses.
+        // That those are now one list rather than two is the point. Grouping used to follow the
+        // display NUMBER while silence followed which display was PRIMARY, and the two disagree
+        // on any machine whose primary is not its leftmost screen -- Petre's included. The
+        // unmarked group then landed in the MIDDLE of the row, where "no mark" cannot be read as
+        // a boundary, so his two monitor groups ran together with a single stray hairline opening
+        // the row: "i only see hairlines at the beginning of every workspace".
         //
-        // With no primary reported -- which only happens in tests -- this degrades to plain
-        // ascending order, so display 1 goes silent exactly as before.
-        var ranked = facts.MonitorOf.Values
-            .Distinct()
-            .OrderBy(m => facts.PrimaryMonitor.Map(p => p == m ? 0 : 1).GetValueOrDefault(1))
-            .ThenBy(m => m)
+        // Ranked over the displays that actually have windows, not over every display attached,
+        // so an idle screen does not silently push its neighbours' stroke counts up.
+        //
+        // With no geometry -- compatibility mode, and every test predating it -- this degrades to
+        // the previous behaviour: primary first if known, otherwise plain ascending, so display 1
+        // goes silent exactly as it used to.
+        var withWindows = facts.MonitorOf.Values.Distinct().ToHashSet();
+        var ranked = (facts.MonitorPlacement is { Count: > 0 } placement
+                ? MonitorArrangement.ReadingOrder(placement).Where(withWindows.Contains)
+                    // A display holding windows but missing from the geometry cannot happen from
+                    // one ScreenLayout sweep, but dropping it would silently un-rank its icons,
+                    // so it lands after the ones we can place rather than nowhere.
+                    .Concat(withWindows.Except(placement.Keys).OrderBy(m => m))
+                : withWindows
+                    .OrderBy(m => facts.PrimaryMonitor.Map(p => p == m ? 0 : 1).GetValueOrDefault(1))
+                    .ThenBy(m => m))
             .Select((m, rank) => (Monitor: m, Rank: rank))
             .ToDictionary(x => x.Monitor, x => x.Rank);
 
@@ -150,7 +161,10 @@ public static class OverviewBuilder
         {
             var here = windows
                 .Where(w => !pinned.Contains(w.Handle) && desktopOf.TryGetValue(w.Handle, out var d) && d == desktopId)
-                .OrderBy(w => MonitorOf(w).GetValueOrDefault(int.MaxValue))
+                // By RANK, not by display number: rank is the physical left-to-right-then-down
+                // order (see `ranked` above), which is what Petre navigates by. Display numbers
+                // come from enumeration order and can put the right-hand screen first.
+                .OrderBy(w => RankOf(w).GetValueOrDefault(int.MaxValue))
                 .ThenBy(w => facts.ZOrder.TryGetValue(w.Handle, out var z) ? z : int.MaxValue)
                 .ToList();
 

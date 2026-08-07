@@ -16,7 +16,7 @@ public sealed class ScreenLayout : IScreenLayout
 {
     public ScreenFacts Snapshot()
     {
-        var (numbers, primary) = MonitorNumbers();
+        var (numbers, primary, placement) = MonitorNumbers();
 
         // EnumWindows hands back windows FRONT TO BACK, so the index in this list is the
         // z-order outright -- no extra call needed. (Enumerate() filters to taskbar candidates
@@ -38,7 +38,7 @@ public sealed class ScreenLayout : IScreenLayout
             if (IsIconic(window.Value)) minimized.Add(window);
         });
 
-        return new ScreenFacts(monitorOf, minimized, zOrder, primary);
+        return new ScreenFacts(monitorOf, minimized, zOrder, primary, placement);
     }
 
     // HMONITOR -> the number Windows shows under Display Settings > Identify.
@@ -50,9 +50,17 @@ public sealed class ScreenLayout : IScreenLayout
     // plain left-to-right position. They would NOT agree on a layout whose primary is not
     // leftmost, and this is the reading that still matches what his screen says when he presses
     // Identify.
-    static (Dictionary<nint, int> Numbers, Maybe<int> Primary) MonitorNumbers()
+    // ...and, in the same sweep, WHERE each display sits. The geometry is what orders the icon
+    // groups now (see MonitorArrangement): Petre asked for "my left monitor first, my right
+    // monitor next... from top left to the right and down", and enumeration order cannot answer
+    // that -- his own DISPLAY1 is the LEFT screen while DISPLAY2 is the primary on the right.
+    //
+    // rcMonitor, not rcWork: the taskbar's cutout has nothing to do with which screen is further
+    // left, and rcWork would make two identically-placed screens differ for no reason.
+    static (Dictionary<nint, int> Numbers, Maybe<int> Primary, Dictionary<int, MonitorBounds> Placement) MonitorNumbers()
     {
         var numbers = new Dictionary<nint, int>();
+        var placement = new Dictionary<int, MonitorBounds>();
         var primary = Maybe<int>.None;
         // The delegate is only used for the duration of this call -- unlike the WinEvent hook
         // in WindowMonitor, EnumDisplayMonitors is synchronous, so there is nothing for the GC
@@ -62,13 +70,15 @@ public sealed class ScreenLayout : IScreenLayout
             var info = new MONITORINFOEX { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFOEX>() };
             if (!GetMonitorInfoEx(monitor, ref info) || Number(info.szDevice) is not { } number) return true;
             numbers[monitor] = number;
+            placement[number] = new MonitorBounds(
+                info.rcMonitor.Left, info.rcMonitor.Top, info.rcMonitor.Right, info.rcMonitor.Bottom);
             // Asked of Windows rather than assumed to be display 1. Measured on the setup this
             // was built against: the PRIMARY there is DISPLAY2, not DISPLAY1 -- so "main
             // monitor" and "monitor 1" are genuinely different questions.
             if ((info.dwFlags & MONITORINFOF_PRIMARY) != 0) primary = number;
             return true;
         }, 0);
-        return (numbers, primary);
+        return (numbers, primary, placement);
     }
 
     // "\\.\DISPLAY12" -> 12. Null for anything that does not end in digits, which is not a

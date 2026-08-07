@@ -23,7 +23,13 @@ public sealed record ScreenFacts(
     // Which display Windows calls primary -- "the main monitor". None only if no display
     // reported itself as primary, which Windows does not do, but which is cheaper to tolerate
     // than to assume away.
-    Maybe<int> PrimaryMonitor = default)
+    Maybe<int> PrimaryMonitor = default,
+    // Where each display physically sits, keyed by the same display number MonitorOf uses. Drives
+    // both the order icons are grouped in and how many strokes each group's hairline draws (see
+    // MonitorArrangement). Optional and last for the same reason PrimaryMonitor is: null means
+    // "no geometry available", which is compatibility mode and every test written before this,
+    // and leaves ordering exactly as it was -- ascending by display number.
+    IReadOnlyDictionary<int, MonitorBounds>? MonitorPlacement = null)
 {
     public static readonly ScreenFacts Empty = new(
         new Dictionary<WindowHandle, int>(),
