@@ -315,7 +315,43 @@ public sealed class WorkspaceManager(
             return;
         }
         activeWindow = window;
+        RememberActiveOn(window);
         stateChanged.OnNext(Unit.Default);
+    }
+
+    // Petre: "ctrl+win+tab now lands on the first window on the left screen", "that workspace
+    // lost the active window".
+    //
+    // Recorded HERE, when a window becomes active, and NOT on the way out of a desktop, which is
+    // what this replaces. The old placement was chosen to be cheap -- one stamp per switch rather
+    // than a DesktopOf call per focus change -- and it raced the very event it depended on.
+    //
+    // From the probe log, leaving f69c9222 for f60a8bea:
+    //
+    //   record active=1045C desktopOf=f60a8bea leaving=f69c9222 match=False
+    //
+    // activeWindow ALREADY named a window on the destination. CurrentChanged comes from a
+    // virtual-desktop COM event while foreground changes come from a WinEvent hook, and the
+    // WinEvent wins: by the time we are told the desktop changed, Windows has moved focus to the
+    // new desktop and we have seen it. So "whatever was active as we left" read the window we
+    // were arriving AT. That is why match=False on nearly every switch, and it is not something a
+    // stricter guard could rescue -- the fact was simply gone by the time it was asked for.
+    //
+    // A window's desktop is knowable exactly when it becomes active, so that is when to ask. Each
+    // desktop's entry is then correct by construction and no ordering between the two event
+    // sources can disturb it.
+    //
+    // The cost this was avoiding is not real at this scale: two COM calls on a CHANGE of
+    // foreground, next to the stateChanged pulse on the very next line, which rebuilds every open
+    // surface at one DesktopOf per known window.
+    //
+    // Pinned windows are skipped for the reason they always were: a pinned window is on every
+    // desktop, so it is already wherever you land, and claiming it as one desktop's last-active
+    // would promise a landing spot that was never in question.
+    void RememberActiveOn(WindowHandle window)
+    {
+        if (desktops.IsPinned(window).GetValueOrDefault(false)) return;
+        desktops.DesktopOf(window).Tap(desktop => lastActiveByDesktop[desktop] = window);
     }
 
     // A taskbar button flashed. Petre: "let's say somebody has messaged me, or vscode is asking
@@ -499,56 +535,14 @@ public sealed class WorkspaceManager(
     // our hotkey, the bar, Win+Ctrl+arrows, Task View -- for the same reason the MRU is fed
     // from here. A restore that only worked for our own switches would be the kind of
     // half-working that is worse than absent.
+    // No longer stamps the desktop being left: that is done as focus moves, by RememberActiveOn,
+    // because the stamp raced this very notification (see there). currentDesktopId is still
+    // tracked, for the marker suppression on the desktop you are standing on.
     void OnDesktopChanged(Guid arriving)
     {
-        currentDesktopId.Tap(RecordLastActive);
         currentDesktopId = arriving;
         RestoreLastActive(arriving);
     }
-
-    // Stamp the desktop we are leaving with whatever had focus there.
-    //
-    // Recorded on the way OUT rather than on every activation, which is what makes this cheap:
-    // no DesktopOf COM call per focus change, just one stamp per desktop switch. It is also
-    // the more accurate reading of the ask -- "last active last time this workspace was
-    // active" is by definition the state at the moment you left.
-    //
-    // Pinned windows are skipped: a pinned window follows you to every desktop, so it is
-    // already wherever you land and "restoring" it would say nothing, while its marker would
-    // claim a landing spot that was never in question.
-    // Petre: "i had teams active there, when i leave the workspace teams isn't mentioned as
-    // selected in that one anymore", and "activates a second window". Traced in the running app
-    // rather than reasoned about: Teams was stamped onto a workspace it does not live on, and
-    // that entry then vanished on the next arrival.
-    //
-    // The window must actually BE on the desktop we are leaving, and that check is the fix.
-    //
-    // Why it can fail to be: activeWindow deliberately never clears on None (MarkActive's first
-    // load-bearing property -- Foreground() returns None for the taskbar, the Start menu and our
-    // own bar, and blinking the highlight off every time Petre touches one of those would be
-    // worse than holding a slightly stale value). So landing somewhere that gives nothing focus
-    // -- an empty workspace, a restore that found nothing, a foreground window we do not track --
-    // leaves activeWindow still naming the PREVIOUS desktop's window. Without this check, leaving
-    // stamped that foreign window over the departing desktop's perfectly good memory.
-    //
-    // The corruption erased itself, which is why it read as forgetting rather than as a wrong
-    // answer: Remembered() validates with DesktopOf on the way back in, sees the window does not
-    // belong, and drops the entry -- so the marker disappears, and the restore falls through to
-    // FrontmostOnMainMonitor and focuses something Petre never chose ("activates a second
-    // window"). One cause, both symptoms.
-    //
-    // Not stamping is the right answer rather than a cautious one: if the active window is not on
-    // the desktop we are leaving, we have learned NOTHING about that desktop, so what we already
-    // knew about it is still the best answer available. The read path has always validated this
-    // way; now the write path does too.
-    //
-    // Costs one DesktopOf COM call per switch, not per window -- the same call Remembered()
-    // already makes on the other side of the same move.
-    void RecordLastActive(Guid leaving) =>
-        activeWindow
-            .Where(w => !desktops.IsPinned(w).GetValueOrDefault(false))
-            .Where(w => desktops.DesktopOf(w).GetValueOrDefault() == leaving)
-            .Tap(w => lastActiveByDesktop[leaving] = w);
 
     // ...and put focus back on arrival.
     //
