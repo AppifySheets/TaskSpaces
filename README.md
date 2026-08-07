@@ -13,7 +13,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/floating-bar-1.4.0.png" width="290" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. Every label is bold and the current workspace's is ringed. Icons are grouped by monitor, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom." />
+  <!-- No width attribute, deliberately. The capture is 252px wide and this used to render it
+       at 290, so the browser scaled it up 15% and softened every edge -- Petre: "actual image
+       is much nicer... don't scale it up". Left intrinsic, it draws pixel for pixel. Any future
+       recapture stays sharp for the same reason, whatever size the bar happens to be. -->
+  <img src="docs/images/floating-bar-1.4.0.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. Every label is bold and the current workspace's is ringed. Icons are grouped by monitor, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom." />
 </p>
 
 <p align="center"><em>Everything you have open, grouped by workspace — one row each, the current
