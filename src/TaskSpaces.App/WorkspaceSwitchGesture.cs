@@ -32,7 +32,10 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     static readonly TimeSpan ReleasePoll = TimeSpan.FromMilliseconds(30);
 
     readonly WorkspaceManager manager;
-    readonly WorkspaceSwitcher picker = new();
+    // One picker per screen, driven as one (Petre: "show the ctrlwintab window on all screens").
+    // The field's type is the only thing that changed here: Present/Select/Hide read exactly as
+    // they did when this was a single window.
+    readonly SwitcherPickers picker;
     readonly DispatcherTimer release = new() { Interval = ReleasePoll };
 
     // The whole record rather than just its Ordered list: Step below resolves the next index
@@ -47,10 +50,15 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     // so this is a field that changes, not a constant.
     Chord chord;
 
-    public WorkspaceSwitchGesture(WorkspaceManager manager, Chord chord)
+    // ignoreWindow is WindowMonitor.Ignore. Taken as a constructor argument rather than the
+    // composition root registering one hwnd afterwards, because there is no longer ONE hwnd to
+    // register: pickers are created per monitor, including when a screen is plugged in later, so
+    // whatever creates them has to be able to opt each one out at the moment it is made.
+    public WorkspaceSwitchGesture(WorkspaceManager manager, Chord chord, Action<nint> ignoreWindow)
     {
         this.manager = manager;
         this.chord = chord;
+        picker = new SwitcherPickers(ignoreWindow);
         release.Tick += (_, _) => { if (!ModifiersHeld()) Commit(); };
     }
 
@@ -62,11 +70,12 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         chord = replacement;
     }
 
-    // The picker's hwnd, so the composition root can hand it to WindowMonitor.Ignore. The
-    // monitor no longer skips our own process (Petre wanted the Manage window in the bar),
-    // so without this the picker would flicker into the bar as a window every time it
-    // appeared. Created before the first Show() so its very first SHOW event is filtered.
-    public nint EnsureHandle() => new WindowInteropHelper(picker).EnsureHandle();
+    // (EnsureHandle used to live here, returning the one picker's hwnd for the composition root
+    // to pass to WindowMonitor.Ignore. With a picker per monitor there is no single handle to
+    // return, and windows can appear later when a screen is plugged in -- so the opt-out moved to
+    // SwitcherPickers, which registers each window as it creates it. The reason is unchanged: the
+    // monitor sees our own process, so an unregistered picker would flash into the floating bar
+    // as a window every time the chord was held.)
 
     // One tap of the bound chord (direction +1) or that chord plus Shift (-1).
     public void Step(int direction)
