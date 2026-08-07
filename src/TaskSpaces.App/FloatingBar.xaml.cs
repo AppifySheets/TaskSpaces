@@ -1001,7 +1001,44 @@ public partial class FloatingBar : Window
         // The opacity ladder above stays: position tells you which is in front, opacity tells
         // you how far back the others are, and minimised windows still have to be distinguished
         // from merely covered ones.
-        if (row.Ordinal is not { HasValue: true } ordinal) return artwork;
+        // Petre: "can you also identify if an app has something to say, a notification, and say
+        // it on the icon?"
+        //
+        // A dot in the TOP-right, which is the one corner of the icon still unspoken for -- the
+        // bottom edge carries the same-app colour band, and the outline states ring the whole
+        // thing. It is also where every messaging app in existence puts its own badge, so it
+        // needs no explaining.
+        //
+        // Warm and fully opaque, against a bar where everything else is a shade of white: this
+        // is the only mark here that is asking you to DO something, so it is the only one
+        // allowed to be a colour that draws the eye.
+        //
+        // Both halves of the rule live elsewhere and are worth knowing here: it is set when the
+        // taskbar button flashes, and cleared when you look at the window -- never by Windows,
+        // which has no "stopped flashing" notification to give.
+        var attention = row.WantsAttention
+            ? new Border
+            {
+                Width = 7,
+                Height = 7,
+                CornerRadius = new CornerRadius(4),
+                Background = AttentionDot,
+                // A dark rim, so the dot survives landing on light app artwork.
+                BorderBrush = AttentionDotRim,
+                BorderThickness = new Thickness(1),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+            }
+            : null;
+
+        if (row.Ordinal is not { HasValue: true } ordinal)
+        {
+            if (attention is null) return artwork;
+            var dotted = new Grid();
+            dotted.Children.Add(artwork);
+            dotted.Children.Add(attention);
+            return dotted;
+        }
 
         // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
         // arbitrarily, if i'm selecting the second browser, i can see that the other, first got
@@ -1046,8 +1083,14 @@ public partial class FloatingBar : Window
         var cell = new Grid();
         cell.Children.Add(artwork);
         cell.Children.Add(band);
+        if (attention is not null) cell.Children.Add(attention);
         return cell;
     }
+
+    // Amber rather than the red a notification badge usually is: red on this bar would read as
+    // an error, and "someone messaged you" is not one.
+    static readonly Brush AttentionDot = Frozen(0xFF, 0xFF, 0xA7, 0x26);
+    static readonly Brush AttentionDotRim = Frozen(0xB0, 0x20, 0x20, 0x24);
 
     // Bright and saturated, deliberately unlike WorkspacePalette's muted lane tints: those sit
     // BEHIND icons and must not compete, while these are three-pixel slivers on top of arbitrary

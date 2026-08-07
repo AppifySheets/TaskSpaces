@@ -45,7 +45,11 @@ public sealed record WindowRow(
     // Its one hard requirement is that it must NOT move when z-order does: the whole point is to
     // watch an icon change position while keeping its name. Hence derived from handle order (see
     // OverviewBuilder.Ordinals), which is fixed for a window's lifetime.
-    Maybe<int> Ordinal = default);
+    Maybe<int> Ordinal = default,
+    // This window's taskbar button has flashed and you have not looked at it since -- somebody
+    // messaged you, or the app wants you. Cleared by activating the window, never by the OS,
+    // which has no "stopped flashing" notification to give.
+    bool WantsAttention = false);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);

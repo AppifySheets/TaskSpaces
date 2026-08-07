@@ -102,6 +102,16 @@ public sealed class FakeActivator : IWindowActivator
     public Result Minimize(WindowHandle w) { Minimized.Add(w); return Result.Success(); }
 }
 
+// Flashing taskbar buttons. Tests push handles through Subject to mean "this window's button
+// just flashed", which is what the shell hook reports -- repeatedly, and with no matching
+// "stopped" notification.
+public sealed class FakeAttention : IAttentionMonitor
+{
+    public Subject<WindowHandle> Subject { get; } = new();
+    public Result Start() => Result.Success();
+    public IObservable<WindowHandle> Flashed => Subject.AsObservable();
+}
+
 // Monitor numbers, minimised state and z-order, as the OS would report them. Tests set Facts
 // directly; the default is Empty, which reads as "no screen information available" and leaves
 // ordering and the restore fallback inert.

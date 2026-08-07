@@ -28,9 +28,12 @@ public static class OverviewBuilder
         // Monitor, minimised state and z-order, gathered in one pass by IScreenLayout. Null
         // means "no screen facts available" -- compatibility mode, and every test written
         // before this existed -- and leaves ordering and rendering exactly as they were.
-        ScreenFacts? screen = null)
+        ScreenFacts? screen = null,
+        // Windows whose taskbar button has flashed and that the user has not looked at since.
+        IReadOnlySet<WindowHandle>? wantsAttention = null)
     {
         var facts = screen ?? ScreenFacts.Empty;
+        var attention = wantsAttention ?? new HashSet<WindowHandle>();
 
         // `desktopId` is null for rows that belong to no single desktop -- pinned windows, and
         // the "Unplaced" catch-all below -- which is exactly the set that can never carry a
@@ -43,7 +46,8 @@ public static class OverviewBuilder
                 MonitorOf(w),
                 facts.Minimized.Contains(w.Handle),
                 frontmost,
-                ordinal);
+                ordinal,
+                attention.Contains(w.Handle));
 
         // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
         // arbitrarily, if i'm selecting the second browser, i can see that the other, first got

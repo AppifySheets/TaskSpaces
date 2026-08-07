@@ -23,6 +23,10 @@ public partial class App : Application
     TaskbarIcon? trayIcon;
     WorkspaceManager? manager;
     WindowMonitor? monitor;
+    // Flashing taskbar buttons. Held for the process lifetime like `monitor`: it owns a real
+    // hwnd registered with the shell, and letting it go would silently stop the notification
+    // badges.
+    ShellHookAttentionMonitor? attentionMonitor;
     bool compatibilityMode;
     ManageWindow? manageWindow; // single instance: a left-click on the tray opens this
     HotkeyService? hotkeys;
@@ -105,8 +109,13 @@ public partial class App : Application
         // last time you were there (WorkspaceManager.RestoreLastActive). Same WindowActivator
         // the bar's icons use -- one definition of "bring it to me", so a restored window and a
         // clicked one behave identically.
+        // Flashing taskbar buttons, so the bar can say which app wants Petre. Its own monitor
+        // rather than part of WindowMonitor: a flash is invisible to WinEvents (measured -- a
+        // probe hooked every event in both ranges and saw nothing), so this listens to the shell
+        // hook instead, which is a different subscription with a different lifetime.
+        attentionMonitor = new ShellHookAttentionMonitor();
         manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir),
-            activator: new WindowActivator(), screenLayout: new ScreenLayout());
+            activator: new WindowActivator(), screenLayout: new ScreenLayout(), attention: attentionMonitor);
 
         // Spec §Error handling: if the COM API is unrecognized (post-Windows-Update),
         // degrade to listing workspaces with a banner — never crash, never move windows.
@@ -155,6 +164,12 @@ public partial class App : Application
             monitor.Start().TapError(err => MessageBox.Show(
                 $"TaskSpaces: window monitoring is unavailable:\n{err}\n\nRules, auto-renaming and the window list will not update automatically.",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
+
+            // Deliberately quieter than the failure above: losing the shell hook costs one
+            // decoration on the icons, while losing WinEvents costs the window list itself.
+            // Worth a line in the debugger, not a dialog interrupting Petre at startup.
+            attentionMonitor.Start().TapError(err =>
+                System.Diagnostics.Debug.WriteLine($"TaskSpaces: notification badges unavailable: {err}"));
         }
 
         trayIcon = new TaskbarIcon

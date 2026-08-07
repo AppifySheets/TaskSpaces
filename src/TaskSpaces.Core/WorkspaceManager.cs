@@ -44,7 +44,11 @@ public sealed class WorkspaceManager(
     // Monitor number, minimised state and z-order for the bar. Optional and last for the usual
     // reason; null leaves every row's screen facts blank, which is what compatibility mode and
     // the pre-existing tests want.
-    IScreenLayout? screenLayout = null)
+    IScreenLayout? screenLayout = null,
+    // Flashing taskbar buttons -- "somebody messaged me". Optional and last, as ever; null means
+    // no window ever asks for attention, which is what compatibility mode and the existing tests
+    // want.
+    IAttentionMonitor? attention = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
     readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
@@ -80,6 +84,17 @@ public sealed class WorkspaceManager(
     // CurrentDesktop() already reports the new one -- the outgoing id is only knowable if we
     // were already holding it.
     Maybe<Guid> currentDesktopId = Maybe<Guid>.None;
+
+    // Windows whose taskbar button has flashed and that you have not looked at since. Petre:
+    // "can you also identify if an app has something to say, a notification, and say it on the
+    // icon?"
+    //
+    // Live-only, like everything else about the present moment. And a SET rather than a
+    // timestamp, because Windows never says a flash has stopped (measured -- see
+    // IAttentionMonitor): the end of attention is our rule, not an event, and the rule is that
+    // looking at the window clears it.
+    readonly HashSet<WindowHandle> wantsAttention = [];
+    IDisposable? attentionSubscription;
     // Alt+Tab-style switching order. Live-only for the reason WorkspaceMru documents:
     // "where I was a moment ago" is a fact about this session.
     WorkspaceMru mru = WorkspaceMru.Empty;
@@ -137,6 +152,13 @@ public sealed class WorkspaceManager(
                     // do that if we were already holding its id.
                     currentDesktopId = id;
                 });
+                // Filtered to windows we actually track, so our own chrome and the shell's
+                // helper windows can never light up a row -- and a flash for something with no
+                // row would pulse every open surface for nothing.
+                attentionSubscription = attention?.Flashed
+                    .Where(w => knownWindows.ContainsKey(w))
+                    .Subscribe(OnFlashed);
+
                 ReapplyRenames();
                 RestorePlacements();
             });
@@ -282,9 +304,35 @@ public sealed class WorkspaceManager(
     // never disagree about what "became active" means.
     void MarkActive(WindowHandle window)
     {
-        if (activeWindow.Equals(Maybe<WindowHandle>.From(window))) return;
+        // Looking at a window is what answers it, so this is also where attention ends. Done
+        // before the change guard below, and that ordering matters: re-activating the window you
+        // are already in is a no-op for the highlight but must still clear a flash that arrived
+        // while you sat there.
+        var settled = wantsAttention.Remove(window);
+        if (activeWindow.Equals(Maybe<WindowHandle>.From(window)))
+        {
+            if (settled) stateChanged.OnNext(Unit.Default);
+            return;
+        }
         activeWindow = window;
         stateChanged.OnNext(Unit.Default);
+    }
+
+    // A taskbar button flashed. Petre: "let's say somebody has messaged me, or vscode is asking
+    // for my attention somewhere."
+    //
+    // HSHELL_FLASH repeats for as long as the window keeps flashing, so this is called many
+    // times per notification. Pulsing only on the FIRST one keeps a flashing window from
+    // rebuilding every open surface several times a second -- each rebuild costs a DesktopOf COM
+    // call per known window.
+    //
+    // A window you are already looking at is ignored outright. Some apps flash regardless of
+    // focus, and a dot on the icon you are currently in would be telling you to go somewhere you
+    // already are.
+    void OnFlashed(WindowHandle window)
+    {
+        if (activeWindow.Equals(Maybe<WindowHandle>.From(window))) return;
+        if (wantsAttention.Add(window)) stateChanged.OnNext(Unit.Default);
     }
 
     void OnTitleChanged(WindowInfo window)
@@ -927,7 +975,7 @@ public sealed class WorkspaceManager(
             // One screen sweep per build, alongside the DesktopOf calls above -- and far cheaper
             // than they are, being user32 rather than COM.
             var screen = screenLayout?.Snapshot() ?? ScreenFacts.Empty;
-            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop, screen);
+            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop, screen, wantsAttention);
         }));
 
     // Both now RECORD the placement as well as performing it. Petre's defect: "move Beeper

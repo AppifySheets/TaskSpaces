@@ -60,6 +60,17 @@ public static class NativeMethods
     // every animating window on the desktop; this fires once per gesture. Adjacent to
     // FOREGROUND in the SYSTEM range, so the two share one hook.
     public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
+
+    // The shell hook: how the taskbar itself is told what windows are doing. Used here for one
+    // notification only, HSHELL_FLASH, because flashing is invisible to WinEvents -- measured
+    // with a probe that hooked every event in both ranges and saw nothing at all.
+    [DllImport("user32.dll")] public static extern bool RegisterShellHookWindow(nint hwnd);
+    [DllImport("user32.dll")] public static extern bool DeregisterShellHookWindow(nint hwnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessageW(string name);
+    // Sent repeatedly WHILE a window flashes, with lParam = that window's hwnd. There is no
+    // matching "stopped flashing" notification -- also measured -- so when attention ENDS is a
+    // question the app has to answer for itself.
+    public const int HSHELL_FLASH = 0x8006;
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000, WINEVENT_SKIPOWNPROCESS = 0x0002;
     public const int OBJID_WINDOW = 0, CHILDID_SELF = 0;
     public const uint GA_ROOT = 2;
