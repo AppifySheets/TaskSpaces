@@ -15,7 +15,20 @@ namespace TaskSpaces.Core.Overview;
 // focus, so a remembered window that has since closed or moved stops being marked. Never set on
 // the current desktop -- you are already there, so there is nothing to land on, and the window
 // in question is the one already wearing IsActive.
-public sealed record WindowRow(WindowInfo Window, Maybe<string> OriginalTitle, bool IsActive = false, bool WillActivate = false);
+//
+// Monitor / IsMinimized / IsFrontmostOnMonitor: Petre, "sort icons in workspaces by monitors...
+// and i want to have the monitor number on the icon", "can you also identify which window is
+// minimized, vs not? or which one is on top?", "maybe we can do 1 in bold, if it's on top".
+// IsFrontmostOnMonitor is false on every desktop except the current one -- z-order comes from
+// EnumWindows, which skips the cloaked windows every other desktop consists of.
+public sealed record WindowRow(
+    WindowInfo Window,
+    Maybe<string> OriginalTitle,
+    bool IsActive = false,
+    bool WillActivate = false,
+    Maybe<int> Monitor = default,
+    bool IsMinimized = false,
+    bool IsFrontmostOnMonitor = false);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);

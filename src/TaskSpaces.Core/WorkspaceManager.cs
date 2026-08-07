@@ -40,7 +40,11 @@ public sealed class WorkspaceManager(
     // active last time this workspace was active." Optional and last so every pre-existing
     // caller and test compiles unchanged; null simply means "restore nothing", which is what
     // compatibility mode wants anyway (no desktops to switch between).
-    IWindowActivator? activator = null)
+    IWindowActivator? activator = null,
+    // Monitor number, minimised state and z-order for the bar. Optional and last for the usual
+    // reason; null leaves every row's screen facts blank, which is what compatibility mode and
+    // the pre-existing tests want.
+    IScreenLayout? screenLayout = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
     readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
@@ -874,7 +878,10 @@ public sealed class WorkspaceManager(
                 .Select(w => (w.Handle, Desktop: desktops.DesktopOf(w.Handle)))
                 .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);
-            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop);
+            // One screen sweep per build, alongside the DesktopOf calls above -- and far cheaper
+            // than they are, being user32 rather than COM.
+            var screen = screenLayout?.Snapshot() ?? ScreenFacts.Empty;
+            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop, screen);
         }));
 
     // Both now RECORD the placement as well as performing it. Petre's defect: "move Beeper

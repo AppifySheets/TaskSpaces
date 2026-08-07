@@ -106,7 +106,7 @@ public partial class App : Application
         // the bar's icons use -- one definition of "bring it to me", so a restored window and a
         // clicked one behave identically.
         manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir),
-            activator: new WindowActivator());
+            activator: new WindowActivator(), screenLayout: new ScreenLayout());
 
         // Spec §Error handling: if the COM API is unrecognized (post-Windows-Update),
         // degrade to listing workspaces with a banner — never crash, never move windows.

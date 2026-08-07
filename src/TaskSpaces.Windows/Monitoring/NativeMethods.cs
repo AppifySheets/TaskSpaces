@@ -113,6 +113,42 @@ public static class NativeMethods
     }
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
+    // Petre: "sort icons in workspaces by monitors, first icons from monitor1, then monitor2,
+    // etc. and i want to have the monitor number on the icon."
+    //
+    // MonitorFromWindow rather than MonitorFromPoint: we are asking about a WINDOW, and it
+    // answers for a minimised one too (the monitor it would restore onto), which is what keeps
+    // a tray-minimised window from jumping position in the bar.
+    [DllImport("user32.dll")] public static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+    // MONITORINFOEX is MONITORINFO plus the device name -- "\\.\DISPLAY1", "\\.\DISPLAY2" --
+    // and that trailing number is the one Windows itself shows under Display Settings >
+    // Identify. Deriving the badge from it rather than from enumeration ORDER is deliberate:
+    // enumeration order carries no guarantee at all, while this is the number Petre can check
+    // against his own screen.
+    //
+    // CharSet.Unicode and the ByValTStr SizeConst=32 are both load-bearing -- CCHDEVICENAME is
+    // 32 wide chars, and the struct is memcpy'd by the OS, so a wrong size or width silently
+    // yields garbage rather than an error. (This codebase has been bitten by a missing
+    // CharSet.Unicode before; see the probe notes in CLAUDE.md.)
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFOEX
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+
+    // Separate declaration from GetMonitorInfo above rather than a shared one: the two take
+    // different structs, and the OS decides which it is filling in purely from cbSize.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
+    public static extern bool GetMonitorInfoEx(nint hMonitor, ref MONITORINFOEX info);
+
+    public delegate bool MonitorEnumProc(nint monitor, nint hdc, ref RECT clip, nint data);
+    [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(nint hdc, nint clip, MonitorEnumProc callback, nint data);
+
     // Task 11 fix round 2 (reviewer, confirmed root cause of Petre's off-screen
     // floating bar): GetDpiForMonitor (Shcore.dll) asks Windows for a SPECIFIC
     // monitor's DPI directly, independent of any Window's own per-monitor-DPI-

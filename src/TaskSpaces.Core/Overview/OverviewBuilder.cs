@@ -24,16 +24,28 @@ public static class OverviewBuilder
         // Which window each desktop will restore focus to when you land on it (see
         // WorkspaceManager.RestoreLastActive). Optional and last, same reason as activeWindow:
         // null means "mark nothing", and every pre-existing caller and test keeps compiling.
-        IReadOnlyDictionary<Guid, WindowHandle>? lastActiveByDesktop = null)
+        IReadOnlyDictionary<Guid, WindowHandle>? lastActiveByDesktop = null,
+        // Monitor, minimised state and z-order, gathered in one pass by IScreenLayout. Null
+        // means "no screen facts available" -- compatibility mode, and every test written
+        // before this existed -- and leaves ordering and rendering exactly as they were.
+        ScreenFacts? screen = null)
     {
+        var facts = screen ?? ScreenFacts.Empty;
+
         // `desktopId` is null for rows that belong to no single desktop -- pinned windows, and
         // the "Unplaced" catch-all below -- which is exactly the set that can never carry a
         // landing marker.
-        WindowRow Row(WindowInfo w, Guid? desktopId = null) =>
+        WindowRow Row(WindowInfo w, Guid? desktopId = null, bool frontmost = false) =>
             new(w,
                 originalTitleOf(w.Handle),
                 activeWindow.Map(active => active == w.Handle).GetValueOrDefault(false),
-                WillActivate(w, desktopId));
+                WillActivate(w, desktopId),
+                MonitorOf(w),
+                facts.Minimized.Contains(w.Handle),
+                frontmost);
+
+        Maybe<int> MonitorOf(WindowInfo w) =>
+            facts.MonitorOf.TryGetValue(w.Handle, out var number) ? number : Maybe<int>.None;
 
         // Suppressed on the CURRENT desktop, and not as a detail: the map is stamped on the way
         // OUT, so while you are standing on a desktop its entry still names whatever you were
@@ -50,9 +62,39 @@ public static class OverviewBuilder
 
         var pinnedRows = windows.Where(w => pinned.Contains(w.Handle)).Select(w => Row(w)).ToList();
 
-        List<WindowRow> OnDesktop(Guid desktopId) => windows
-            .Where(w => !pinned.Contains(w.Handle) && desktopOf.TryGetValue(w.Handle, out var d) && d == desktopId)
-            .Select(w => Row(w, desktopId)).ToList();
+        // Petre: "sort icons in workspaces by monitors, first icons from monitor1, then
+        // monitor2, etc."
+        //
+        // OrderBy is a STABLE sort, and that is doing real work here rather than being an
+        // incidental property: windows on the same monitor keep the relative order they already
+        // had, so the sort regroups the row without reshuffling within a group. Icons stay where
+        // Petre's hand expects them.
+        //
+        // A window whose monitor could not be resolved sorts last rather than being dropped --
+        // same principle as the "Unplaced" group below. int.MaxValue because there is no monitor
+        // number that could collide with it.
+        //
+        // Deliberately NOT sorted by z-order, which was the other way to answer "which one is on
+        // top": z-order changes on every click, so the icons would re-shuffle under the cursor
+        // and a position would stop being a stable click target. The badge carries that instead.
+        List<WindowRow> OnDesktop(Guid desktopId)
+        {
+            var here = windows
+                .Where(w => !pinned.Contains(w.Handle) && desktopOf.TryGetValue(w.Handle, out var d) && d == desktopId)
+                .OrderBy(w => MonitorOf(w).GetValueOrDefault(int.MaxValue))
+                .ToList();
+
+            // "On top" is per MONITOR, not per row: with two monitors there are two front-most
+            // windows on screen at once, and marking only one of them would be a lie about the
+            // other. Empty for every desktop but the current one -- see ScreenFacts.ZOrder.
+            var frontmost = here
+                .Where(w => facts.ZOrder.ContainsKey(w.Handle) && MonitorOf(w).HasValue)
+                .GroupBy(w => MonitorOf(w).Value)
+                .Select(monitor => monitor.MinBy(w => facts.ZOrder[w.Handle])!.Handle)
+                .ToHashSet();
+
+            return here.Select(w => Row(w, desktopId, frontmost.Contains(w.Handle))).ToList();
+        }
 
         var workspaceGroups = state.Workspaces
             .Select(ws => new WorkspaceGroup(
