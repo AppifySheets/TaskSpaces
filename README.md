@@ -4,7 +4,7 @@
 
 <h1 align="center">TaskSpaces</h1>
 
-<p align="center"><em>Change task in one chord and arrive exactly where you left off — same windows, same focus, nothing to rebuild.</em></p>
+<p align="center"><em>The virtual desktops Windows should have shipped.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20x64-0078D4" alt="Platform: Windows 11, x64" />
