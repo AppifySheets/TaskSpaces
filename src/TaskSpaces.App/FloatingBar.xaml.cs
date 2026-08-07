@@ -592,41 +592,36 @@ public partial class FloatingBar : Window
         // still compile, match nothing, and silently stop suppressing the label highlight over
         // an icon -- a failure with no error and no crash.
         var iconButtons = new List<UIElement>();
+
+        // Petre: "sort icons in workspaces by monitors", then -- after the numbered badges that
+        // first carried it were rejected -- "let's go with the hairline separator", and "let that
+        // separator be not in the middle, each workspace has its own place for it".
+        //
+        // The mark is drawn LEADING each monitor's group ("show a hairline at the beginning or
+        // end"), which is what lets a row whose windows all sit on one screen still say WHICH
+        // screen -- the case a divider-between-groups structurally could not answer. Rows are
+        // already sorted by monitor, so a group begins wherever the number changes.
+        //
+        // Nothing at all for the first monitor: "there should be no padding in the beginning of
+        // the icons if it's on the first monitor". Absence is the mark, and monitor 1 can only
+        // ever be the first group, since the sort is ascending.
+        //
+        // `previous` deliberately spans ALL the lines of this row rather than resetting per line.
+        // Petre: "gepha workspace, second line has a line in front." A marker was forced at the
+        // start of every line, so a group split by the five-icon wrap re-announced itself
+        // underneath even though nothing had changed -- a mark that looked like a boundary and
+        // was really just a line break. A continuation line now inherits from the line above it,
+        // which is how wrapped text reads anyway, and a marker appears only where the monitor
+        // genuinely changes -- including at a line start, when the change happens to fall there.
+        Maybe<int> previous = Maybe<int>.None;
+
         IconRowLimit.Lines(rows.ToList()).ToList().ForEach(line =>
         {
             var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
-            // Petre: "sort icons in workspaces by monitors", then -- after the numbered badges
-            // that first carried it were rejected -- "let's go with the hairline separator", and
-            // "let that separator be not in the middle, each workspace has its own place for it".
-            //
-            // So it is drawn where THIS row's own monitor boundary falls, not at any shared
-            // column: rows are sorted by monitor already, so the boundary is simply the point
-            // where the number changes. A row whose windows all sit on one screen has no
-            // boundary and therefore no separator, and pays nothing -- which is also why this
-            // needs no "do we have multiple monitors" flag.
-            //
-            // Never leading: a change detected on the first icon of a LINE is a wrap, not a
-            // boundary, and the line break has already done the separating.
-            Maybe<int> previous = Maybe<int>.None;
             line.ToList().ForEach(r =>
             {
-                // Drawn LEADING each group rather than between groups (Petre: "show a hairline
-                // at the beginning or end"), which is what lets a row whose windows are all on
-                // one screen still say WHICH screen -- the case that had no answer when this was
-                // only ever a divider.
-                //
-                // Emitted at the start of every LINE too, not just at a change of monitor: a
-                // wrapped row's second line would otherwise carry icons with no marker above
-                // them to inherit from.
-                // Nothing at all for the first monitor. Petre: "there should be no padding in the
-                // beginning of the icons if it's on the first monitor" -- a zero-stroke marker
-                // still reserved its gutter, which bought cross-row alignment at the price of an
-                // empty indent on the commonest row. He looked at both and chose flush.
-                //
-                // Only ever skipped at the START of a line, never mid-row: groups are sorted by
-                // monitor ascending, so monitor 1 can only be the first group there is.
-                var startsGroup = linedUp.Children.Count == 0 || r.Monitor.Value != previous.GetValueOrDefault(-1);
-                if (showMonitorMarkers && r.Monitor.HasValue && startsGroup && r.Monitor.Value > 1)
+                if (showMonitorMarkers && r.Monitor.HasValue && r.Monitor.Value > 1
+                    && r.Monitor.Value != previous.GetValueOrDefault(-1))
                     linedUp.Children.Add(MonitorMarker(r.Monitor.Value));
                 previous = r.Monitor;
 
