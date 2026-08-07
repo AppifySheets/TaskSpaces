@@ -880,7 +880,15 @@ public partial class FloatingBar : Window
         {
             Child = container,
             BorderBrush = isCurrent ? CurrentRowRing : Brushes.Transparent,
-            BorderThickness = new Thickness(1),
+            // Two pixels, not one, and paid by EVERY row (transparent when not current) for the
+            // rule this file keeps relearning: the bar is SizeToContent, so a thickness only the
+            // current row carried would resize the whole window on every switch. Uniform, it
+            // costs 2px of row height once and nothing thereafter.
+            //
+            // The second pixel is also what keeps this mark distinct from the active-WINDOW
+            // outline, which is near-white too but 1px and drawn around a 22px icon rather than
+            // a whole row. Scale separates them; weight makes sure of it.
+            BorderThickness = new Thickness(2),
             // Slightly rounded rather than square, matching the bar's own 8px corners. At one
             // pixel the difference is barely there; it just stops the corners looking sharper
             // than the window they sit in.
@@ -1157,10 +1165,28 @@ public partial class FloatingBar : Window
     static readonly Brush CurrentRowForeground = Frozen(0xF2, 0xFF, 0xFF, 0xFF);
     static readonly Brush RestingRowForeground = Frozen(0x80, 0xFF, 0xFF, 0xFF);
 
-    // Deliberately dimmer than the text it encircles: the ring is a locator, not a thing to
-    // read, and at full strength it competed with the label for attention on a surface this
-    // small.
-    static readonly Brush CurrentRowRing = Frozen(0x66, 0xFF, 0xFF, 0xFF);
+    // Petre: "current white border is quite unnoticeable."
+    //
+    // It was drawn dim on purpose -- "a locator, not a thing to read" -- and that reasoning was
+    // simply wrong about the surface it sits on. The bar is translucent dark and only a few
+    // pixels of it are chrome, so 40% white at one pixel does not register at all next to lane
+    // tints and app icons. The marker answering "which workspace am I on" is the one thing on
+    // this bar that must never need looking for.
+    //
+    // Tuned by eye against the running bar, in both directions: 0x66 was invisible, a first pass
+    // at the label's own 0xF2 was "a little less loud, please", and this sits between them.
+    //
+    // So it lands just UNDER the current row's label (CurrentRowForeground, 0xF2) rather than
+    // level with it, and that ordering is worth keeping if these are ever retuned: the label
+    // names the workspace and the ring only locates it, so the ring leading the pair would be
+    // the loudest thing on the bar saying the least.
+    //
+    // A per-workspace COLOURED ring was designed and rejected. It would have added information
+    // the lane tint and the label already carry, and worse, its loudness would have varied by
+    // workspace -- an indigo-derived ring and an amber-derived one do not have the same contrast
+    // against this background, so "can I see where I am" would have depended on where you were.
+    // White is the same brightness on every row.
+    static readonly Brush CurrentRowRing = Frozen(0xC0, 0xFF, 0xFF, 0xFF);
 
     UIElement IconButton(string groupLabel, string groupKey, WindowRow row)
     {
