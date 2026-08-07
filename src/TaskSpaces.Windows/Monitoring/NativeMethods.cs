@@ -146,6 +146,10 @@ public static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
     public static extern bool GetMonitorInfoEx(nint hMonitor, ref MONITORINFOEX info);
 
+    // dwFlags bit meaning "this is the main monitor". Not the same question as "is this display
+    // 1": on the setup this was built against, the primary is DISPLAY2.
+    public const uint MONITORINFOF_PRIMARY = 1;
+
     public delegate bool MonitorEnumProc(nint monitor, nint hdc, ref RECT clip, nint data);
     [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(nint hdc, nint clip, MonitorEnumProc callback, nint data);
 

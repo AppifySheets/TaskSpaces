@@ -34,6 +34,22 @@ public class ScreenLayoutTests
         Assert.All(facts.MonitorOf.Values, number => Assert.True(number >= 1, $"display number {number} should be >= 1"));
     }
 
+    // The main-monitor fallback (WorkspaceManager.FrontmostOnMainMonitor) is dead code without
+    // this, and silently so: a dwFlags read that never matched would simply mean the fallback
+    // never fires, which looks exactly like "there was nothing to restore".
+    //
+    // Deliberately NOT asserted to be display 1. On the setup this was built against the primary
+    // is DISPLAY2, which is the whole reason "main monitor" is asked of Windows rather than
+    // assumed.
+    [Fact]
+    public void Windows_reports_which_display_is_primary()
+    {
+        var facts = new ScreenLayout().Snapshot();
+
+        Assert.True(facts.PrimaryMonitor.HasValue, "no display reported itself as primary");
+        Assert.Contains(facts.PrimaryMonitor.Value, facts.MonitorOf.Values);
+    }
+
     // Z-order is an index into one enumeration, so it must be dense and start at 0 -- if it were
     // not, "smallest index wins" (how the front-most window per monitor is chosen) would be
     // comparing positions from different enumerations.

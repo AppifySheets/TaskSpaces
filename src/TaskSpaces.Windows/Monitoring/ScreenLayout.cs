@@ -1,3 +1,4 @@
+using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 
@@ -15,7 +16,7 @@ public sealed class ScreenLayout : IScreenLayout
 {
     public ScreenFacts Snapshot()
     {
-        var numbers = MonitorNumbers();
+        var (numbers, primary) = MonitorNumbers();
 
         // EnumWindows hands back windows FRONT TO BACK, so the index in this list is the
         // z-order outright -- no extra call needed. (Enumerate() filters to taskbar candidates
@@ -37,7 +38,7 @@ public sealed class ScreenLayout : IScreenLayout
             if (IsIconic(window.Value)) minimized.Add(window);
         });
 
-        return new ScreenFacts(monitorOf, minimized, zOrder);
+        return new ScreenFacts(monitorOf, minimized, zOrder, primary);
     }
 
     // HMONITOR -> the number Windows shows under Display Settings > Identify.
@@ -49,20 +50,25 @@ public sealed class ScreenLayout : IScreenLayout
     // plain left-to-right position. They would NOT agree on a layout whose primary is not
     // leftmost, and this is the reading that still matches what his screen says when he presses
     // Identify.
-    static Dictionary<nint, int> MonitorNumbers()
+    static (Dictionary<nint, int> Numbers, Maybe<int> Primary) MonitorNumbers()
     {
         var numbers = new Dictionary<nint, int>();
+        var primary = Maybe<int>.None;
         // The delegate is only used for the duration of this call -- unlike the WinEvent hook
         // in WindowMonitor, EnumDisplayMonitors is synchronous, so there is nothing for the GC
         // to collect out from under us.
         EnumDisplayMonitors(0, 0, (nint monitor, nint _, ref RECT _, nint _) =>
         {
             var info = new MONITORINFOEX { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFOEX>() };
-            if (GetMonitorInfoEx(monitor, ref info) && Number(info.szDevice) is { } number)
-                numbers[monitor] = number;
+            if (!GetMonitorInfoEx(monitor, ref info) || Number(info.szDevice) is not { } number) return true;
+            numbers[monitor] = number;
+            // Asked of Windows rather than assumed to be display 1. Measured on the setup this
+            // was built against: the PRIMARY there is DISPLAY2, not DISPLAY1 -- so "main
+            // monitor" and "monitor 1" are genuinely different questions.
+            if ((info.dwFlags & MONITORINFOF_PRIMARY) != 0) primary = number;
             return true;
         }, 0);
-        return numbers;
+        return (numbers, primary);
     }
 
     // "\\.\DISPLAY12" -> 12. Null for anything that does not end in digits, which is not a

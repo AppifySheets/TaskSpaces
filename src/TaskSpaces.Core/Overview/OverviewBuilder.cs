@@ -74,14 +74,24 @@ public static class OverviewBuilder
         // same principle as the "Unplaced" group below. int.MaxValue because there is no monitor
         // number that could collide with it.
         //
-        // Deliberately NOT sorted by z-order, which was the other way to answer "which one is on
-        // top": z-order changes on every click, so the icons would re-shuffle under the cursor
-        // and a position would stop being a stable click target. The badge carries that instead.
+        // ...then by z-order within each monitor, front-most first. Petre: "let's also sort those
+        // icons by z-index."
+        //
+        // Argued against first and then asked for anyway, so the objection is recorded rather
+        // than lost: z-order changes on every click, so the icons on the row you are looking at
+        // reshuffle as you work and a POSITION stops being a stable click target. What makes
+        // that survivable is the same limitation that shaped everything else here -- only the
+        // CURRENT desktop has z-order at all, so every other row keeps the order it had. The
+        // rows you navigate from memory are exactly the ones that hold still.
+        //
+        // Windows with no z-order sort last within their monitor and keep their relative order,
+        // so a desktop with no z-order at all comes out exactly as it did before.
         List<WindowRow> OnDesktop(Guid desktopId)
         {
             var here = windows
                 .Where(w => !pinned.Contains(w.Handle) && desktopOf.TryGetValue(w.Handle, out var d) && d == desktopId)
                 .OrderBy(w => MonitorOf(w).GetValueOrDefault(int.MaxValue))
+                .ThenBy(w => facts.ZOrder.TryGetValue(w.Handle, out var z) ? z : int.MaxValue)
                 .ToList();
 
             // "On top" is per MONITOR, not per row: with two monitors there are two front-most

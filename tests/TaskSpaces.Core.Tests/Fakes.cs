@@ -100,3 +100,22 @@ public sealed class FakeActivator : IWindowActivator
     public Result Activate(WindowHandle w) { Activated.Add(w); return Result.Success(); }
 }
 
+// Monitor numbers, minimised state and z-order, as the OS would report them. Tests set Facts
+// directly; the default is Empty, which reads as "no screen information available" and leaves
+// ordering and the restore fallback inert.
+public sealed class FakeScreenLayout : IScreenLayout
+{
+    public ScreenFacts Facts { get; set; } = ScreenFacts.Empty;
+    public int SnapshotCount { get; private set; }
+
+    public ScreenFacts Snapshot() { SnapshotCount++; return Facts; }
+
+    // Front-to-back, which is the order EnumWindows reports and therefore the order the real
+    // ScreenLayout indexes.
+    public static ScreenFacts On(int primary, params (WindowHandle Window, int Monitor)[] frontToBack) =>
+        new(frontToBack.ToDictionary(x => x.Window, x => x.Monitor),
+            new HashSet<WindowHandle>(),
+            frontToBack.Select((x, i) => (x.Window, i)).ToDictionary(x => x.Window, x => x.i),
+            primary);
+}
+

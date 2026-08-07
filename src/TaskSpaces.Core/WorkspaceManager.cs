@@ -480,14 +480,42 @@ public sealed class WorkspaceManager(
     // degrades to a taskbar flash rather than failing loudly.
     void RestoreLastActive(Guid arriving)
     {
-        if (activator is null || !lastActiveByDesktop.TryGetValue(arriving, out var window)) return;
-        if (desktops.DesktopOf(window).GetValueOrDefault() != arriving)
-        {
-            lastActiveByDesktop.Remove(arriving);
-            return;
-        }
-        activator.Activate(window);
+        if (activator is null) return;
+        Remembered(arriving).Or(() => FrontmostOnMainMonitor()).Tap(window => activator.Activate(window));
     }
+
+    Maybe<WindowHandle> Remembered(Guid arriving)
+    {
+        if (!lastActiveByDesktop.TryGetValue(arriving, out var window)) return Maybe<WindowHandle>.None;
+        if (desktops.DesktopOf(window).GetValueOrDefault() == arriving) return window;
+        // Closed, or dragged to another desktop while we were away. Dropped rather than merely
+        // skipped so the bar's marker stops promising a landing spot that no longer exists.
+        lastActiveByDesktop.Remove(arriving);
+        return Maybe<WindowHandle>.None;
+    }
+
+    // Petre: "if we don't have the information about what was the last active window on that
+    // monitor, activate the foreground window on the main monitor... rather than not focus any
+    // window."
+    //
+    // Applies on the first visit of a session to any desktop, which used to leave focus wherever
+    // Windows happened to drop it.
+    //
+    // No DesktopOf calls needed to work out which windows are candidates, because of a property
+    // that falls out of how Windows works: we have ALREADY arrived by the time this runs, so the
+    // windows on this desktop are exactly the ones that are not cloaked -- and a ScreenFacts
+    // snapshot is built from EnumWindows, which returns only those. The snapshot IS this
+    // desktop's windows, already in front-to-back order.
+    //
+    // Narrowed to knownWindows, and that is not belt-and-braces: ScreenLayout enumerates through
+    // TopLevelWindows directly, which has never heard of WindowMonitor's ignore list, so the
+    // floating bar is in that snapshot -- and being permanently topmost, it sits at the very
+    // front of it. Without this filter the fallback would "restore focus" to our own bar every
+    // time. knownWindows is precisely the set with our chrome already excluded.
+    Maybe<WindowHandle> FrontmostOnMainMonitor() =>
+        screenLayout is null
+            ? Maybe<WindowHandle>.None
+            : screenLayout.Snapshot().FrontmostOnPrimary(knownWindows.Keys);
 
     // A desktop became current: if it belongs to a workspace, that is a visit.
     void RememberVisit(Guid desktopId) =>

@@ -1,3 +1,5 @@
+using CSharpFunctionalExtensions;
+
 namespace TaskSpaces.Core.Domain;
 
 // A single instant's answer to "where is each window on the physical screen, and what state is
@@ -17,10 +19,24 @@ public sealed record ScreenFacts(
     // for the CURRENT virtual desktop, because EnumWindows skips cloaked windows and every
     // window on another desktop is cloaked. That is a limit worth keeping rather than working
     // around: "which one is on top" is a question about the screen you are looking at.
-    IReadOnlyDictionary<WindowHandle, int> ZOrder)
+    IReadOnlyDictionary<WindowHandle, int> ZOrder,
+    // Which display Windows calls primary -- "the main monitor". None only if no display
+    // reported itself as primary, which Windows does not do, but which is cheaper to tolerate
+    // than to assume away.
+    Maybe<int> PrimaryMonitor = default)
 {
     public static readonly ScreenFacts Empty = new(
         new Dictionary<WindowHandle, int>(),
         new HashSet<WindowHandle>(),
         new Dictionary<WindowHandle, int>());
+
+    // The front-most of the given windows on the main monitor, or None if none of them is
+    // there. Restricted to a caller-supplied set because ZOrder is built from a raw
+    // EnumWindows that has never heard of our own chrome: the floating bar is a taskbar
+    // candidate AND permanently topmost, so it would otherwise win this outright.
+    public Maybe<WindowHandle> FrontmostOnPrimary(IEnumerable<WindowHandle> candidates) =>
+        PrimaryMonitor.Bind(primary => candidates
+            .Where(w => ZOrder.ContainsKey(w) && MonitorOf.TryGetValue(w, out var m) && m == primary)
+            .OrderBy(w => ZOrder[w])
+            .TryFirst());
 }

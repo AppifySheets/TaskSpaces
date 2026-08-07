@@ -19,6 +19,7 @@ public class LastActiveWindowTests
     readonly FakeTitles titles = new();
     readonly FakeStore store = new();
     readonly FakeActivator activator = new();
+    readonly FakeScreenLayout screen = new();
 
     static WindowInfo Window(nint handle, string process) =>
         new(new WindowHandle(handle), (int)handle, process, $@"C:\{process}.exe", $"{process} window", $@"""C:\{process}.exe""");
@@ -30,8 +31,12 @@ public class LastActiveWindowTests
     Guid work;
     Guid personal;
 
+    // As Started(), but with screen information available -- which is what switches the
+    // main-monitor fallback on.
+    WorkspaceManager StartedWithScreen() => Started(withScreen: true);
+
     // Two desktops: Work holds Code + Browser, Personal holds Mail. We start on Work.
-    WorkspaceManager Started()
+    WorkspaceManager Started(bool withScreen = false)
     {
         work = desktops.Create("Work").Value.Id;
         personal = desktops.Create("Personal").Value.Id;
@@ -42,7 +47,8 @@ public class LastActiveWindowTests
         desktops.WindowPlacements[browser.Handle] = work;
         desktops.WindowPlacements[mail.Handle] = personal;
 
-        var manager = new WorkspaceManager(desktops, monitor, titles, store, activator: activator);
+        var manager = new WorkspaceManager(desktops, monitor, titles, store,
+            activator: activator, screenLayout: withScreen ? screen : null);
         Assert.True(manager.Start().IsSuccess);
         return manager;
     }
@@ -72,11 +78,10 @@ public class LastActiveWindowTests
         Assert.Equal(browser.Handle, Assert.Single(activator.Activated));
     }
 
-    // The stamp happens on the way OUT, so a desktop never visited this session has nothing to
-    // restore -- and must not guess. Activating "something" would be worse than leaving focus
-    // where Windows put it, because the marker would have promised nothing.
+    // The stamp happens on the way OUT, so a desktop never visited this session has nothing
+    // remembered. With no screen information to fall back on either, there is nothing to do.
     [Fact]
-    public void Landing_on_a_desktop_we_have_never_left_activates_nothing()
+    public void Landing_on_a_desktop_we_have_never_left_activates_nothing_without_screen_facts()
     {
         var manager = Started();
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, browser));
@@ -84,6 +89,53 @@ public class LastActiveWindowTests
         SwitchTo(personal);
 
         Assert.Empty(activator.Activated);
+    }
+
+    // Petre: "if we don't have the information about what was the last active window on that
+    // monitor, activate the foreground window on the main monitor... rather than not focus any
+    // window." So the first visit of a session no longer leaves focus wherever Windows put it.
+    [Fact]
+    public void Landing_somewhere_unremembered_falls_back_to_the_front_window_on_the_main_monitor()
+    {
+        var manager = StartedWithScreen();
+        // Mail is in front on monitor 1; code is in front on monitor 2, which is PRIMARY.
+        screen.Facts = FakeScreenLayout.On(primary: 2, (mail.Handle, 1), (code.Handle, 2), (browser.Handle, 2));
+
+        SwitchTo(personal);
+
+        Assert.Equal(code.Handle, Assert.Single(activator.Activated));
+    }
+
+    // ScreenLayout enumerates windows directly, so it has never heard of WindowMonitor's ignore
+    // list -- our own floating bar is in that snapshot, and being permanently topmost it sits at
+    // the very front of it. Without narrowing to windows the manager knows, the fallback would
+    // hand focus to our own bar on every unremembered landing.
+    [Fact]
+    public void The_fallback_never_picks_a_window_the_manager_does_not_know_about()
+    {
+        var manager = StartedWithScreen();
+        var ourBar = new WindowHandle(0xBA5);
+        screen.Facts = FakeScreenLayout.On(primary: 2, (ourBar, 2), (code.Handle, 2));
+
+        SwitchTo(personal);
+
+        Assert.Equal(code.Handle, Assert.Single(activator.Activated));
+    }
+
+    // A remembered window always beats the fallback -- the fallback exists for the case where
+    // there is nothing to remember, not as a second opinion.
+    [Fact]
+    public void A_remembered_window_wins_over_the_main_monitor_fallback()
+    {
+        var manager = StartedWithScreen();
+        screen.Facts = FakeScreenLayout.On(primary: 2, (code.Handle, 2), (browser.Handle, 2));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, browser));
+
+        SwitchTo(personal);
+        activator.Activated.Clear();
+        SwitchTo(work);
+
+        Assert.Equal(browser.Handle, Assert.Single(activator.Activated));
     }
 
     // A remembered window that has since been closed or dragged elsewhere must not be dragged

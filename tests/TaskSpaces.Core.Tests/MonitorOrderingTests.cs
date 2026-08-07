@@ -65,6 +65,37 @@ public class MonitorOrderingTests
         Assert.Equal([B.Handle, C.Handle, A.Handle], rows.Select(r => r.Window.Handle));
     }
 
+    // Petre: "let's also sort those icons by z-index." Monitor first, then front-most first
+    // within each monitor -- so the two sorts compose rather than one overriding the other.
+    [Fact]
+    public void Within_a_monitor_icons_are_ordered_front_most_first()
+    {
+        // B is in front of A, and both are on monitor 1; C sits alone on monitor 2.
+        var rows = Rows([A, B, C], Facts([(A, 1), (B, 1), (C, 2)], frontToBack: [B, A, C]));
+
+        Assert.Equal([B.Handle, A.Handle, C.Handle], rows.Select(r => r.Window.Handle));
+    }
+
+    // Monitor still wins: a window in front on monitor 2 does not jump ahead of monitor 1.
+    [Fact]
+    public void Z_order_never_reorders_across_monitors()
+    {
+        var rows = Rows([A, B], Facts([(A, 2), (B, 1)], frontToBack: [A, B]));
+
+        Assert.Equal([B.Handle, A.Handle], rows.Select(r => r.Window.Handle));
+    }
+
+    // A desktop with no z-order -- which is every desktop but the current one -- must come out
+    // exactly as it did before z-order sorting existed.
+    [Fact]
+    public void Windows_with_no_z_order_sort_last_within_their_monitor_and_keep_their_order()
+    {
+        // C is in front; A and B have no z-order at all. All three on monitor 1.
+        var rows = Rows([A, B, C], Facts([(A, 1), (B, 1), (C, 1)], frontToBack: [C]));
+
+        Assert.Equal([C.Handle, A.Handle, B.Handle], rows.Select(r => r.Window.Handle));
+    }
+
     // A window whose monitor could not be resolved must still be reachable -- same principle as
     // the "Unplaced" group, which exists because a window that renders nowhere is a window you
     // cannot click.
