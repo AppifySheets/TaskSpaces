@@ -231,6 +231,26 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                 case EVENT_SYSTEM_FOREGROUND when known.TryGetValue(hwnd, out var activated):
                     events.OnNext(new WindowEvent(WindowEventKind.Activated, activated));
                     break;
+
+                // Focus landed on a window we do not know YET. Adopt it first, then activate --
+                // exactly the late-arrival fallback EVENT_OBJECT_NAMECHANGE has above, which
+                // this arm was missing.
+                //
+                // Why it matters: `known` is populated by SHOW, and a SHOW dropped by the busy
+                // message queue means the guard on the arm above fails silently. The window then
+                // has no row AND cannot take the highlight, and the next 5s Resync re-adopts it
+                // as Appeared -- which fixes the missing row but NOT the highlight, because
+                // Appeared says nothing about focus and the activation that would have said so
+                // is long gone. So the bar kept pointing at whatever was focused before.
+                //
+                // TryAppear is the right gate rather than a bare OnNext: it applies IsTracked,
+                // so the taskbar and the Start menu still adopt nothing and still emit nothing,
+                // and the highlight still stays put when focus goes somewhere untracked.
+                case EVENT_SYSTEM_FOREGROUND:
+                    TryAppear(hwnd);
+                    if (known.TryGetValue(hwnd, out var adopted))
+                        events.OnNext(new WindowEvent(WindowEventKind.Activated, adopted));
+                    break;
             }
         }
         catch (Exception e)

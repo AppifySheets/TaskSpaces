@@ -206,8 +206,43 @@ public sealed class WorkspaceManager(
     void OnActivated(WindowInfo window)
     {
         knownWindows[window.Handle] = window;
-        if (activeWindow.Equals(Maybe<WindowHandle>.From(window.Handle))) return;
-        activeWindow = window.Handle;
+        MarkActive(window.Handle);
+    }
+
+    // Petre: "sometimes, active window is not being updated... right now, vscode is active but
+    // i am seeing a browser is active in the floating window. i want to always refresh what's
+    // the active window, i can't afford to think that one window is active and another being
+    // highlighted."
+    //
+    // The highlight used to hang off the Activated event ALONE, and that event cannot be
+    // trusted to arrive: EVENT_SYSTEM_FOREGROUND is delivered WINEVENT_OUTOFCONTEXT through the
+    // dispatcher's message queue, so a busy queue simply drops it (the identical lossiness that
+    // made WindowMonitor.Resync necessary for the window list itself). One drop was permanent
+    // damage rather than a blip, because the window that really has focus will not be activated
+    // AGAIN while it already has focus -- so no future event was ever going to correct it.
+    //
+    // So the OS gets asked directly, on a timer. Same division of labour as everywhere else
+    // here: the event is the fast path, the periodic re-read is the truth.
+    //
+    // Two properties this must preserve, both of them load-bearing:
+    //
+    //   * NEVER clear on None. Foreground() reports None for anything untracked -- the taskbar,
+    //     the Start menu, and the floating bar itself (opted out by hwnd in WindowMonitor.
+    //     Ignore). Those are precisely what Petre clicks while looking at the bar, so treating
+    //     None as "nothing is active" would blink the highlight off every tick he touched it.
+    //     Staying put matches the deliberate choice the event path already makes.
+    //   * Pulse only on CHANGE, for the same reason OnActivated does: a pulse rebuilds every
+    //     open surface, and each rebuild costs one DesktopOf COM call per known window. In the
+    //     steady state -- which is almost always -- this is a GetForegroundWindow and a
+    //     dictionary lookup, and nothing else happens at all.
+    public void ResyncActiveWindow() => monitor.Foreground().Tap(MarkActive);
+
+    // The one place activeWindow is written after startup, so the event path and the sweep can
+    // never disagree about what "became active" means.
+    void MarkActive(WindowHandle window)
+    {
+        if (activeWindow.Equals(Maybe<WindowHandle>.From(window))) return;
+        activeWindow = window;
         stateChanged.OnNext(Unit.Default);
     }
 

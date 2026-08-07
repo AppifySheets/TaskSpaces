@@ -1,4 +1,5 @@
 using System.Reactive.Linq;
+using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
@@ -93,6 +94,68 @@ public class ActiveWindowTests
 
         Assert.Equal(savesBefore, store.SaveCount);
         Assert.Equal(desktopId, desktops.WindowPlacements[new WindowHandle(0x1)]); // not moved
+    }
+
+    // Petre: "sometimes, active window is not being updated. i can't afford to think that one
+    // window is active and another being highlighted. right now, vscode is active but i am
+    // seeing a browser is active in the floating window."
+    //
+    // activeWindow used to be written ONLY by the Activated event, and EVENT_SYSTEM_FOREGROUND
+    // is a WINEVENT_OUTOFCONTEXT delivery -- it can simply be dropped when the message queue is
+    // busy (the same lossiness WindowMonitor.Resync was written for). Nothing ever re-derived
+    // it, so a SINGLE dropped event stranded the highlight on the previously focused window
+    // indefinitely: no later event corrects it, because the window that really has focus is not
+    // going to be activated again while it already has focus.
+    //
+    // Hence the same two-layer shape the rest of this codebase uses: the event is the fast path,
+    // and a periodic re-read of the OS is the truth.
+    [Fact]
+    public void Resync_adopts_the_real_foreground_window_when_the_activation_event_was_lost()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, Code(0x1, "one - Visual Studio Code")));
+
+        // Focus really moved to the second window, but its EVENT_SYSTEM_FOREGROUND never arrived.
+        monitor.ForegroundWindow = new WindowHandle(0x2);
+        manager.ResyncActiveWindow();
+
+        Assert.True(RowsOf(manager).Single(r => r.Window.Handle.Value == 0x2).IsActive);
+        Assert.False(RowsOf(manager).Single(r => r.Window.Handle.Value == 0x1).IsActive);
+    }
+
+    // The sweep must not CLEAR the highlight, only correct it. Foreground() reports None for
+    // anything we do not track -- the taskbar, the Start menu, and the floating bar itself
+    // (opted out by hwnd via WindowMonitor.Ignore). Those are exactly the things Petre clicks
+    // while looking at the bar, so treating None as "nothing is active" would blink the
+    // highlight off every tick he touched it. Sticky-on-None matches what the event path
+    // already does deliberately (see the EVENT_SYSTEM_FOREGROUND arm in WindowMonitor).
+    [Fact]
+    public void Resync_keeps_the_highlight_when_focus_is_on_a_window_we_do_not_track()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, Code(0x1, "one - Visual Studio Code")));
+
+        monitor.ForegroundWindow = Maybe<WindowHandle>.None; // e.g. the bar itself has focus
+        manager.ResyncActiveWindow();
+
+        Assert.True(RowsOf(manager).Single(r => r.Window.Handle.Value == 0x1).IsActive);
+    }
+
+    // Runs on a timer, so the steady state must be free. Pulsing costs every open surface a
+    // rebuild, and a rebuild costs one DesktopOf COM call per known window -- the same reason
+    // OnActivated guards on change.
+    [Fact]
+    public void Resync_does_not_pulse_when_the_highlight_is_already_correct()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, Code(0x1, "one - Visual Studio Code")));
+        monitor.ForegroundWindow = new WindowHandle(0x1);
+
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+        manager.ResyncActiveWindow();
+
+        Assert.Equal(0, pulses);
     }
 
     // Alt-tabbing fires foreground events continuously, and every pulse costs one DesktopOf

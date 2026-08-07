@@ -232,7 +232,21 @@ public partial class App : Application
             // window and re-asserts every drifted title, and none of that wants to run five
             // times more often just to keep one z-order claim fresh.
             var topmost = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            topmost.Tick += (_, _) => floatingBar.ReclaimTopmost();
+            topmost.Tick += (_, _) =>
+            {
+                floatingBar.ReclaimTopmost();
+                // Petre: "i want to always refresh what's the active window, i can't afford to
+                // think that one window is active and another being highlighted."
+                //
+                // Rides THIS timer rather than the 5s sweep, even though it is a drift repair
+                // and the sweep is where drift repairs live. Two reasons. It is O(1) -- a
+                // GetForegroundWindow and a dictionary lookup, pulsing only when the answer
+                // actually changed -- so the argument above for keeping the sweep's heavy jobs
+                // at 5s simply does not apply to it. And the cost of being wrong is paid by
+                // eyes: a highlight pointing at the wrong window is misinformation, not a
+                // missing feature, so up to five seconds of it is far worse than up to one.
+                manager.ResyncActiveWindow();
+            };
             topmost.Start();
         }
 
