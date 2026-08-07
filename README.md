@@ -226,6 +226,10 @@ scatters the arrangement destroys the cue, and anything that preserves it preser
 context for free. TaskSpaces does not help you rebuild context; it stops the context
 being demolished.
 
+Which is why it never moves or resizes a window. It does not tile, snap, or lay anything
+out, and it opens nothing for you. The only thing it decides is which desktop a window
+lives on. Your arrangement is not something it improves; it is the thing it protects.
+
 ### Which is what virtual desktops were invented for, in 1986
 
 [Henderson and Card](https://dl.acm.org/doi/10.1145/24054.24056) built *Rooms* at Xerox
