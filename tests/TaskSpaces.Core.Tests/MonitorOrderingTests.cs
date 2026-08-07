@@ -145,27 +145,79 @@ public class MonitorOrderingTests
         Assert.Equal(2, after.Single(r => r.Window.Handle == edgeTwo.Handle).Ordinal.Value);
     }
 
-    // Petre, shown a friend's bar on 1.5.0 where nearly every row carried a mark: the silent
-    // monitor was display 1, picked arbitrarily. Windows numbers displays by enumeration order,
-    // not by how much you use them, so on any machine whose primary is not DISPLAY1 the marks
-    // land on the main screen and the silence on the side one. On Petre's own machine the
-    // primary IS DISPLAY2, so it was backwards for him too.
+    // Petre: "i'd like to arrange windows by my monitors -- my left monitor first, my right
+    // monitor next", after "i only see hairlines at the beginning of every workspace".
+    //
+    // REVERSES The_primary_display_is_the_silent_one, which this replaces, and the reasoning is
+    // worth keeping rather than just the outcome. Making the PRIMARY silent fixed a real
+    // complaint (marks landing on the main screen), but it left two orderings in play: icons
+    // grouped by display number, silence assigned by primary. On Petre's machine the primary is
+    // DISPLAY2 -- the RIGHT screen, which sorts second -- so the unmarked group sat in the middle
+    // of the row where "no mark" cannot read as a boundary. His two groups ran together and the
+    // only hairline was the stray one opening the row.
+    //
+    // Position now decides both, so the unmarked group is unmarked BECAUSE it comes first.
+    //
+    // Petre's real geometry: DISPLAY1 at x=-2560 (left, not primary), DISPLAY2 at x=0 (right,
+    // primary), offset vertically by 153px.
+    // The numbering is deliberately set AGAINST the geometry -- DISPLAY1 on the right and also
+    // the primary, DISPLAY2 on the left -- so that both of the rules this replaces would give the
+    // opposite answer on every assertion here. Order by display number would be A then B;
+    // primary-is-silent would rank A at 0. Anything less than this passes under the old rule too.
     [Fact]
-    public void The_primary_display_is_the_silent_one()
+    public void The_leftmost_display_leads_and_is_the_silent_one_whichever_is_primary()
     {
-        // Primary is 2, so 2 ranks silent and 1 takes a stroke, even though 1 sorts first.
-        var facts = new ScreenFacts(
-            new Dictionary<WindowHandle, int> { [A.Handle] = 1, [B.Handle] = 2 },
-            new HashSet<WindowHandle>(),
-            new Dictionary<WindowHandle, int>(),
-            2);
-        var rows = Rows([A, B], facts);
+        var rows = Rows([A, B], Placed(primary: 1, (A, 1, Right), (B, 2, Left)));
 
+        // B is on the LEFT screen, so it leads the row and draws no stroke -- despite the higher
+        // display number, and despite the other screen being the primary.
+        Assert.Equal([B.Handle, A.Handle], rows.Select(r => r.Window.Handle));
         Assert.Equal(0, rows.Single(r => r.Window.Handle == B.Handle).MonitorRank.Value);
         Assert.Equal(1, rows.Single(r => r.Window.Handle == A.Handle).MonitorRank.Value);
-        // Grouping order is unchanged: display number still decides where icons sit.
-        Assert.Equal([A.Handle, B.Handle], rows.Select(r => r.Window.Handle));
     }
+
+    // The banding, and Petre's own setup is why it exists: his screens sit side by side but are
+    // offset vertically by 153px. Ordering strictly by top edge would put the RIGHT screen first,
+    // because its top edge is higher -- the exact opposite of what he asked for.
+    [Fact]
+    public void Side_by_side_screens_read_left_to_right_however_badly_they_are_aligned()
+    {
+        // Right screen's top edge is HIGHER (y=0 against y=153), so a naive topmost-first order
+        // would lead with it. Numbered against the geometry again, so display-number order would
+        // also lead with the right-hand screen.
+        var rows = Rows([A, B], Placed(primary: 1,
+            (A, 1, new MonitorBounds(0, 0, 2560, 1440)),
+            (B, 2, new MonitorBounds(-2560, 153, 0, 1593))));
+
+        Assert.Equal([B.Handle, A.Handle], rows.Select(r => r.Window.Handle));
+    }
+
+    // ...and a genuine grid still reads top-left, top-right, then down. Screens that only TOUCH
+    // vertically start a new row rather than joining the one above.
+    [Fact]
+    public void A_grid_of_screens_reads_across_then_down()
+    {
+        var order = MonitorArrangement.ReadingOrder(new Dictionary<int, MonitorBounds>
+        {
+            [3] = new(0, 1080, 1920, 2160),     // bottom-left
+            [1] = new(1920, 0, 3840, 1080),     // top-right
+            [4] = new(1920, 1080, 3840, 2160),  // bottom-right
+            [2] = new(0, 0, 1920, 1080),        // top-left
+        });
+
+        Assert.Equal([2, 1, 3, 4], order);
+    }
+
+    static readonly MonitorBounds Left = new(-2560, 0, 0, 1440);
+    static readonly MonitorBounds Right = new(0, 0, 2560, 1440);
+
+    // Facts with real geometry: each window's display number plus where that display sits.
+    static ScreenFacts Placed(int primary, params (WindowInfo Window, int Monitor, MonitorBounds Bounds)[] on) =>
+        new(on.ToDictionary(x => x.Window.Handle, x => x.Monitor),
+            new HashSet<WindowHandle>(),
+            new Dictionary<WindowHandle, int>(),
+            primary,
+            on.GroupBy(x => x.Monitor).ToDictionary(g => g.Key, g => g.First().Bounds));
 
     // With no primary reported -- only tests -- it degrades to plain ascending order, so display
     // 1 goes silent exactly as it did before.
