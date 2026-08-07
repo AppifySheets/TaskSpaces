@@ -61,7 +61,14 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         this.manager = manager;
         this.chord = chord;
         this.bar = bar;
-        release.Tick += (_, _) => { if (!ModifiersHeld()) Commit(); };
+        // Escape is checked BEFORE the release test, so a gesture abandoned with Escape cannot
+        // be committed by the same tick that noticed it -- and the poll is already running, so
+        // cancelling needs no second timer and no keyboard hook.
+        release.Tick += (_, _) =>
+        {
+            if (Down(NativeMethods.VK_ESCAPE)) Cancel();
+            else if (!ModifiersHeld()) Commit();
+        };
     }
 
     // Mid-gesture rebinding would leave this watching for a modifier nobody is holding, so
@@ -127,14 +134,35 @@ public sealed class WorkspaceSwitchGesture : IDisposable
 
     void Commit()
     {
+        var destination = selected;
+        Finish();
+        // Fire-and-forget, like every other hotkey path in this app: a keypress has no UI to
+        // report a failure through, and a message box raised by a chord would be worse than
+        // a switch that quietly did not happen.
+        if (destination >= 0 && destination < recent.Ordered.Count) manager.Switch(recent.Ordered[destination].Id);
+    }
+
+    // Petre: "pressing an escape mid-switching shortcuts session should cancel it."
+    //
+    // Alt+Tab's own escape hatch, and the reason it matters here is that this gesture COMMITS ON
+    // RELEASE: once the walk has gone past what you wanted there is otherwise no way out except
+    // walking all the way round to where you started, and letting go anywhere else takes you
+    // somewhere you did not ask for.
+    //
+    // Identical teardown to Commit, minus the switch -- which is the whole definition of
+    // cancelling, and why the two share Finish rather than each doing their own tidying.
+    //
+    // The modifiers are usually still held at this point. That is deliberately not waited for:
+    // the timer is stopped, so nothing can commit, and tapping the chord again simply begins a
+    // fresh gesture.
+    void Cancel() => Finish();
+
+    void Finish()
+    {
         release.Stop();
         active = false;
         picker.Hide();
         bar.EndSwitch();
-        // Fire-and-forget, like every other hotkey path in this app: a keypress has no UI to
-        // report a failure through, and a message box raised by a chord would be worse than
-        // a switch that quietly did not happen.
-        if (selected >= 0 && selected < recent.Ordered.Count) manager.Switch(recent.Ordered[selected].Id);
         selected = -1;
     }
 
