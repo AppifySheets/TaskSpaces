@@ -1001,8 +1001,55 @@ public partial class FloatingBar : Window
         // The opacity ladder above stays: position tells you which is in front, opacity tells
         // you how far back the others are, and minimised windows still have to be distinguished
         // from merely covered ones.
-        return artwork;
+        if (row.Ordinal is not { HasValue: true } ordinal) return artwork;
+
+        // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
+        // arbitrarily, if i'm selecting the second browser, i can see that the other, first got
+        // demoted in the bar."
+        //
+        // This is a NUMBER on an icon again, which the monitor badges were rejected for -- and
+        // the difference is the whole reason it earns its place. Those appeared on every icon
+        // and told you something the separator could say instead. This one appears ONLY where
+        // the artwork itself is ambiguous, two or more windows of one app in a row, and it is
+        // the only thing on the bar that can tell them apart. "No numbers for one-instance
+        // apps": OverviewBuilder leaves Ordinal unset for those, so they never reach here.
+        //
+        // Because the icons re-sort by z-order, this is what makes the movement legible: the
+        // number belongs to the WINDOW, so watching 2 change places with 1 is watching the
+        // window you left get demoted.
+        var plate = new Border
+        {
+            Child = new TextBlock
+            {
+                Text = ordinal.Value.ToString(),
+                FontSize = 7,
+                Foreground = OrdinalForeground,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                // At 7px the glyph sits visually low in its box; this re-centres it.
+                Margin = new Thickness(0, -1, 0, 0),
+            },
+            // Fixed, and in a Grid cell shared with the artwork, so the badge overlays rather
+            // than occupies. A row of icons measures exactly as it did before -- which on a
+            // SizeToContent bar is the difference between a marker and the window resizing.
+            Width = 9,
+            Height = 9,
+            CornerRadius = new CornerRadius(2),
+            Background = OrdinalBackground,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+        };
+
+        var cell = new Grid();
+        cell.Children.Add(artwork);
+        cell.Children.Add(plate);
+        return cell;
     }
+
+    // A plate behind the digit, because it sits on arbitrary app artwork and would otherwise be
+    // illegible against a light icon.
+    static readonly Brush OrdinalBackground = Frozen(0xCC, 0x20, 0x20, 0x24);
+    static readonly Brush OrdinalForeground = Frozen(0xE0, 0xFF, 0xFF, 0xFF);
 
     // A hairline between two monitors' icons inside one row. Sized in the same spirit as
     // everything else on this bar: 1px wide, and short enough that it reads as a divider between

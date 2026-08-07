@@ -54,6 +54,12 @@ public static class NativeMethods
     // hook rather than widening an existing range — a single hook spanning 0x0003..0x800C
     // would subscribe us to every event in between.
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    // Fires ONCE, when the user lets go of a window they were dragging or resizing -- which is
+    // exactly the moment a window may have landed on a different monitor. The obvious
+    // alternative, EVENT_OBJECT_LOCATIONCHANGE, fires continuously throughout the drag and for
+    // every animating window on the desktop; this fires once per gesture. Adjacent to
+    // FOREGROUND in the SYSTEM range, so the two share one hook.
+    public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000, WINEVENT_SKIPOWNPROCESS = 0x0002;
     public const int OBJID_WINDOW = 0, CHILDID_SELF = 0;
     public const uint GA_ROOT = 2;

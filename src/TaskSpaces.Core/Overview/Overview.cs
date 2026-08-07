@@ -33,7 +33,19 @@ public sealed record WindowRow(
     // windows and that is what a window on another desktop is. Petre wants non-front windows
     // dimmed; without the distinction, "not known to be front" would collapse into "behind" and
     // every icon on every other workspace would render dimmed at once.
-    Maybe<bool> IsFrontmostOnMonitor = default);
+    Maybe<bool> IsFrontmostOnMonitor = default,
+    // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
+    // arbitrarily, if i'm selecting the second browser, i can see that the other, first got
+    // demoted in the bar."
+    //
+    // Set ONLY where the icon alone cannot tell two windows apart -- two or more windows of the
+    // same process inside one group. A number on a lone icon would be answering a question
+    // nobody asked, which is what sank the monitor badges.
+    //
+    // Its one hard requirement is that it must NOT move when z-order does: the whole point is to
+    // watch an icon change position while keeping its name. Hence derived from handle order (see
+    // OverviewBuilder.Ordinals), which is fixed for a window's lifetime.
+    Maybe<int> Ordinal = default);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);

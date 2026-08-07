@@ -35,14 +35,45 @@ public static class OverviewBuilder
         // `desktopId` is null for rows that belong to no single desktop -- pinned windows, and
         // the "Unplaced" catch-all below -- which is exactly the set that can never carry a
         // landing marker.
-        WindowRow Row(WindowInfo w, Guid? desktopId = null, Maybe<bool> frontmost = default) =>
+        WindowRow Row(WindowInfo w, Guid? desktopId = null, Maybe<bool> frontmost = default, Maybe<int> ordinal = default) =>
             new(w,
                 originalTitleOf(w.Handle),
                 activeWindow.Map(active => active == w.Handle).GetValueOrDefault(false),
                 WillActivate(w, desktopId),
                 MonitorOf(w),
                 facts.Minimized.Contains(w.Handle),
-                frontmost);
+                frontmost,
+                ordinal);
+
+        // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
+        // arbitrarily, if i'm selecting the second browser, i can see that the other, first got
+        // demoted in the bar" -- and "no numbers for one-instance apps".
+        //
+        // So: within one group, number the windows of any process that has MORE THAN ONE of
+        // them, and leave everything else unnumbered. Three Edge windows become 1, 2, 3; the
+        // lone editor beside them stays bare.
+        //
+        // Ordered by HANDLE, which is the load-bearing choice. The number exists to survive
+        // exactly the thing that prompted it: icons re-sort by z-order as Petre works, and a
+        // number that re-sorted with them could not show him that the window he left has been
+        // demoted -- it would just relabel whatever is now in front. A handle is fixed for a
+        // window's lifetime, so the number is too. Which window gets 1 is arbitrary, as asked.
+        //
+        // Numbers are per GROUP rather than global, so they stay small and start at 1 in every
+        // row. The cost is that closing a window renumbers the ones after it -- acceptable
+        // because it happens on close, never on focus, which is the moment that had to stay
+        // stable.
+        static Dictionary<WindowHandle, int> Ordinals(IReadOnlyList<WindowInfo> group) =>
+            group
+                .GroupBy(w => w.ProcessName)
+                .Where(sameApp => sameApp.Count() > 1)
+                .SelectMany(sameApp => sameApp
+                    .OrderBy(w => w.Handle.Value)
+                    .Select((w, index) => (w.Handle, Ordinal: index + 1)))
+                .ToDictionary(x => x.Handle, x => x.Ordinal);
+
+        static Maybe<int> OrdinalOf(IReadOnlyDictionary<WindowHandle, int> ordinals, WindowInfo w) =>
+            ordinals.TryGetValue(w.Handle, out var ordinal) ? ordinal : Maybe<int>.None;
 
         Maybe<int> MonitorOf(WindowInfo w) =>
             facts.MonitorOf.TryGetValue(w.Handle, out var number) ? number : Maybe<int>.None;
@@ -60,7 +91,9 @@ public static class OverviewBuilder
             && lastActiveByDesktop.TryGetValue(d, out var last)
             && last == w.Handle;
 
-        var pinnedRows = windows.Where(w => pinned.Contains(w.Handle)).Select(w => Row(w)).ToList();
+        var pinnedWindows = windows.Where(w => pinned.Contains(w.Handle)).ToList();
+        var pinnedOrdinals = Ordinals(pinnedWindows);
+        var pinnedRows = pinnedWindows.Select(w => Row(w, ordinal: OrdinalOf(pinnedOrdinals, w))).ToList();
 
         // Petre: "sort icons in workspaces by monitors, first icons from monitor1, then
         // monitor2, etc."
@@ -111,9 +144,14 @@ public static class OverviewBuilder
             // the difference between one dimmed icon per monitor and an entire workspace
             // rendering greyed out.
             var known = here.Any(w => facts.ZOrder.ContainsKey(w.Handle));
+            var ordinals = Ordinals(here);
 
             return here
-                .Select(w => Row(w, desktopId, known ? frontmost.Contains(w.Handle) : Maybe<bool>.None))
+                .Select(w => Row(
+                    w,
+                    desktopId,
+                    known ? frontmost.Contains(w.Handle) : Maybe<bool>.None,
+                    OrdinalOf(ordinals, w)))
                 .ToList();
         }
 
@@ -161,10 +199,11 @@ public static class OverviewBuilder
         //     exactly that case (every non-pinned known window gets queried; only
         //     failures are missing from the dictionary) — group it under a catch-all
         //     instead of disappearing.
-        var unplacedRows = windows
+        var unplaced = windows
             .Where(w => !pinned.Contains(w.Handle) && !desktopOf.ContainsKey(w.Handle))
-            .Select(w => Row(w))
             .ToList();
+        var unplacedOrdinals = Ordinals(unplaced);
+        var unplacedRows = unplaced.Select(w => Row(w, ordinal: OrdinalOf(unplacedOrdinals, w))).ToList();
         if (unplacedRows.Count > 0)
             otherDesktops = [.. otherDesktops, new DesktopGroup(Guid.Empty, "Unplaced", false, unplacedRows)];
 

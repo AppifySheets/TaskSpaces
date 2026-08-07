@@ -9,7 +9,13 @@ namespace TaskSpaces.Core.Domain;
 // purely informational — unlike the other four it never places, renames or forgets
 // anything. It exists so the surfaces can show WHICH window has focus, which on an
 // icon-only bar with three identical VS Code glyphs is otherwise unanswerable.
-public enum WindowEventKind { Appeared, TitleChanged, Hidden, Disappeared, Activated }
+// Moved is informational in the same way, and exists for one reason. Petre: "when i drag a
+// window to another monitor, it doesn't show the hairline separator until i switch to another
+// workspace." Dragging a window across monitors changes nothing this app used to hear about --
+// no show, no hide, no title change, and no foreground change either, since the window you are
+// dragging is the one you are already in. The bar has no periodic rebuild, so nothing ever asked
+// again and the monitor grouping stayed stale until some unrelated event happened to pulse.
+public enum WindowEventKind { Appeared, TitleChanged, Hidden, Disappeared, Activated, Moved }
 
 // What WindowMonitor emits. TitleChanged matters twice: rename rules may now match,
 // and apps that rewrite their own titles must have our short name re-applied.

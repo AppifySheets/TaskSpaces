@@ -189,6 +189,12 @@ public sealed class WorkspaceManager(
             case WindowEventKind.Hidden: OnHidden(e.Window); break;
             case WindowEventKind.Disappeared: OnDisappeared(e.Window); break;
             case WindowEventKind.Activated: OnActivated(e.Window); break;
+            // Purely a redraw trigger, which is why it has no OnMoved of its own: a window
+            // finishing a drag changes nothing this class owns -- not membership, not placement
+            // memory, not the rename ledger. What it can change is which MONITOR the window is
+            // on, and that is read fresh from the OS on every overview build, so the only thing
+            // ever missing was a reason to build one.
+            case WindowEventKind.Moved: stateChanged.OnNext(Unit.Default); break;
         }
     }
 

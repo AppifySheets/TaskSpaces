@@ -108,6 +108,43 @@ public class MonitorOrderingTests
         Assert.False(rows.Single(r => r.Window.Handle == A.Handle).Monitor.HasValue);
     }
 
+    // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
+    // arbitrarily, if i'm selecting the second browser, i can see that the other, first got
+    // demoted in the bar", and "no numbers for one-instance apps".
+    [Fact]
+    public void Windows_of_the_same_app_are_numbered_and_a_lone_app_is_not()
+    {
+        var edgeOne = Window(0x20, "Edge");
+        var edgeTwo = Window(0x10, "Edge"); // lower handle, so this is the one that gets 1
+        var editor = Window(0x30, "Editor");
+
+        var rows = Rows([edgeOne, edgeTwo, editor], Facts([(edgeOne, 1), (edgeTwo, 1), (editor, 1)]));
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == edgeTwo.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == edgeOne.Handle).Ordinal.Value);
+        Assert.False(rows.Single(r => r.Window.Handle == editor.Handle).Ordinal.HasValue);
+    }
+
+    // The point of the number is to stay put while the icons move. If it were derived from
+    // position, watching "2 change places with 1" would be impossible -- the labels would just
+    // follow the sort and nothing would appear to have happened.
+    [Fact]
+    public void The_number_does_not_follow_z_order()
+    {
+        var edgeOne = Window(0x10, "Edge");
+        var edgeTwo = Window(0x20, "Edge");
+
+        var before = Rows([edgeOne, edgeTwo], Facts([(edgeOne, 1), (edgeTwo, 1)], frontToBack: [edgeOne, edgeTwo]));
+        // Now the second one is brought to the front, which reverses the ROW order.
+        var after = Rows([edgeOne, edgeTwo], Facts([(edgeOne, 1), (edgeTwo, 1)], frontToBack: [edgeTwo, edgeOne]));
+
+        Assert.Equal([edgeOne.Handle, edgeTwo.Handle], before.Select(r => r.Window.Handle));
+        Assert.Equal([edgeTwo.Handle, edgeOne.Handle], after.Select(r => r.Window.Handle));
+        // ...and each window kept the number it had, which is what makes the demotion visible.
+        Assert.Equal(1, after.Single(r => r.Window.Handle == edgeOne.Handle).Ordinal.Value);
+        Assert.Equal(2, after.Single(r => r.Window.Handle == edgeTwo.Handle).Ordinal.Value);
+    }
+
     [Fact]
     public void Each_row_carries_its_monitor_number_and_minimized_state()
     {

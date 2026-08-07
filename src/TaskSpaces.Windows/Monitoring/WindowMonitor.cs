@@ -77,7 +77,12 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
             // Its own hook, not a widened range: EVENT_SYSTEM_FOREGROUND sits at 0x0003
             // while the object events are at 0x800x, so one hook covering both would
             // subscribe us to every accessibility event in between.
-            hooks.Add(Hook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND));
+            //
+            // Widened by exactly eight events to take in EVENT_SYSTEM_MOVESIZEEND at 0x000B,
+            // which is how the bar learns a window was dragged to another monitor. The range
+            // between them is the menu/alert/scroll family -- quiet, and cheaper to filter out
+            // in the switch below than to justify a third hook for.
+            hooks.Add(Hook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MOVESIZEEND));
             if (hooks.Any(h => h == 0)) throw new InvalidOperationException("SetWinEventHook failed");
             Snapshot().ToList().ForEach(w => known[w.Handle.Value] = w); // seed before events flow
         }, e => $"Window monitoring unavailable: {e.Message}");
@@ -250,6 +255,17 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                     TryAppear(hwnd);
                     if (known.TryGetValue(hwnd, out var adopted))
                         events.OnNext(new WindowEvent(WindowEventKind.Activated, adopted));
+                    break;
+
+                // The user finished dragging or resizing a window. Petre: "when i drag a window
+                // to another monitor, it doesn't show the hairline separator until i switch to
+                // another workspace."
+                //
+                // Nothing is re-queried here and nothing is decided -- the window's monitor is
+                // read fresh by ScreenLayout on every overview build, so all that was ever
+                // missing was a reason to build one. This is that reason and nothing more.
+                case EVENT_SYSTEM_MOVESIZEEND when known.TryGetValue(hwnd, out var moved):
+                    events.OnNext(new WindowEvent(WindowEventKind.Moved, moved));
                     break;
             }
         }
