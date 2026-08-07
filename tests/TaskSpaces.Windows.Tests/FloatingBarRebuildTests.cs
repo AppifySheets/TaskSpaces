@@ -245,13 +245,86 @@ public class FloatingBarRebuildTests
         var sparrowDesktop = harness.Desktops.Desktops.Single(d => d.Name == "Sparrow").Id;
         Assert.Empty(harness.Desktops.Switched); // precondition: nothing switched yet
 
-        // Raised on the row CONTAINER, which is what a release on blank row area reaches:
-        // the icon and label Buttons mark the event handled when they raise Click, so a
-        // release on either never bubbles this far.
-        RowFor(bar.Rows, "Sparrow").RaiseEvent(MouseUp());
+        var row = RowFor(bar.Rows, "Sparrow");
+        Press(row);
+        Release(row);
 
         Assert.Equal([sparrowDesktop], harness.Desktops.Switched);
     });
+
+    // Petre, for the third time: "i still sometimes click on a workspace and it doesn't switch."
+    //
+    // ROOT CAUSE this pins, measured with a synthetic-input probe rather than reasoned about:
+    // ButtonBase.OnMouseLeftButtonUp sets e.Handled = true UNCONDITIONALLY -- including when it
+    // decides NOT to raise Click, which is every release whose press started somewhere else.
+    // And MouseLeftButtonUp is a DIRECT routed event that WPF re-raises per element as the
+    // bubbling MouseUp travels, so a handled release at an icon stops the row's own
+    // MouseLeftButtonUp being raised AT ALL. The click vanished: no icon Click, no row switch.
+    //
+    // A row is mostly icons with a ~10px label at the right, so a couple of pixels of ordinary
+    // drift between press and release crossed one of those edges and ate the click. That is the
+    // whole of the "sometimes", and it was never the drag gesture -- moving the bar onto
+    // Ctrl+drag left this untouched, which is exactly what Petre observed.
+    //
+    // WHAT THIS COVERS, stated exactly, because half the gestures cannot be reached from here:
+    //
+    // The probe found four dead gestures. Two of them -- press blank row, release over a child --
+    // are pure routing and reproduce faithfully below. The other two -- press a child, drift off
+    // it -- fail in production because the Button took real MOUSE CAPTURE on press, so the
+    // release is routed to the BUTTON wherever the cursor actually is. Nothing raised through
+    // RaiseEvent can reproduce that: capture is consulted by the input manager when it builds
+    // the route, not by RaiseEvent, so a synthesised release simply goes where it is aimed.
+    // Writing those two as tests would have produced two that passed no matter what the bar did.
+    //
+    // They are not a separate defect and need no separate cover: all four are one Handled flag
+    // set by one ButtonBase, and the fix is the row listening on the bubbling MouseUp, which the
+    // capture route also travels. The two below fail without that fix and pass with it.
+    [Theory]
+    [InlineData(Where.Icon)]  // pressed blank row, drifted onto an icon
+    [InlineData(Where.Label)] // pressed blank row, drifted onto the label
+    public void A_click_released_over_a_rows_icon_or_label_still_switches(Where releasedOver) => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var sparrowDesktop = harness.Desktops.Desktops.Single(d => d.Name == "Sparrow").Id;
+        var row = RowFor(bar.Rows, "Sparrow");
+
+        Press(row);
+        Release(Target(row, releasedOver));
+
+        Assert.Equal([sparrowDesktop], harness.Desktops.Switched);
+    });
+
+    // ...and the counterpart that must NOT regress: a clean press-and-release on an icon is a
+    // jump to that WINDOW, and must not ALSO be read as a click on the row behind it. This is
+    // why the row handler cannot simply fire on every release that reaches it -- it has to know
+    // a child already consumed the press.
+    //
+    // JumpTo switches to the window's desktop on its way to the window, so the expected count is
+    // one, not zero. Two would mean the row fired as well.
+    [Fact]
+    public void A_clean_icon_click_jumps_to_the_window_without_also_switching_the_row() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build();
+        using var bar = harness.ShowBar();
+        var icon = IconButtons(RowFor(bar.Rows, "Sparrow")).Single();
+
+        Press(icon);
+        Release(icon);
+
+        Assert.Single(harness.Desktops.Switched);
+    });
+
+    // Where in a row a release lands. Used by the theory above.
+    public enum Where { Bare, Icon, Label }
+
+    static UIElement Target(Grid row, Where where) => where switch
+    {
+        Where.Icon => IconButtons(row).Single(),
+        // The label Button: the only Button in the row that is not tagged as an icon.
+        Where.Label => Buttons(row).Single(b => b is not { Tag: "icon" }),
+        _ => row,
+    };
 
     // The 📌 Pinned row has no destination -- pinned windows are on every workspace by
     // definition -- and neither does the "Unplaced" catch-all. Those rows must stay inert, or
@@ -262,7 +335,9 @@ public class FloatingBarRebuildTests
         var harness = Harness.Build();
         using var bar = harness.ShowBar();
 
-        RowFor(bar.Rows, "📌").RaiseEvent(MouseUp());
+        var pinned = RowFor(bar.Rows, "📌");
+        Press(pinned);
+        Release(pinned);
 
         Assert.Empty(harness.Desktops.Switched);
     });
@@ -400,11 +475,39 @@ public class FloatingBarRebuildTests
         Assert.True(back.Opacity < 1.0);
     });
 
-    // Synthesised input events. RaiseEvent invokes the handlers the bar registered through
-    // `+= MouseLeftButtonUp` / `MouseEnter` / `MouseLeave` directly, with no rendered window
-    // and no real pointer -- which is the only way to exercise this on an off-screen bar.
-    static MouseButtonEventArgs MouseUp() =>
-        new(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonUpEvent };
+    // Synthesised input, and the choice of EVENT here is the whole point rather than a detail.
+    //
+    // MouseLeftButtonDown/Up are DIRECT routed events. They do not travel: WPF raises the
+    // bubbling Mouse.MouseUp (or tunnelling Mouse.PreviewMouseDown) along the real route and
+    // each element on it "cracks" that into a Direct MouseLeftButtonUp raised on ITSELF -- and
+    // skips the crack once the event is handled. Raising MouseLeftButtonUpEvent straight at the
+    // row (which these tests used to do) therefore bypasses the very mechanism the straddle bug
+    // lives in, and would pass no matter how broken the bar was.
+    //
+    // So press and release are injected as the raw bubbling/tunnelling events, exactly as the
+    // input manager delivers them, and every crack, every ButtonBase class handler and every
+    // Handled flag along the way is the real one.
+    // Both halves of a press, in the order the input manager delivers them: the tunnelling
+    // preview (which is where FloatingBar arms the gesture) and then the bubbling MouseDown
+    // (which is where ButtonBase takes capture and sets IsPressed, so a Button pressed here
+    // really does raise Click on release).
+    static void Press(UIElement target)
+    {
+        target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        {
+            RoutedEvent = Mouse.PreviewMouseDownEvent,
+        });
+        target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        {
+            RoutedEvent = Mouse.MouseDownEvent,
+        });
+    }
+
+    static void Release(UIElement target) =>
+        target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        {
+            RoutedEvent = Mouse.MouseUpEvent,
+        });
 
     static MouseEventArgs MouseEnter() => new(Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseEnterEvent };
     static MouseEventArgs MouseLeave() => new(Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseLeaveEvent };
@@ -440,6 +543,24 @@ public class FloatingBarRebuildTests
                 .ForEach(child =>
                 {
                     if (child is Button { Tag: "icon" } button) found.Add(button);
+                    Collect(child);
+                });
+    }
+
+    // Every Button in the logical subtree, icons and labels alike.
+    static IReadOnlyList<Button> Buttons(DependencyObject root)
+    {
+        var found = new List<Button>();
+        Collect(root);
+        return found;
+
+        void Collect(DependencyObject node) =>
+            LogicalTreeHelper.GetChildren(node)
+                .OfType<DependencyObject>()
+                .ToList()
+                .ForEach(child =>
+                {
+                    if (child is Button button) found.Add(button);
                     Collect(child);
                 });
     }
