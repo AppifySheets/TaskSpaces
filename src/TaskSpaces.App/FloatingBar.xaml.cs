@@ -218,11 +218,67 @@ public partial class FloatingBar : Window
     // Plain drag still works on the surfaces that are not click targets, so the discoverable way
     // to move the bar (grab its edge, or the info line that says so) survives alongside the
     // deliberate one.
-    void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
+    void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // A new press: nothing has claimed it yet, and no row owns it until the row's own
+        // tunnelling handler (wired in GroupRow) runs a moment later, further down this route.
+        pressConsumedByChild = false;
+        pressedRow = null;
+
         dragStart = Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
                     || !(StartedOnIcon(e.OriginalSource) || StartedOnClickTarget(e.OriginalSource))
             ? PointToScreen(e.GetPosition(this))
             : null;
+    }
+
+    // Petre, a third time: "i still sometimes click on a workspace and it doesn't switch."
+    //
+    // MEASURED, not reasoned about -- a throwaway WPF app driven by real SendInput, reproducing
+    // one row (a Grid with a bubbling mouse-up handler, holding chrome-less Buttons). Four
+    // gestures out of seven did NOTHING AT ALL: no Button Click, and no row switch either.
+    //
+    //   press blank row -> release over an icon      dead
+    //   press an icon   -> release over blank row    dead
+    //   press the label -> release over blank row    dead
+    //   press blank row -> release over the label    dead
+    //
+    // Two facts combine, and neither is visible from the row's own code:
+    //
+    //   1. ButtonBase.OnMouseLeftButtonUp sets e.Handled = true UNCONDITIONALLY (for any
+    //      ClickMode but Hover) -- including the case where it decides NOT to raise Click,
+    //      which is every release whose press began somewhere else. It consumes the event and
+    //      gives nothing back.
+    //   2. MouseLeftButtonUp is a DIRECT routed event. It does not travel. WPF sends the
+    //      bubbling MouseUp along the real route and each element on the way re-raises a Direct
+    //      MouseLeftButtonUp on ITSELF -- and stops doing so once the event is handled. So a
+    //      release consumed at an icon means the row's MouseLeftButtonUp is never raised at all.
+    //
+    // Which is why `container.MouseLeftButtonUp += ...` could not work, and why AddHandler with
+    // handledEventsToo on that same event would not have fixed it either: there is no event
+    // left to hear. The row listens on the BUBBLING MouseUp instead, which travels the whole
+    // route regardless of Handled -- and which is also the route mouse CAPTURE builds, so the
+    // two press-a-child-and-drift-off cases are covered by the same handler.
+    //
+    // A row is mostly icons with a ~10px label in the right gutter, and an ordinary click drifts
+    // a pixel or two, so this fired constantly. It was never the drag gesture: moving the bar
+    // onto Ctrl+drag left every one of these dead, which is exactly what Petre saw next.
+    //
+    // Two pieces of state make the row handler safe to run on every release:
+    //
+    //   pressedRow           -- the row the press STARTED in. A release only switches for the
+    //                           row that was pressed, so dragging across rows commits to none.
+    //   pressConsumedByChild -- set when an icon or label Button actually raised Click for this
+    //                           press. Click is raised while the bubbling MouseUp is still at
+    //                           the child, so the flag is always set before the row reads it. A
+    //                           clean icon click therefore jumps to the window and does NOT
+    //                           also switch the workspace.
+    //
+    // Both are reset on every press, above.
+    bool pressConsumedByChild;
+    DependencyObject? pressedRow;
+
+    // Called by the icon and label Buttons from their own Click handlers.
+    void MarkPressConsumed() => pressConsumedByChild = true;
 
     // Anything whose press must reach a click handler intact: the rows (every one of them
     // switches workspace, by label or by bare area) and the back button, which sits on the info
@@ -720,18 +776,34 @@ public partial class FloatingBar : Window
         // The label alone used to be the click target: a ~10px word at the right end of the
         // row, carrying the bar's second most common action. Now the whole row does it.
         //
-        // Why a bare bubbling MouseLeftButtonUp is enough, on both counts:
+        // The click target is the whole row, and it listens on the BUBBLING MouseUp rather than
+        // the row's own MouseLeftButtonUp. That is the fix for "sometimes it doesn't switch":
+        // MouseLeftButtonUp is Direct and is never raised here at all once an icon or the label
+        // has marked the release handled -- which ButtonBase does even when it raises no Click.
+        // OnPreviewMouseLeftButtonDown above carries the full measurement and reasoning.
         //
-        //  - It cannot steal clicks from the icons or the label. ButtonBase marks the event
-        //    handled when it raises Click, so a release on any of those controls never reaches
-        //    this handler. Clicking an icon still jumps to that window and nothing else.
-        //  - It cannot fire when you were dragging the BAR. A press that passes the drag
-        //    threshold hands the mouse to DragMove(), whose native move loop consumes the
-        //    mouse-up (see OnPreviewMouseMove). No mouse-up, no click -- the same split that
-        //    already lets you drag the bar by pressing on a row label.
+        // handledEventsToo, necessarily: a release over a child arrives here already handled,
+        // and that is precisely the case being rescued.
+        //
+        // Still cannot fire when you were dragging the BAR: a press that passes the drag
+        // threshold hands the mouse to DragMove(), whose native move loop consumes the mouse-up
+        // outright, so no MouseUp is ever routed. Same for an icon drag, whose modal OLE loop
+        // does the same (WindowDragSource documents it).
         if (switchTo is not null && setHover is not null)
         {
-            container.MouseLeftButtonUp += (_, _) => Report(switchTo());
+            // Tunnels, so this runs after the window-level handler that clears the two flags and
+            // before any child of the row sees the press: whatever happens next, the press is
+            // stamped as belonging to THIS row.
+            container.PreviewMouseLeftButtonDown += (_, _) => pressedRow = container;
+
+            container.AddHandler(Mouse.MouseUpEvent, new MouseButtonEventHandler((_, e) =>
+            {
+                if (e.ChangedButton != MouseButton.Left) return;
+                // Not our press (started in another row, or outside the bar entirely), or a
+                // child already turned it into a jump/switch of its own.
+                if (pressConsumedByChild || !ReferenceEquals(pressedRow, container)) return;
+                Report(switchTo());
+            }), handledEventsToo: true);
 
             // Hover feedback is the LABEL brightening, never a row background: the background
             // already means "a dragged window will land here" (DropHighlight above), and one
@@ -1063,7 +1135,13 @@ public partial class FloatingBar : Window
             VerticalAlignment = VerticalAlignment.Center,
             ToolTip = $"Switch to {text}",
         };
-        button.Click += (_, _) => Report(switchTo());
+        // Same claim the icons make: this Click already IS the switch, so the row's own mouse-up
+        // handler must not perform a second one.
+        button.Click += (_, _) =>
+        {
+            MarkPressConsumed();
+            Report(switchTo());
+        };
         return (button, SetHover);
     }
 
@@ -1180,9 +1258,17 @@ public partial class FloatingBar : Window
         // guard ignoring a toggle that lands within a few hundred ms of the jump that focused
         // the window -- worth adding if it turns out to bite in practice, not worth the extra
         // state if it does not.
-        button.Click += (_, _) => Report(row.IsActive
-            ? manager.MinimizeWindow(row.Window.Handle, activator)
-            : manager.JumpTo(row.Window.Handle, activator));
+        // MarkPressConsumed first: this Click is raised from inside ButtonBase's handling of the
+        // release, while the bubbling MouseUp is still at this icon, so the row's own handler
+        // (which sits further up that same route) reads the flag afterwards and stands down.
+        // Without it, one click on an icon would jump to the window AND switch to the row.
+        button.Click += (_, _) =>
+        {
+            MarkPressConsumed();
+            Report(row.IsActive
+                ? manager.MinimizeWindow(row.Window.Handle, activator)
+                : manager.JumpTo(row.Window.Handle, activator));
+        };
 
         // Petre: "i also want to be able to drag them around across tabs" -- the same drag
         // source the switcher panel's rows use, so an icon dragged onto another row lands
