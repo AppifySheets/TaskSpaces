@@ -13,11 +13,19 @@
 </p>
 
 <p align="center">
-  <!-- No width attribute, deliberately. The capture is 252px wide and this used to render it
-       at 290, so the browser scaled it up 15% and softened every edge -- Petre: "actual image
-       is much nicer... don't scale it up". Left intrinsic, it draws pixel for pixel. Any future
-       recapture stays sharp for the same reason, whatever size the bar happens to be. -->
-  <img src="docs/images/floating-bar-1.4.0.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. Every label is bold and the current workspace's is ringed. Icons are grouped by monitor, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom." />
+  <!-- No width attribute, deliberately. An earlier capture was 252px wide and this used to
+       render it at 290, so the browser scaled it up 15% and softened every edge -- Petre:
+       "actual image is much nicer... don't scale it up". Left intrinsic, it draws pixel for
+       pixel. Any future recapture stays sharp for the same reason, whatever size the bar
+       happens to be.
+
+       The PNG's corners are ALPHA-TRANSPARENT, not black. The bar is a translucent window with
+       8px rounded corners, so a plain screen capture bakes in whatever desktop happened to sit
+       behind those corners -- which reads as four dark notches against GitHub's page, and would
+       read differently again in light mode. Masked to a rounded rectangle after capture, the
+       page shows through instead. Recaptures must do the same (the radius is 12px at this
+       machine's 150% scaling -- it is the XAML's 8px, in physical pixels). -->
+  <img src="docs/images/floating-bar-1.6.0.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. The current workspace's whole row is boxed in white. Icons are grouped by monitor behind hairline markers, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom. A pinned row sits at the top and a hint line at the bottom." />
 </p>
 
 <p align="center"><em>Everything you have open, grouped by workspace: one row each, the current
@@ -145,8 +153,12 @@ single ~74 MB exe in `artifacts/publish`.
   is also why identical windows carry those coloured bars: without them you could not tell
   which of three browsers had just moved.
 
-  **Monitors.** Icons are grouped by screen first, then stacked-order within each. A group
-  on your second monitor opens with a hairline, a third with two; no mark means the first.
+  **Monitors.** Icons are grouped by screen first, then stacked-order within each. The
+  groups run in the order your screens physically sit — left to right, then down to the next
+  row of them — not in whatever order Windows happened to number the displays. Your leftmost
+  screen's group opens the row with no mark at all; the next takes a hairline, the one after
+  two. So a mark always falls *between* two groups, which is the only place a boundary can
+  usefully be.
 
   A workspace with more than five windows **wraps onto another line** rather than making
   the whole bar wider, so one busy workspace cannot stretch every other lane into empty
@@ -160,11 +172,19 @@ single ~74 MB exe in `artifacts/publish`.
   backwards. One tap therefore returns you to wherever you just were, however your list
   is arranged, which is the whole reason Alt+Tab is worth using.
 
+  **The bar answers while you hold the chord.** A short list appears beside the bar, on the
+  bar's own screen and on whichever side has room, showing the walk in order. On the bar
+  itself the workspace you would land on is ringed in amber, and the window that would take
+  focus there lights up as brightly as your active window does now. Two surfaces, one job:
+  the list says what order the walk goes in, the ring says which row, right now.
+
+  **`Esc` cancels.** The switch commits when you let go, so without a way out, overshooting
+  your target meant walking all the way round to it again.
+
   **You arrive in the window you left.** Landing on a workspace puts focus back on
   whichever window had it last time you were there, so you can start typing instead of
-  hunting for it. The bar tells you where you will land before you go; see the fainter
-  outline described above. Somewhere you have not been yet this session gets the
-  front-most window on your main monitor, rather than whatever Windows happens to pick.
+  hunting for it. Somewhere you have not been yet this session gets the front-most window on
+  your main monitor, rather than whatever Windows happens to pick.
 
   `Win+Ctrl+Tab` was chosen by testing every `*+Tab` chord against Windows: it is the only
   one left unclaimed, and it neighbours `Win+Ctrl+←/→`, which Windows already uses for
