@@ -16,12 +16,19 @@
 
          Same borderless + AllowsTransparency setup as FloatingBar, and set in XAML for the
          same reason: WPF throws if these are assigned imperatively in the wrong order. -->
-    <Border CornerRadius="10" Background="#E6202020" Padding="12,10,12,10">
+    <Border CornerRadius="10" Background="#E6202020" Padding="9,8,9,8">
         <StackPanel>
             <!-- Names the chord actually in force, filled in by Present(): the shortcut is
                  configurable (Petre: "i want it configurable"), so a hardcoded "hold
-                 Ctrl+Alt" would start lying the moment anyone changed it. -->
-            <TextBlock x:Name="Hint" FontSize="10" Foreground="White" Opacity="0.45" Margin="4,0,4,8"/>
+                 Ctrl+Alt" would start lying the moment anyone changed it.
+
+                 MaxWidth + Wrap because this line, not the workspace names, used to set how wide
+                 the whole picker was (Petre: "that list beside the bar, i think it's too wide").
+                 The window is SizeToContent, so the longest single line wins, and a sentence of
+                 instructions beat every name in the list. Bounded here, it wraps instead of
+                 stretching, and the width comes from the thing the picker is actually for. -->
+            <TextBlock x:Name="Hint" FontSize="10" Foreground="White" Opacity="0.45"
+                       TextWrapping="Wrap" MaxWidth="150" Margin="3,0,3,7"/>
             <!-- One row per workspace, most recently used first. Built in code-behind, like
                  every other list in this app, so the rows can carry the workspace's own
                  lane colour from WorkspacePalette. -->

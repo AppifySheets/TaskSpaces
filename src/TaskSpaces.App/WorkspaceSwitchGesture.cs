@@ -1,4 +1,3 @@
-using System.Windows.Interop;
 using System.Windows.Threading;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Domain;
@@ -18,7 +17,7 @@ namespace TaskSpaces.App;
 //   press   RegisterHotKey (HotkeyService) -> Step(+1/-1), which only moves a highlight
 //   release GetAsyncKeyState, polled on a 30ms timer -> Commit(), which does the switch
 //
-// The timer runs ONLY while the picker is on screen, so the steady-state cost is zero. The
+// The timer runs ONLY while the gesture is in progress, so the steady-state cost is zero. The
 // alternative, a WH_KEYBOARD_LL hook, would see the release directly but would put this
 // process in the input path of every keystroke on the machine -- a much larger liability
 // than a poll measured in milliseconds and bounded by the length of one gesture.
@@ -32,10 +31,17 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     static readonly TimeSpan ReleasePoll = TimeSpan.FromMilliseconds(30);
 
     readonly WorkspaceManager manager;
-    // One picker per screen, driven as one (Petre: "show the ctrlwintab window on all screens").
-    // The field's type is the only thing that changed here: Present/Select/Hide read exactly as
-    // they did when this was a single window.
-    readonly SwitcherPickers picker;
+    // TWO surfaces, splitting one job. Petre tried the bar carrying the whole gesture -- amber
+    // rings plus a number on every row -- and rejected it ("this is bad"), then: "show the
+    // previous list but ONLY next to the floating window", "also maintain the yellow rings,
+    // remove the numbers".
+    //
+    // So the list answers "what order does this walk in", which a bar sorted in his own fixed
+    // order cannot express; and the rings answer "which row, right now", on the rows themselves
+    // where the answer is finally acted on. The bar is also the anchor -- the picker is placed
+    // against it, so the two are always read together.
+    readonly WorkspaceSwitcher picker = new();
+    readonly FloatingBar bar;
     readonly DispatcherTimer release = new() { Interval = ReleasePoll };
 
     // The whole record rather than just its Ordered list: Step below resolves the next index
@@ -50,32 +56,21 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     // so this is a field that changes, not a constant.
     Chord chord;
 
-    // ignoreWindow is WindowMonitor.Ignore. Taken as a constructor argument rather than the
-    // composition root registering one hwnd afterwards, because there is no longer ONE hwnd to
-    // register: pickers are created per monitor, including when a screen is plugged in later, so
-    // whatever creates them has to be able to opt each one out at the moment it is made.
-    public WorkspaceSwitchGesture(WorkspaceManager manager, Chord chord, Action<nint> ignoreWindow)
+    public WorkspaceSwitchGesture(WorkspaceManager manager, Chord chord, FloatingBar bar)
     {
         this.manager = manager;
         this.chord = chord;
-        picker = new SwitcherPickers(ignoreWindow);
+        this.bar = bar;
         release.Tick += (_, _) => { if (!ModifiersHeld()) Commit(); };
     }
 
-    // Mid-gesture rebinding would leave the picker watching for a modifier nobody is
-    // holding, so commit whatever is selected first and start clean on the new chord.
+    // Mid-gesture rebinding would leave this watching for a modifier nobody is holding, so
+    // commit whatever is selected first and start clean on the new chord.
     public void Rebind(Chord replacement)
     {
         if (active) Commit();
         chord = replacement;
     }
-
-    // (EnsureHandle used to live here, returning the one picker's hwnd for the composition root
-    // to pass to WindowMonitor.Ignore. With a picker per monitor there is no single handle to
-    // return, and windows can appear later when a screen is plugged in -- so the opt-out moved to
-    // SwitcherPickers, which registers each window as it creates it. The reason is unchanged: the
-    // monitor sees our own process, so an unregistered picker would flash into the floating bar
-    // as a window every time the chord was held.)
 
     // One tap of the bound chord (direction +1) or that chord plus Shift (-1).
     public void Step(int direction)
@@ -84,12 +79,22 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         if (recent.Ordered.Count == 0) return;
         selected = recent.IndexAfter(selected, direction);
         picker.Select(selected);
+        bar.ShowCandidate(recent.Ordered[selected].Id);
     }
+
+    int DefinedIndexOf(Workspace workspace) =>
+        Math.Max(0, manager.State.Workspaces.ToList().FindIndex(w => w.Id == workspace.Id));
+
+    // The picker's hwnd, so the composition root can hand it to WindowMonitor.Ignore. The monitor
+    // no longer skips our own process (Petre wanted the Manage window in the bar), so without
+    // this the picker would flicker into the bar as a window every time it appeared. Created
+    // before the first Show() so its very first SHOW event is filtered.
+    public nint EnsureHandle() => new System.Windows.Interop.WindowInteropHelper(picker).EnsureHandle();
 
     void Begin(int direction)
     {
         recent = manager.ByRecentUse();
-        // Nothing (or nothing but where we already are) to switch between: no picker, no
+        // Nothing (or nothing but where we already are) to switch between: no highlight, no
         // timer, and Step's guard above turns the tap into a no-op.
         if (recent.Ordered.Count < 2) return;
 
@@ -101,27 +106,31 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         selected = recent.CurrentIndex >= 0 ? recent.CurrentIndex : direction > 0 ? -1 : 0;
         active = true;
 
+        // The bar shows no rings yet: Step calls ShowCandidate the instant this returns, having
+        // advanced `selected` by one.
+        bar.BeginSwitch();
         picker.Present(
-            recent.Ordered.Select((workspace, index) =>
+            recent.Ordered.Select(workspace =>
                 // Colour by DEFINED position, not by position in the recency list -- the same
                 // rule the floating bar's lane tints follow, so the two surfaces agree.
                 new SwitcherChoice(workspace.Name, WorkspacePalette.For(workspace, DefinedIndexOf(workspace)))).ToList(),
             selected,
-            // The on-screen hint names the chord actually in force, not a hardcoded one --
-            // the whole point of making it configurable is undone if the picker still tells
-            // you to hold Ctrl+Alt after you have rebound it to something else.
-            chord);
+            // The hint names the chord actually in force, not a hardcoded one -- the whole point
+            // of making it configurable is undone if the picker still tells you to hold Ctrl+Alt
+            // after you have rebound it.
+            chord,
+            // Anchored to the bar: "next to, meaning: on the same screen as the floating window
+            // is", "either on the left or on the right".
+            bar);
         release.Start();
     }
-
-    int DefinedIndexOf(Workspace workspace) =>
-        Math.Max(0, manager.State.Workspaces.ToList().FindIndex(w => w.Id == workspace.Id));
 
     void Commit()
     {
         release.Stop();
         active = false;
         picker.Hide();
+        bar.EndSwitch();
         // Fire-and-forget, like every other hotkey path in this app: a keypress has no UI to
         // report a failure through, and a message box raised by a chord would be worse than
         // a switch that quietly did not happen.
@@ -152,6 +161,8 @@ public sealed class WorkspaceSwitchGesture : IDisposable
 
     static bool Down(int vk) => (NativeMethods.GetAsyncKeyState(vk) & NativeMethods.KeyDownBit) != 0;
 
+    // The picker is ours to close; the bar is not -- it outlives this gesture and belongs to the
+    // composition root.
     public void Dispose()
     {
         release.Stop();

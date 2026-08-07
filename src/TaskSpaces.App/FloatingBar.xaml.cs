@@ -157,13 +157,19 @@ public partial class FloatingBar : Window
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 
-    public void HideBar()
-    {
-        Hide();
-        manager.SaveFloatingBar(new FloatingBarState(Left, Top, false) { Right = anchorRight });
-    }
-
-    void OnHideClick(object sender, RoutedEventArgs e) => HideBar();
+    // Petre: "the bar shouldn't be hidden, it should be impossible to hide that floating bar,
+    // that's the app."
+    //
+    // HideBar() and its OnHideClick handler lived here and are gone. They were ALREADY
+    // unreachable -- nothing in FloatingBar.xaml bound the handler, so HideBar's only caller was
+    // one nobody could trigger -- which meant the bar was unhideable by accident rather than on
+    // purpose. Deleted so it stays that way deliberately, and so nothing wires a close
+    // affordance back onto the one surface this app exists to show. Same ruling that removed
+    // Manage's "Show floating bar" checkbox.
+    //
+    // FloatingBarState.Visible is now vestigial: always written true, read by nothing. Left in
+    // place rather than removed because it is a POSITIONAL member of a persisted record, so
+    // dropping it would change the shape of everyone's state.json for no behavioural gain.
 
     // Task 11 fix round 3 (reviewer, Petre: "can't drag it"): the ORIGINAL design put
     // the drag handler on the Border alone, betting on it having bare background to
@@ -533,6 +539,10 @@ public partial class FloatingBar : Window
     void RebuildCore()
     {
         Rows.Children.Clear();
+        // The rows these pointed at have just been thrown away, so every entry is now a Border
+        // that is no longer in the tree. Repopulated as the new rows are built.
+        rowRings.Clear();
+        currentRow = null;
         ClearInfo();
         // BEFORE the overview query, and outside its Tap, deliberately: the back button reads
         // the MRU rather than the overview, so a transient desktop-enumeration failure (which
@@ -592,12 +602,19 @@ public partial class FloatingBar : Window
                 // Index carries the workspace's position so WorkspacePalette can colour by
                 // ORDER: renaming a workspace must not recolour it, and reordering should move
                 // its colour with it.
-                .ForEach((g) => groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent,
+                .ForEach((g) =>
+                {
+                    // Recorded so ApplyCandidate can restore the white ring here when the amber
+                    // one moves away, without needing another overview query to ask again.
+                    if (g.IsCurrent) currentRow = g.Workspace.Id;
+                    groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent,
                     switchTo: () => manager.Switch(g.Workspace.Id),
                     groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
                     onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
                     g.Running,
-                    tint: LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)))));
+                    tint: LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)),
+                    rowKey: g.Workspace.Id));
+                });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
             // ones) get rows too, labeled with the desktop's actual name; label click
@@ -633,6 +650,13 @@ public partial class FloatingBar : Window
                 .SelectMany((row, i) => i == 0 ? new[] { row } : new[] { Separator(), row })
                 .ToList()
                 .ForEach(el => Rows.Children.Add(el));
+
+            // Re-assert the switch candidate onto the rows that have just been built. Without
+            // this, any window event arriving while the chord is held would rebuild the bar and
+            // silently drop the amber ring -- the marker would vanish mid-gesture with nothing
+            // to explain it. Same class of bug as the row click that used to disappear: state
+            // that outlives a rebuild cannot live on the things the rebuild destroys.
+            ApplyCandidate();
         });
 
         // Started HERE rather than when a window appears, because this is the only place that
@@ -665,7 +689,10 @@ public partial class FloatingBar : Window
     // tint (Petre: "i also want different colors for different workspaces in the lanes") is the
     // lane's own colour, or null for the rows that are not workspaces -- pinned, unbound
     // desktops, Unplaced -- which stay neutral so a coloured lane always means "a workspace".
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null)
+    // rowKey identifies this row to the switch gesture (see rowRings). Null for rows the chord
+    // can never land on: 📌 Pinned, "Unplaced", and unbound desktops -- the chord walks
+    // WORKSPACES, so only those need to be repaintable.
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -768,6 +795,7 @@ public partial class FloatingBar : Window
         var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo);
         Grid.SetColumn(label, 1);
         container.Children.Add(label);
+
 
         // Petre: "i'd prefer to be able to click on the empty row as well and it takes me to
         // the right place... let the text be highlighted as it is now when i am over a row and
@@ -876,7 +904,7 @@ public partial class FloatingBar : Window
         // Wrapping rather than bordering the Grid itself, because a Grid has no border of its
         // own -- and wrapping keeps the drop highlight where it belongs, on the Grid's
         // background, so an armed drop target still fills the row inside its outline.
-        return new Border
+        var box = new Border
         {
             Child = container,
             BorderBrush = isCurrent ? CurrentRowRing : Brushes.Transparent,
@@ -894,7 +922,83 @@ public partial class FloatingBar : Window
             // than the window they sit in.
             CornerRadius = new CornerRadius(3),
         };
+
+        // Registered so the switch gesture can repaint this row's ring WITHOUT a rebuild. A tap
+        // of the chord must not relayout anything -- the same rule WorkspaceSwitcher.Select
+        // followed when the picker was a window -- and a rebuild here would be far worse than
+        // sluggish: it makes a DesktopOf COM call per known window, on every tap.
+        //
+        // Keyed on the switch DESTINATION rather than the row's label, because names are not
+        // unique (an unbound desktop can share a name with a workspace) and the gesture only
+        // ever knows ids.
+        if (rowKey is { } key) rowRings[key] = box;
+        return box;
     }
+
+    // Rebuilt from scratch on every RebuildCore, because the rows are. Anything holding a Border
+    // from a previous build is holding an element that is no longer in the tree.
+    readonly Dictionary<Guid, Border> rowRings = [];
+
+    // (The candidate itself is the gesture state -- see `candidate` below. It is held HERE
+    // rather than on a row, because a rebuild throws every row away and builds new ones, and
+    // rebuilds fire on any window event: one landing mid-gesture would silently drop the ring.
+    // RebuildCore re-applies it after building, which is the only thing that makes it survive.)
+
+    // Begin / step / end of the Win+Ctrl+Tab gesture, driven by WorkspaceSwitchGesture.
+    //
+    // The bar shows the rings; the picker beside it shows the ordered LIST and names the chord.
+    // Petre tried the bar carrying the whole gesture -- rings plus a number on every row -- and
+    // rejected it ("this is bad"), then: "show the previous list but ONLY next to the floating
+    // window", "also maintain the yellow rings, remove the numbers". So the two surfaces split
+    // the job rather than duplicating it: the list answers "what order", the rings answer "which
+    // row, right now", on the rows themselves where the answer is finally acted on.
+    public void BeginSwitch()
+    {
+        candidate = null;
+        ApplyCandidate();
+    }
+
+    // Just the one row: where releasing the chord right now would take you.
+    //
+    // It briefly showed the next three stops at three strengths, and Petre cut it back -- "i
+    // think only the next should have the yellow ring". Right call: the picker standing beside
+    // the bar already lists the walk in order, so the extra rings were the same fact told twice,
+    // and the weaker two were the least legible copy of it.
+    public void ShowCandidate(Guid workspaceId)
+    {
+        candidate = workspaceId;
+        ApplyCandidate();
+    }
+
+    public void EndSwitch()
+    {
+        candidate = null;
+        ApplyCandidate();
+        ClearInfo();
+    }
+
+    Guid? candidate;
+
+
+    // Repaint only: every registered row is set back to its resting ring, then the candidate is
+    // painted over the top.
+    //
+    // The candidate WINS over the current-workspace ring on the row you are standing on, and
+    // that is correct rather than an oversight -- while the chord is held the question on screen
+    // is "where would releasing take me", and answering "you are already here" in that moment is
+    // the more useful of the two.
+    // Precedence is load-bearing: the candidate outranks "you are here", because while the chord
+    // is held the question on screen is where releasing would take you. The two collide
+    // constantly -- the walk starts on the row you are standing on.
+    void ApplyCandidate() =>
+        rowRings.ToList().ForEach(row =>
+            row.Value.BorderBrush = row.Key == candidate ? CandidateRowRing
+                : row.Key == currentRow ? CurrentRowRing
+                : Brushes.Transparent);
+
+    // Which row RebuildCore drew as current, so ApplyCandidate can put the white ring back when
+    // the amber one moves off it.
+    Guid? currentRow;
 
     // ~20% white: enough to read as "this row is armed" against the bar's #99202020
     // background without washing the icons out mid-drag.
@@ -1187,6 +1291,32 @@ public partial class FloatingBar : Window
     // against this background, so "can I see where I am" would have depended on where you were.
     // White is the same brightness on every row.
     static readonly Brush CurrentRowRing = Frozen(0xC0, 0xFF, 0xFF, 0xFF);
+
+    // Petre: "when switching, instead of showing the workspaces, focus the floating window
+    // instead and do a cycle over those workspaces, in different color" -- because "i need to
+    // change my focus to it eventually to make sure i've landed on the correct workspace".
+    //
+    // That last sentence is the whole argument for deleting the popup picker: if the bar is
+    // where he looks to confirm the landing anyway, a second surface listing the same
+    // workspaces only makes his eyes cross the screen twice. The same move that deleted the
+    // tray switcher panel and Manage's Windows tab once the bar covered their jobs.
+    //
+    // The SAME SHAPE as the current-workspace ring, in a different colour, and that pairing is
+    // deliberate rather than convenient: the two mean the same kind of thing in different
+    // tenses -- "you are here" and "you would land here" -- which is exactly the relationship
+    // the icon markers already express (ActiveBorder against WillActivateBorder). A different
+    // shape would read as unrelated information.
+    //
+    // Amber rather than a brighter white, because white is already taken twice over: by the
+    // current row's ring and by the active-window icon outline. Full strength because it exists
+    // only for the few hundred milliseconds the chord is held, and in that time it has to win
+    // the eye against a bar already showing lane tints, icon highlights and a white ring.
+    //
+    // Exactly ONE row wears it. Two further stops at weaker alphas, and a tap-count number on
+    // every row, were both built and both cut -- "i think only the next should have the yellow
+    // ring". The picker standing beside the bar lists the walk in order, so anything here beyond
+    // "this one, now" was the same fact told twice, in the less legible of the two places.
+    static readonly Brush CandidateRowRing = Frozen(0xFF, 0xFF, 0xB7, 0x4D);
 
     UIElement IconButton(string groupLabel, string groupKey, WindowRow row)
     {

@@ -313,11 +313,12 @@ public partial class App : Application
             // a Result, and inventing a value on failure here would hide a real bug behind a
             // silently different shortcut. Taking .Value is the honest reading.
             boundSwitcher = Chord.Parse(manager.SwitcherShortcut).Value;
-            // monitor.Ignore is handed IN rather than called on a returned handle: the picker is
-            // now one window per screen (Petre: "show the ctrlwintab window on all screens"), and
-            // a screen plugged in later makes another, so each has to opt itself out as it is
-            // created. Same reason as before -- our own chrome must not appear in the bar.
-            switcher = new WorkspaceSwitchGesture(manager, boundSwitcher, monitor.Ignore);
+            // Handed the bar as well as the manager: the gesture lights the bar's rows AND
+            // anchors its picker against it (Petre: "show the previous list but ONLY next to the
+            // floating window"). Ignored by the monitor for the same reason the bar is -- it is
+            // our own chrome, and the hooks see our process.
+            switcher = new WorkspaceSwitchGesture(manager, boundSwitcher, floatingBar);
+            monitor.Ignore(switcher.EnsureHandle());
 
             hotkeys = new HotkeyService(direction => switcher.Step(direction), boundSwitcher);
 

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Interop;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Windows.Monitoring;
 
@@ -23,15 +24,23 @@ public partial class WorkspaceSwitcher : Window
 
     public WorkspaceSwitcher() => InitializeComponent();
 
-    // Draw the list and show it centred on the GIVEN monitor. The chord is passed in rather than
+    // Draw the list and show it BESIDE the floating bar. The chord is passed in rather than
     // assumed so the hint line names whatever is currently bound.
     //
-    // The monitor is a parameter rather than "wherever the cursor is" because there is now one of
-    // these per screen (Petre: "show the ctrlwintab window on all screens"), and each has to be
-    // told which one it belongs to. SwitcherPickers owns that decision.
-    public void Present(IReadOnlyList<SwitcherChoice> choices, int selected, Chord chord, nint monitor)
+    // Petre: "show the previous list but ONLY next to the floating window", "next to, meaning: on
+    // the same screen as the floating window is", "either on the left or on the right".
+    //
+    // Two earlier answers to "where does this go" are both retired by that. Centring on the
+    // CURSOR's monitor guessed which screen he was looking at, and guessed wrong whenever the
+    // pointer was parked somewhere he was not. One picker per screen removed the guess by
+    // answering everywhere at once, which is louder than the question deserved. The bar is the
+    // thing he is already looking at, so the list belongs against it -- no guess, one window.
+    public void Present(IReadOnlyList<SwitcherChoice> choices, int selected, Chord chord, Window anchor)
     {
-        Hint.Text = $"hold {chord.ModifiersText} · tap {chord.KeyText} to walk · release to switch";
+        // Trimmed from "hold X · tap Y to walk · release to switch". Release-commits is Alt+Tab's
+        // own convention and the least surprising half of the gesture, so it is the half worth
+        // dropping to keep this narrow.
+        Hint.Text = $"hold {chord.ModifiersText} · tap {chord.KeyText}";
         rows.Clear();
         Rows.Children.Clear();
         choices.ToList().ForEach(choice =>
@@ -43,7 +52,7 @@ public partial class WorkspaceSwitcher : Window
         Select(selected);
 
         Show();
-        CenterOn(monitor); // after Show(), so ActualWidth/Height are real (same order as FloatingBar.ShowBar)
+        PlaceBeside(anchor); // after Show(), so ActualWidth/Height are real (same order as FloatingBar.ShowBar)
     }
 
     // Repaint only. Called on every tap of the key, so it must not relayout: a picker that
@@ -67,7 +76,7 @@ public partial class WorkspaceSwitcher : Window
             CornerRadius = new CornerRadius(2),
             Background = Swatch(choice.Color),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
+            Margin = new Thickness(0, 0, 6, 0),
         });
         content.Children.Add(new TextBlock
         {
@@ -80,7 +89,7 @@ public partial class WorkspaceSwitcher : Window
         return new Border
         {
             Child = content,
-            Padding = new Thickness(8, 5, 16, 5),
+            Padding = new Thickness(7, 4, 10, 4),
             CornerRadius = new CornerRadius(5),
             Background = Brushes.Transparent,
             MinWidth = 150,
@@ -115,27 +124,48 @@ public partial class WorkspaceSwitcher : Window
         return brush;
     }
 
-    // Centred on one specific monitor.
+    // Beside the bar, on the bar's own monitor, on whichever side has room.
     //
-    // This used to find the monitor itself, from the cursor: a single picker had to guess which
-    // screen Petre was looking at, and the cursor was the best guess available. There is now one
-    // picker per screen, so there is nothing left to guess -- which also retires the case the
-    // guess got wrong, where the cursor sat on one monitor while Petre's eyes were on another.
+    // Which side is not a preference: the bar lives against a screen edge (it snaps there, and
+    // grows leftwards from a right anchor), so one side of it is usually a few pixels of screen
+    // and the other is the whole desktop. Picking the roomier side is what makes "next to the
+    // floating window" mean the same thing whether the bar is parked left or right.
     //
-    // Queries the MONITOR's own DPI rather than the window's, for the reason
-    // FloatingBar.PositionFromState documents at length: a window-scoped DPI query can still
-    // report a stale scale immediately after Show(). That matters more here than it did before,
-    // because these windows are deliberately spread across screens that may well differ in
-    // scaling.
-    void CenterOn(nint monitor)
+    // Tops aligned rather than centred: the bar's first row and the list's first row then read
+    // across at the same height, and the list grows downward the way a list should.
+    //
+    // Everything here is in WPF units, mixing this window's Left/Top with the anchor's, which is
+    // sound because both are Windows in the same coordinate space. The monitor rect is divided by
+    // the MONITOR's own DPI rather than this window's, for the reason FloatingBar.PositionFromState
+    // documents at length: a window-scoped DPI query can still report a stale scale immediately
+    // after Show(), and the bar may well be sitting on a screen scaled differently from the
+    // primary.
+    void PlaceBeside(Window anchor)
     {
+        var monitor = NativeMethods.MonitorFromWindow(
+            new WindowInteropHelper(anchor).Handle, NativeMethods.MONITOR_DEFAULTTONEAREST);
         var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
         if (!NativeMethods.GetMonitorInfo(monitor, ref info)) return;
 
         NativeMethods.GetDpiForMonitor(monitor, NativeMethods.MDT_EFFECTIVE_DPI, out var dpiX, out var dpiY);
         var scaleX = dpiX / 96.0;
         var scaleY = dpiY / 96.0;
-        Left = (info.rcWork.Left + info.rcWork.Right) / 2.0 / scaleX - ActualWidth / 2;
-        Top = (info.rcWork.Top + info.rcWork.Bottom) / 2.0 / scaleY - ActualHeight / 2;
+        var workLeft = info.rcWork.Left / scaleX;
+        var workRight = info.rcWork.Right / scaleX;
+        var workTop = info.rcWork.Top / scaleY;
+        var workBottom = info.rcWork.Bottom / scaleY;
+
+        const double gap = 8;
+        var toLeft = anchor.Left - workLeft;
+        var toRight = workRight - (anchor.Left + anchor.ActualWidth);
+        Left = toRight >= toLeft
+            ? anchor.Left + anchor.ActualWidth + gap
+            : anchor.Left - gap - ActualWidth;
+
+        // Clamped last, and unconditionally: on a bar wider than the space either side of it,
+        // both candidates above land off-screen, and a picker you cannot see is worse than one
+        // sitting slightly over the bar.
+        Left = Math.Clamp(Left, workLeft, Math.Max(workLeft, workRight - ActualWidth));
+        Top = Math.Clamp(anchor.Top, workTop, Math.Max(workTop, workBottom - ActualHeight));
     }
 }
