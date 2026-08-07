@@ -689,9 +689,13 @@ public partial class FloatingBar : Window
             var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
             line.ToList().ForEach(r =>
             {
-                if (showMonitorMarkers && r.Monitor.HasValue && r.Monitor.Value > 1
-                    && r.Monitor.Value != previous.GetValueOrDefault(-1))
-                    linedUp.Children.Add(MonitorMarker(r.Monitor.Value));
+                // Keyed on RANK, not on the display number: rank 0 is the primary display and
+                // draws nothing. Grouping and ordering still follow the display number, which is
+                // what Petre asked for originally ("first icons from monitor1, then monitor2");
+                // only how loudly each group announces itself has changed.
+                if (showMonitorMarkers && r.MonitorRank.GetValueOrDefault(0) > 0
+                    && r.Monitor.HasValue && r.Monitor.Value != previous.GetValueOrDefault(-1))
+                    linedUp.Children.Add(MonitorMarker(r.MonitorRank.Value));
                 previous = r.Monitor;
 
                 var button = IconButton(groupLabel, groupKey, r);
@@ -1385,7 +1389,7 @@ public partial class FloatingBar : Window
     // those rows got an indent of its margin alone, matching no other row's. Reserving the gutter
     // for every group fixed the alignment and left an empty indent on the commonest row; Petre
     // saw both and chose flush.
-    static UIElement MonitorMarker(int monitor)
+    static UIElement MonitorMarker(int rank)
     {
         var tally = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         // Capped at two strokes, which is also what sets the reserved width below. Past the
@@ -1394,7 +1398,7 @@ public partial class FloatingBar : Window
         // The gap goes BEFORE each stroke but the first, so two strokes measure exactly 3px with
         // no trailing space. A trailing margin would pad the gutter from the inside, which is
         // half of what made it too wide.
-        Enumerable.Range(0, Math.Clamp(monitor - 1, 0, 2)).ToList().ForEach(i => tally.Children.Add(new Border
+        Enumerable.Range(0, Math.Clamp(rank, 0, 2)).ToList().ForEach(i => tally.Children.Add(new Border
         {
             Width = 1,
             Height = 14,

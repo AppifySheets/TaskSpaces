@@ -145,6 +145,39 @@ public class MonitorOrderingTests
         Assert.Equal(2, after.Single(r => r.Window.Handle == edgeTwo.Handle).Ordinal.Value);
     }
 
+    // Petre, shown a friend's bar on 1.5.0 where nearly every row carried a mark: the silent
+    // monitor was display 1, picked arbitrarily. Windows numbers displays by enumeration order,
+    // not by how much you use them, so on any machine whose primary is not DISPLAY1 the marks
+    // land on the main screen and the silence on the side one. On Petre's own machine the
+    // primary IS DISPLAY2, so it was backwards for him too.
+    [Fact]
+    public void The_primary_display_is_the_silent_one()
+    {
+        // Primary is 2, so 2 ranks silent and 1 takes a stroke, even though 1 sorts first.
+        var facts = new ScreenFacts(
+            new Dictionary<WindowHandle, int> { [A.Handle] = 1, [B.Handle] = 2 },
+            new HashSet<WindowHandle>(),
+            new Dictionary<WindowHandle, int>(),
+            2);
+        var rows = Rows([A, B], facts);
+
+        Assert.Equal(0, rows.Single(r => r.Window.Handle == B.Handle).MonitorRank.Value);
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == A.Handle).MonitorRank.Value);
+        // Grouping order is unchanged: display number still decides where icons sit.
+        Assert.Equal([A.Handle, B.Handle], rows.Select(r => r.Window.Handle));
+    }
+
+    // With no primary reported -- only tests -- it degrades to plain ascending order, so display
+    // 1 goes silent exactly as it did before.
+    [Fact]
+    public void Without_a_primary_the_lowest_display_is_silent()
+    {
+        var rows = Rows([A, B], Facts([(A, 1), (B, 2)]));
+
+        Assert.Equal(0, rows.Single(r => r.Window.Handle == A.Handle).MonitorRank.Value);
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == B.Handle).MonitorRank.Value);
+    }
+
     [Fact]
     public void Each_row_carries_its_monitor_number_and_minimized_state()
     {

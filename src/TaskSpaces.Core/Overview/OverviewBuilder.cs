@@ -47,7 +47,8 @@ public static class OverviewBuilder
                 facts.Minimized.Contains(w.Handle),
                 frontmost,
                 ordinal,
-                attention.Contains(w.Handle));
+                attention.Contains(w.Handle),
+                RankOf(w));
 
         // Petre: "when there are multiple similar icons, multiple edges, i want them numbered,
         // arbitrarily, if i'm selecting the second browser, i can see that the other, first got
@@ -81,6 +82,28 @@ public static class OverviewBuilder
 
         Maybe<int> MonitorOf(WindowInfo w) =>
             facts.MonitorOf.TryGetValue(w.Handle, out var number) ? number : Maybe<int>.None;
+
+        // Display numbers ordered so the PRIMARY comes first, then the rest ascending. A
+        // monitor's position in this list is how many strokes its marker draws, so the primary
+        // draws none.
+        //
+        // Which display is silent used to be display 1, and that was arbitrary rather than
+        // considered. Windows numbers displays by how they were enumerated, not by how much you
+        // use them, so on any machine whose primary is not DISPLAY1 the marks landed on the main
+        // screen and the silence on the side one. The primary is the closest thing the OS offers
+        // to "the screen you mostly work on", and it is what the fallback restore already uses.
+        //
+        // With no primary reported -- which only happens in tests -- this degrades to plain
+        // ascending order, so display 1 goes silent exactly as before.
+        var ranked = facts.MonitorOf.Values
+            .Distinct()
+            .OrderBy(m => facts.PrimaryMonitor.Map(p => p == m ? 0 : 1).GetValueOrDefault(1))
+            .ThenBy(m => m)
+            .Select((m, rank) => (Monitor: m, Rank: rank))
+            .ToDictionary(x => x.Monitor, x => x.Rank);
+
+        Maybe<int> RankOf(WindowInfo w) =>
+            MonitorOf(w).Bind(m => ranked.TryGetValue(m, out var rank) ? rank : Maybe<int>.None);
 
         // Suppressed on the CURRENT desktop, and not as a detail: the map is stamped on the way
         // OUT, so while you are standing on a desktop its entry still names whatever you were

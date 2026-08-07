@@ -49,7 +49,18 @@ public sealed record WindowRow(
     // This window's taskbar button has flashed and you have not looked at it since -- somebody
     // messaged you, or the app wants you. Cleared by activating the window, never by the OS,
     // which has no "stopped flashing" notification to give.
-    bool WantsAttention = false);
+    bool WantsAttention = false,
+    // How many strokes the bar's monitor marker should draw: 0 for the PRIMARY display, then 1,
+    // 2, ... for the rest in display order.
+    //
+    // Separate from Monitor, which stays the real display number, because the two answer
+    // different questions: Monitor says which screen, this says how loudly to say it. Petre,
+    // seeing a friend's bar on 1.5.0 where nearly every row carried a mark: the silent case was
+    // display 1, chosen arbitrarily, and most people do most of their work somewhere else. On
+    // Petre's own machine the primary is DISPLAY2, so the marks were landing on his main screen
+    // and the silence on his side one -- backwards from the intent, and invisible while the only
+    // thing ever checked was whether the marks were CORRECT rather than whether they were RARE.
+    Maybe<int> MonitorRank = default);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
 public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);
