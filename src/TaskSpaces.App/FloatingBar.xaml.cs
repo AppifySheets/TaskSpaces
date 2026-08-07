@@ -291,6 +291,7 @@ public partial class FloatingBar : Window
 
     void OnPreviewMouseMove(object sender, MouseEventArgs e)
     {
+        if (MiddleDragging(e)) return;
         if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
         var current = PointToScreen(e.GetPosition(this));
         // Back to the plain system threshold. It was tripled while rows were still drag handles,
@@ -328,6 +329,74 @@ public partial class FloatingBar : Window
         // window to open would yank the bar back to the anchor it had before the drag.
         SnapToEdges();
         Save(); // only draggable while shown
+    }
+
+    // Petre: "make the drag possible with middleclick as well... middledrag."
+    //
+    // A third way to move the bar, and the least conditional of them: the middle button does
+    // nothing else anywhere on this surface, so unlike a left press it needs no modifier and no
+    // exclusion list. Grab anything -- an icon, a label, the frame -- and move.
+    //
+    // It cannot use DragMove(), which is why this exists at all rather than being three lines in
+    // the handler above: DragMove drives Windows' own move loop, and that loop is defined in
+    // terms of the LEFT button. Called with the left button up it throws outright.
+    //
+    // So the window is moved by hand, and the arithmetic has one trap in it. Cursor position is
+    // taken from GetCursorPos, NOT from PointToScreen(e.GetPosition(this)): the latter is
+    // measured relative to a window that this code is simultaneously moving, so the delta would
+    // shrink to nothing as the window caught up with the cursor and the bar would refuse to
+    // travel. GetCursorPos is absolute and has no such feedback.
+    //
+    // Left/Top are in DIPs while the cursor is in physical pixels, hence the DPI divide -- on
+    // this 150% machine, omitting it would move the bar half as far as the mouse.
+    Point? middleStart;   // cursor at press, physical pixels
+    Point middleOrigin;   // window position at press, DIPs
+    bool middleDragging;
+
+    bool MiddleDragging(MouseEventArgs e)
+    {
+        if (e.MiddleButton != MouseButtonState.Pressed || middleStart is not { } start) return false;
+
+        NativeMethods.GetCursorPos(out var cursor);
+        if (!middleDragging)
+        {
+            if (Math.Abs(cursor.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(cursor.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return false;
+            middleDragging = true;
+            // `moving` suppresses ReclaimTopmost, whose SetWindowPos would otherwise fight these
+            // Left/Top writes for the same window -- the same reason the left-drag path sets it.
+            moving = true;
+            // Capture so the moves keep arriving even if the pointer outruns the window, which
+            // it does on a fast throw across a 4K screen.
+            CaptureMouse();
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        Left = middleOrigin.X + (cursor.X - start.X) / dpi.DpiScaleX;
+        Top = middleOrigin.Y + (cursor.Y - start.Y) / dpi.DpiScaleY;
+        return true;
+    }
+
+    void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle) return;
+        NativeMethods.GetCursorPos(out var cursor);
+        middleStart = new Point(cursor.X, cursor.Y);
+        middleOrigin = new Point(Left, Top);
+    }
+
+    void OnPreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle) return;
+        middleStart = null;
+        if (!middleDragging) return;
+        middleDragging = false;
+        moving = false;
+        ReleaseMouseCapture();
+        // Same finish as a left-drag: the user has chosen a new position, so snap to any edge it
+        // landed near and re-derive the growth anchor from where it ended up.
+        SnapToEdges();
+        Save();
     }
 
     bool moving;

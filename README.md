@@ -4,7 +4,7 @@
 
 <h1 align="center">TaskSpaces</h1>
 
-<p align="center"><em><code>Win+Ctrl+Tab</code> switches workspace. Every window is exactly where you left it.</em></p>
+<p align="center"><em>Change task in one chord and arrive exactly where you left off — same windows, same focus, nothing to rebuild.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20x64-0078D4" alt="Platform: Windows 11, x64" />
@@ -143,9 +143,9 @@ single ~74 MB exe in `artifacts/publish`.
 
   A workspace with more than five windows **wraps onto another line** rather than making
   the whole bar wider, so one busy workspace cannot stretch every other lane into empty
-  space. **`Ctrl`+drag moves the bar** — from anywhere on it, rows and icons included, so a
-  plain press is only ever the click of whatever is under it. Drop it wherever you like,
-  including on top of a taskbar; it stays put.
+  space. **`Ctrl`+drag or middle-drag moves the bar** — from anywhere on it, rows and icons
+  included, so a plain press is only ever the click of whatever is under it. Drop it wherever
+  you like, including on top of a taskbar; it stays put.
 - **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
   patterns. Opened by left-clicking the tray icon.
 - **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
