@@ -542,6 +542,7 @@ public partial class FloatingBar : Window
         // The rows these pointed at have just been thrown away, so every entry is now a Border
         // that is no longer in the tree. Repopulated as the new rows are built.
         rowRings.Clear();
+        rowLandingIcon.Clear();
         currentRow = null;
         ClearInfo();
         // BEFORE the overview query, and outside its Tap, deliberately: the back button reads
@@ -784,6 +785,11 @@ public partial class FloatingBar : Window
                 var button = IconButton(groupLabel, groupKey, r);
                 iconButtons.Add(button);
                 linedUp.Children.Add(button);
+                // The window this row would restore focus to, remembered so the switch gesture
+                // can raise it to full strength while this row is the candidate (see
+                // ApplyCandidate). At most one per row: WillActivate marks a single window.
+                if (r.WillActivate && rowKey is { } landingKey && button is Button landing)
+                    rowLandingIcon[landingKey] = landing;
             });
             icons.Children.Add(linedUp);
         });
@@ -939,6 +945,9 @@ public partial class FloatingBar : Window
     // from a previous build is holding an element that is no longer in the tree.
     readonly Dictionary<Guid, Border> rowRings = [];
 
+    // ...and the icon each row would land you on, for the same reason and with the same lifetime.
+    readonly Dictionary<Guid, Button> rowLandingIcon = [];
+
     // (The candidate itself is the gesture state -- see `candidate` below. It is held HERE
     // rather than on a row, because a rebuild throws every row away and builds new ones, and
     // rebuilds fire on any window event: one landing mid-gesture would silently drop the ring.
@@ -990,11 +999,36 @@ public partial class FloatingBar : Window
     // Precedence is load-bearing: the candidate outranks "you are here", because while the chord
     // is held the question on screen is where releasing would take you. The two collide
     // constantly -- the walk starts on the row you are standing on.
-    void ApplyCandidate() =>
+    void ApplyCandidate()
+    {
         rowRings.ToList().ForEach(row =>
             row.Value.BorderBrush = row.Key == candidate ? CandidateRowRing
                 : row.Key == currentRow ? CurrentRowRing
                 : Brushes.Transparent);
+
+        // Petre: "when adding a ring to the next workspace, make the active window in it visible
+        // clearly, possibly with the same strength as it is in the currently active workspace."
+        //
+        // The landing marker is drawn faintly everywhere else on purpose -- it is a prediction
+        // about a workspace you are not on, and at full strength on every row it would compete
+        // with the one icon that really does have focus. But the moment a row becomes the
+        // candidate the prediction stops being background information: it is the answer to
+        // "release now and where do I end up", and it should read exactly as strongly as the
+        // active window does today, because in a moment that is what it will be.
+        //
+        // Deliberately the SAME brushes as the active window rather than a third strength of
+        // their own. The two states are the same fact a keystroke apart, and giving the future
+        // one its own appearance would invent a distinction Petre did not ask about.
+        //
+        // Costs no layout: every icon already carries a 1px border, transparent when it has
+        // nothing to say, precisely so gaining a marker cannot nudge a SizeToContent bar.
+        rowLandingIcon.ToList().ForEach(icon =>
+        {
+            var landing = icon.Key == candidate;
+            icon.Value.BorderBrush = landing ? ActiveBorder : WillActivateBorder;
+            icon.Value.Background = landing ? ActiveBackground : Brushes.Transparent;
+        });
+    }
 
     // Which row RebuildCore drew as current, so ApplyCandidate can put the white ring back when
     // the amber one moves off it.
