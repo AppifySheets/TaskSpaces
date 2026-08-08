@@ -114,6 +114,36 @@ public partial class FloatingBar : Window
         Save();
     }
 
+    // Petre: "i can see the taskspaces app in alt+tab, can you hide it from there?"
+    //
+    // XAML's ShowInTaskbar="False" was already set and is NOT enough, which is worth spelling
+    // out because it looks like it should be. Measured on the running app: the bar's hwnd came
+    // back with ex-style 0x80008 (TOPMOST | LAYERED) and an owner -- the invisible "Hidden
+    // Window" WPF manufactures when ShowInTaskbar is false and there is no real Owner. That
+    // keeps it off the TASKBAR, and people assume owned windows are off Alt+Tab too, but the
+    // shell's rule is one step longer: it walks each visible window to its root owner, takes
+    // that owner's last active popup, and lists THAT if it is visible and not a tool window.
+    // Our owner is invisible and the bar is its last active popup, so the bar was listed on its
+    // own account. WS_EX_TOOLWINDOW is the flag that actually ends the argument -- it is the one
+    // condition in that rule we can set on ourselves.
+    //
+    // Harmless here for the two things it normally changes: a tool window gets a thin caption
+    // (we are WindowStyle="None", so there is none) and skips the taskbar (already skipped).
+    //
+    // OnSourceInitialized rather than the constructor because the hwnd does not exist until the
+    // HwndSource is created, and rather than App.OnStartup's EnsureHandle site because what a
+    // window is belongs to the window. It still lands before the first Show(): App calls
+    // EnsureHandle() on the bar to hand its handle to WindowMonitor.Ignore, and that call is
+    // what runs this.
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var ex = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE);
+        NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE,
+            ex | (nint)NativeMethods.WS_EX_TOOLWINDOW);
+    }
+
     // Petre: "i want it to be on top of the taskbar, if i activate the taskbar, it hides the
     // floating window. i'm using startallback start menu".
     //

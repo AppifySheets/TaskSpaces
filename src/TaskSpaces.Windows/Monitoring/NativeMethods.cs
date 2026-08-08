@@ -28,6 +28,14 @@ public static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(nint hwnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern nint GetWindowLongPtr(nint hwnd, int index);
+    // Petre: "i can see the taskspaces app in alt+tab, can you hide it from there?"
+    //
+    // The write half, used in exactly one place: FloatingBar stamps WS_EX_TOOLWINDOW on itself
+    // (see FloatingBar.OnSourceInitialized for why ShowInTaskbar="False" was not enough).
+    // EntryPoint is spelled out for the same reason GetClassLongPtr's is: the "Ptr" name is a
+    // real x64 export, and pinning it to the W variant keeps the resolution unambiguous.
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    public static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out int value, int size);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wparam, string lparam, uint flags, uint timeoutMs, out nint result);
