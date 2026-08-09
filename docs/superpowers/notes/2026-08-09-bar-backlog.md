@@ -9,6 +9,24 @@ built twice. Sequence reasoning is the point of this file; the asks themselves a
    `2026-08-09-hold-row-order-while-hovered-design.md`. Shipped, plus the two minimise bugs it
    surfaced (a minimised window could not be brought back; icons did not reliably dim).
 
+## What actually happened to the sequence
+
+Kept as written below, with the outcomes marked, because the reasoning was sound and the result
+still went sideways -- which is the useful part to remember.
+
+- **2 (#36) and 3 (#37) shipped** as designed.
+- **4 (#38) was built and scrapped.** Petre, having lived with it: "okay, it's pretty bad :) but
+  it is what it is, let's scrap it". Columns worked and the live switch worked; the arrangement
+  was simply worse to use than rows. The workspace NAMES are why -- rotated, stacked and flat were
+  all tried, and the first two are unreadable at a glance while the third makes every column as
+  wide as its name, which removes the reason to go vertical at all. All three roads end somewhere
+  worse than rows.
+- **5 (#39) therefore lost its dependency on 4** and was built straight after, against rows.
+- **6 (#40) is what remains.**
+
+The sequencing call itself was right for the wrong reason: 5 was held back so it would not be
+built twice, and what actually saved that work was 4 being abandoned.
+
 ## Sequenced
 
 2. **Resizable width, persisted.** Drag either side edge; the width is stored in

@@ -976,6 +976,97 @@ public partial class FloatingBar : Window
         // report an error into, and the next StateChanged pulse retries for free.
     }
 
+    // One line of a row's icons, with each monitor's group pushed to its own end.
+    //
+    // Petre: "if apps are separated by monitor, let them be aligned to the left and right, not all
+    // left... let the current width of the floating bar be as it is, apps on each monitor will be
+    // left and right aligned, hairline in the middle between them."
+    //
+    // A Grid rather than the StackPanel this used to be, with the groups in Auto columns and a
+    // STAR column between each pair. The star columns share whatever the icons do not use, which
+    // is what pushes the first group left and the last group right -- and generalises past two
+    // monitors on its own, since three groups simply get two gaps and come out evenly spread.
+    // There is no case here for "two monitors" as such, which is why none is written.
+    //
+    // The hairline moves INTO the gap and is centred there, which is the literal reading of "in
+    // the middle between them". It used to lead its group, so it sat hard against the left of the
+    // right-hand group and read as belonging to it rather than as dividing the two.
+    //
+    // The gap's MinWidth is what keeps a bar with no slack looking exactly as it does today: a
+    // star column will shrink below its content, so without it the mark would be clipped to
+    // nothing on a SizeToContent bar -- the very case that has no room to spare.
+    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons)
+    {
+        // Runs of consecutive icons that share a monitor. `opensGroup` already knows where each
+        // one starts -- it is the same set the wrap arithmetic budgets a marker for -- so this
+        // needs no second opinion about what a group is.
+        var runs = new List<List<WindowRow>>();
+        line.ToList().ForEach(r =>
+        {
+            if (runs.Count == 0 || opensGroup.Contains(r.Window.Handle)) runs.Add([]);
+            runs[^1].Add(r);
+        });
+
+        var grid = new Grid();
+
+        void AddColumn(UIElement child, GridLength width, double minWidth = 0)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width, MinWidth = minWidth });
+            Grid.SetColumn(child, grid.ColumnDefinitions.Count - 1);
+            grid.Children.Add(child);
+        }
+
+        runs.Select((run, index) => (run, index)).ToList().ForEach(entry =>
+        {
+            var (run, index) = entry;
+            var opens = opensGroup.Contains(run[0].Window.Handle);
+
+            // Every group but the first is preceded by a gap, and the gap carries the mark.
+            if (index > 0)
+                AddColumn(
+                    new Grid { Children = { MonitorMarker(run[0].MonitorRank.Value) }, HorizontalAlignment = HorizontalAlignment.Center },
+                    new GridLength(1, GridUnitType.Star),
+                    MonitorMarkerWidth);
+
+            // A line can BEGIN with a group that is not the leftmost monitor's -- Petre's
+            // BusinessOffer and Messaging rows, whose windows are all on the second screen.
+            //
+            // Petre: "businessoffer is on the second screen, should be aligned to the right", "as
+            // well as messaging". Right, and the first attempt got it wrong in a way worth
+            // recording: it aligned by a group's POSITION AMONG THE ROW'S GROUPS -- first one
+            // left, last one right -- so a row with a single group always landed left whichever
+            // screen it was on. That makes an icon's position mean "how many groups this row
+            // happens to have", which is not a fact about anything. Position has to mean WHICH
+            // SCREEN or it means nothing, and a row cannot be read against its neighbours.
+            //
+            // So a leading gap when the row does not start on the leftmost monitor, which pushes
+            // its groups towards the end they belong at. The mark stays INSIDE the group here
+            // rather than floating in that gap: with nothing to its left there is no boundary to
+            // draw, and a hairline stranded at the far end of an empty row reads as a stray dot
+            // rather than as "these are on screen two".
+            if (index == 0 && opens) AddColumn(new Border(), new GridLength(1, GridUnitType.Star));
+
+            var stack = new StackPanel { Orientation = Orientation.Horizontal };
+            if (index == 0 && opens) stack.Children.Add(MonitorMarker(run[0].MonitorRank.Value));
+
+            run.ForEach(r =>
+            {
+                var button = IconButton(groupLabel, groupKey, r);
+                iconButtons.Add(button);
+                stack.Children.Add(button);
+                // The window this row would restore focus to, remembered so the switch gesture
+                // can raise it to full strength while this row is the candidate (see
+                // ApplyCandidate). At most one per row: WillActivate marks a single window.
+                if (r.WillActivate && rowKey is { } landingKey && button is Button landing)
+                    rowLandingIcon[landingKey] = landing;
+            });
+
+            AddColumn(stack, GridLength.Auto);
+        });
+
+        return grid;
+    }
+
     // Task 11 fix round 5: a 1px, ~20%-opacity hairline between rows so adjacent
     // workspace groups read as visually distinct at a glance, without adding real
     // borders/backgrounds that would compete with the icons themselves.
@@ -1045,11 +1136,17 @@ public partial class FloatingBar : Window
         //
         // Centred vertically as a block, so a wrapped workspace keeps ONE label beside the
         // whole lane rather than one per line.
+        // Stretch, not Left, since the monitor groups align to the row's ENDS (#39) -- and the
+        // right-hand end has to be the bar's, not this row's own content width, or a row with few
+        // icons would push its second group to a different x than the row above it.
+        //
+        // Costs nothing on a bar that has no width of its own: SizeToContent makes the star column
+        // exactly as wide as the widest row, so stretching to it changes nothing anyone can see.
         var icons = new StackPanel
         {
             Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
 
         // Built BEFORE the icons, which it did not used to be. Once the bar has a width the user
@@ -1112,24 +1209,7 @@ public partial class FloatingBar : Window
             ? IconRowLimit.Lines(ordered)
             : IconRowLimit.LinesThatFit(ordered, r => IconCellWidth + (opensGroup.Contains(r.Window.Handle) ? MonitorMarkerWidth : 0), IconRoomOn(label));
 
-        lines.ToList().ForEach(line =>
-        {
-            var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
-            line.ToList().ForEach(r =>
-            {
-                if (opensGroup.Contains(r.Window.Handle)) linedUp.Children.Add(MonitorMarker(r.MonitorRank.Value));
-
-                var button = IconButton(groupLabel, groupKey, r);
-                iconButtons.Add(button);
-                linedUp.Children.Add(button);
-                // The window this row would restore focus to, remembered so the switch gesture
-                // can raise it to full strength while this row is the candidate (see
-                // ApplyCandidate). At most one per row: WillActivate marks a single window.
-                if (r.WillActivate && rowKey is { } landingKey && button is Button landing)
-                    rowLandingIcon[landingKey] = landing;
-            });
-            icons.Children.Add(linedUp);
-        });
+        lines.ToList().ForEach(line => icons.Children.Add(LineOf(line, opensGroup, groupLabel, groupKey, rowKey, iconButtons)));
         Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
 
@@ -1589,11 +1669,22 @@ public partial class FloatingBar : Window
         var pill = new Border
         {
             Child = textBlock,
-            Padding = new Thickness(5, 1, 5, 1),
+            // Petre: "white space between the right monitor tab and the caption of the workspace
+            // is too big", "narrow that whitespace", then "better, make is yet smaller".
+            //
+            // 11px of gutter (5 padding + 6 margin) down to 2, in two passes with him looking at
+            // each. It was invisible for as long as the icons were packed at the far left of the
+            // row, because the space before a caption was then whatever the row did not use;
+            // aligning the second monitor's group to the caption end (#39) put icons against it
+            // for the first time and made it the widest deliberate gap on the bar.
+            //
+            // "not zero, but half of what it is" -- so 2.5, literally half the 5 it had reached,
+            // and a fraction rather than a round 2 because on a 150% display it lands on a whole
+            // device pixel anyway. Not zero: the artwork runs to the edge of its 20px cell, so a
+            // name flush against it would touch the icon it sits beside.
+            Padding = new Thickness(2.5, 1, 5, 1),
             VerticalAlignment = VerticalAlignment.Center,
-            // 8 -> 6 on the left: the gutter still has to separate the label from the icons,
-            // but it was the widest single gap on the bar.
-            Margin = new Thickness(6, 0, 2, 0),
+            Margin = new Thickness(0, 0, 2, 0),
         };
 
         if (switchTo is null)
