@@ -609,7 +609,10 @@ public partial class FloatingBar : Window
     // rowKey: rowKey is null for unbound-desktop rows, and an unbound desktop IS the current
     // desktop on Petre's machine most of the time -- which makes it exactly the row that sorts by
     // z-order and therefore the one that needs holding.
-    (string Key, IReadOnlyList<WindowHandle> Order)? hoveredRow;
+    // RowKey rides along for the hover ring (#41): the freeze is keyed by groupKey, which every row
+    // has, while the rings are keyed by the workspace id, which only workspace rows have. Carrying
+    // both means the ring needs no second piece of hover state to drift out of step with this one.
+    (string Key, Guid? RowKey, IReadOnlyList<WindowHandle> Order)? hoveredRow;
 
     // The order to re-impose on this row, or nothing if it is not the hovered one.
     IReadOnlyList<WindowHandle> HeldOrder(string groupKey) =>
@@ -621,7 +624,7 @@ public partial class FloatingBar : Window
     // the pointer touched the very icons it exists to hold still.
     sealed record RowTag(string Key);
 
-    void EnterRow(string groupKey, IReadOnlyList<WindowRow> displayed)
+    void EnterRow(string groupKey, Guid? rowKey, IReadOnlyList<WindowRow> displayed)
     {
         // Re-entering the row we are already holding -- which happens every time a rebuild swaps
         // the container out from under a stationary pointer. Keeping the ORIGINAL snapshot
@@ -631,7 +634,11 @@ public partial class FloatingBar : Window
         if (hoveredRow is { } held && held.Key == groupKey) return;
 
         var wasHolding = hoveredRow is not null;
-        hoveredRow = (groupKey, RowOrderFreeze.Capture(displayed));
+        hoveredRow = (groupKey, rowKey, RowOrderFreeze.Capture(displayed));
+        // The hover ring (#41). Painted here rather than waiting for the rebuild below, because
+        // arriving from OUTSIDE the bar rebuilds nothing -- there is no previous row to re-sort --
+        // and that is the commonest way a row is entered.
+        ApplyCandidate();
         // A rebuild triggered by the POINTER rather than by a window event, which is new since
         // this bug was last looked at: moving from one row to another re-sorts the row just left.
         // If a click can be lost by arriving during that, this line will sit immediately before
@@ -1365,7 +1372,7 @@ public partial class FloatingBar : Window
         if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel);
 
         container.Tag = new RowTag(groupKey);
-        container.MouseEnter += (_, _) => EnterRow(groupKey, ordered);
+        container.MouseEnter += (_, _) => EnterRow(groupKey, rowKey, ordered);
         container.MouseLeave += (_, _) => LeaveRow(groupKey);
 
 
@@ -1583,9 +1590,27 @@ public partial class FloatingBar : Window
         // painting.
         UpdateFade();
 
+        // Petre: "hover over a workspace row shows the yellow ring the switcher uses" (#41).
+        //
+        // The SAME brush as the chord's candidate, deliberately, because it is the same claim in
+        // the same tense: "this is where you would land". The chord answers it for the keyboard,
+        // hover answers it for the mouse, and inventing a second colour would split one meaning in
+        // two.
+        //
+        // Precedence, and both halves of it matter:
+        //
+        //   * The CHORD outranks hover. While Win+Ctrl+Tab is held, exactly one row wears the ring
+        //     by design, and the pointer may be resting anywhere at all -- possibly on a different
+        //     row, which would then make two rows claim the same thing while only one of them is
+        //     true.
+        //   * Hover does NOT ring the row you are already on. Everywhere else the amber means
+        //     "you would land here", and on the current row that is a lie: clicking it goes
+        //     nowhere. The white "you are here" ring stays, which is the honest answer.
+        var hovered = candidate is null ? hoveredRow?.RowKey : null;
         rowRings.ToList().ForEach(row =>
             row.Value.BorderBrush = row.Key == candidate ? CandidateRowRing
                 : row.Key == currentRow ? CurrentRowRing
+                : row.Key == hovered ? CandidateRowRing
                 : Brushes.Transparent);
 
         // Petre: "when adding a ring to the next workspace, make the active window in it visible
