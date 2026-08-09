@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using CSharpFunctionalExtensions;
@@ -81,5 +82,67 @@ public static class UpdateService
         {
             return Result.Failure<Maybe<ReleaseInfo>>(e.Message);
         }
+    }
+
+    // Petre: "it needs to download the new release next to the current executable... if i do, then
+    // it should download the new one and restart to the new one."
+    //
+    // NEXT TO the running exe, never over it. The app is portable and updating it means gaining a
+    // second file, not losing the first: the running exe cannot be replaced while it is running
+    // anyway, and a user who dislikes the new version still has the old one sitting beside it.
+    //
+    // Returns the path of the downloaded file.
+    public static async Task<Result<string>> DownloadAsync(ReleaseInfo release, CancellationToken cancel = default)
+    {
+        if (release.AssetName is null || !UpdateCheck.IsDownloadable(release.AssetUrl))
+            return Result.Failure<string>("this release has no downloadable executable");
+
+        // Re-checked here rather than trusted because it came from ReadRelease. The value has
+        // travelled through a UI layer to get here, and the cost of being wrong is running a
+        // binary from wherever the payload said.
+        if (Path.GetDirectoryName(Environment.ProcessPath) is not { } folder)
+            return Result.Failure<string>("cannot work out where this executable lives");
+
+        var target = Path.Combine(folder, release.AssetName);
+
+        // Downloaded to a PART FILE and moved into place only once it is complete. A half-written
+        // exe left by a dropped connection would otherwise sit there looking exactly like a
+        // finished one, and the next thing this flow does is execute it.
+        var partial = target + ".part";
+
+        try
+        {
+            using (var response = await Client.GetAsync(release.AssetUrl, HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false))
+            {
+                if (!response.IsSuccessStatusCode)
+                    return Result.Failure<string>($"download returned {(int)response.StatusCode}");
+
+                // Streamed rather than buffered: the asset is ~75 MB, and ReadAsByteArrayAsync
+                // would hold all of it in memory before a byte reaches disk.
+                await using var source = await response.Content.ReadAsStreamAsync(cancel).ConfigureAwait(false);
+                await using var file = File.Create(partial);
+                await source.CopyToAsync(file, cancel).ConfigureAwait(false);
+            }
+
+            // Overwrites a previous download of the same version -- someone who declined the
+            // restart last time should not accumulate a folder of identical exes.
+            File.Move(partial, target, overwrite: true);
+            return target;
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        {
+            // The portable case is a user folder and writable; the read-only case is an exe in
+            // Program Files, where this is the expected outcome rather than a fault. Either way the
+            // caller falls back to the release page.
+            Cleanup(partial);
+            return Result.Failure<string>(e.Message);
+        }
+    }
+
+    static void Cleanup(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { /* a leftover .part is untidy, not harmful, and never executed */ }
+        catch (UnauthorizedAccessException) { }
     }
 }

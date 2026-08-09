@@ -97,12 +97,133 @@ public partial class App : Application
 
         // ConfigureAwait(true) above put us back on the dispatcher, which both of these need.
         trayIcon!.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp,
-            ($"Update available: {release.Version}", () => OpenReleasePage(release)));
+            ($"Update to {release.Version}…", () => OfferUpdate(release)));
 
         trayIcon.ShowNotification(
             title: $"TaskSpaces {release.Version} is available",
-            message: $"You are running {UpdateService.RunningVersion}. Right-click the tray icon to open the download page.");
+            message: $"You are running {UpdateService.RunningVersion}. Click here to update.");
     }
+
+    // Petre: "i clicked it, it disappeared."
+    //
+    // He clicked the balloon and nothing happened, because nothing was listening: only the tray
+    // MENU item did anything, and a notification that says "click here" and then does not is worse
+    // than one that says nothing. Wired once, at startup, rather than per notification -- WPF
+    // routed-event handlers accumulate, and re-adding one on every check would fire the flow twice
+    // after the second check, three times after the third.
+    //
+    // `availableUpdate` rather than a captured release: the click arrives long after the check, and
+    // the field is the one that is still current.
+    void OnUpdateNotificationClicked()
+    {
+        if (availableUpdate is { } release) OfferUpdate(release);
+    }
+
+    // Petre: "it should just tell me -- new version available, do you want to update? if i do, then
+    // it should download the new one and restart to the new one."
+    //
+    // ONE question, not three. An earlier shape asked to download, then asked again whether to
+    // restart; that is two dialogs for a decision the user already made by saying yes.
+    void OfferUpdate(ReleaseInfo release)
+    {
+        // A release with no exe attached can still be looked at, which is what the link is for.
+        // Reached when a build was published without its artifact, or when the asset failed the
+        // github.com/https checks in UpdateCheck.
+        if (release.AssetName is null)
+        {
+            if (MessageBox.Show(
+                    $"TaskSpaces {release.Version} is available, but this release has no downloadable executable.\n\nOpen the release page?",
+                    "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                OpenReleasePage(release);
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            $"TaskSpaces {release.Version} is available. You are running {UpdateService.RunningVersion}.\n\n" +
+            $"Download it next to the current program and restart into it?\n\n" +
+            $"The version you are running now is kept, not replaced.",
+            "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+        if (answer == MessageBoxResult.Yes) DownloadAndRestart(release);
+    }
+
+    // Downloads, then starts the new exe and stands down.
+    //
+    // `async void` for the same reason as the check: this is the end of an event, and there is no
+    // caller to hand a Task to.
+    async void DownloadAndRestart(ReleaseInfo release)
+    {
+        // The only progress there is room for. A ~75 MB download takes long enough that a tray icon
+        // saying nothing looks like a click that did nothing -- which is the exact complaint that
+        // started this. A real progress window would need cancellation, a percentage and a place to
+        // live, and this is a once-a-release wait.
+        var wasTip = trayIcon!.ToolTipText;
+        trayIcon.ToolTipText = $"TaskSpaces — downloading {release.Version}…";
+
+        var downloaded = await UpdateService.DownloadAsync(release).ConfigureAwait(true);
+
+        trayIcon.ToolTipText = wasTip;
+
+        if (downloaded.IsFailure)
+        {
+            // Told, not swallowed: unlike the background check, the user asked for this and is
+            // waiting on it. The page is the way through -- the commonest cause is a folder this
+            // process cannot write to, and downloading by hand works fine.
+            if (MessageBox.Show(
+                    $"Could not download {release.Version}:\n{downloaded.Error}\n\nOpen the release page instead?",
+                    "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+                OpenReleasePage(release);
+            return;
+        }
+
+        // RELEASED BEFORE the new process starts, and this is the part that makes the handover work
+        // at all. Both instances exist for a moment, and the single-instance guard is the first
+        // thing the new one runs -- so a mutex still held here means the new version says
+        // "TaskSpaces is already running" and quits, leaving the user on the old one with no clue
+        // why the update did nothing.
+        //
+        // Letting go here rather than relying on the switch below is deliberate: the switch only
+        // helps if the version being STARTED understands it, and versions already published do not.
+        // Releasing first works whatever we are starting.
+        //
+        // The gap where nobody holds it is a few milliseconds during which a third copy could
+        // start. That needs someone to double-click the exe inside that window, and the cost is the
+        // "already running" dialog they would have got anyway.
+        if (singleInstance is { } held)
+        {
+            held.ReleaseMutex();
+            held.Dispose();
+            singleInstance = null;
+        }
+
+        try
+        {
+            // Belt and braces to the release above: a build that understands this switch will also
+            // WAIT for the previous instance rather than trusting the timing (see OnStartup). Both
+            // together mean the handover survives a slow shutdown and an old binary alike.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(downloaded.Value)
+            {
+                UseShellExecute = true,
+                Arguments = AwaitPreviousSwitch,
+            });
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(
+                $"Downloaded to:\n{downloaded.Value}\n\nbut could not start it:\n{e.Message}\n\nYou can run it yourself.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Stand down so the new instance can take the mutex. Shutdown rather than Environment.Exit:
+        // the ordinary exit path restores every renamed window title and disposes the tray icon,
+        // and skipping it would leave the user's windows wearing names we gave them.
+        Shutdown();
+    }
+
+    // Passed by an updating instance to the version it starts. A switch rather than a file or an
+    // environment variable because it has to survive exactly one process boundary and nothing else.
+    const string AwaitPreviousSwitch = "--await-previous";
 
     // UseShellExecute is what makes this open a BROWSER rather than trying to execute the string.
     // The url is already known to be http(s) -- UpdateCheck refuses a release whose html_url is
@@ -159,6 +280,33 @@ public partial class App : Application
         ClickTrace.Announce();
 
         singleInstance = new System.Threading.Mutex(initiallyOwned: true, @"Local\TaskSpaces.SingleInstance", out var isOnlyInstance);
+
+        // The other half of "restart into the new version" (#71). The old instance starts this one
+        // and then shuts down, so for a moment BOTH exist and the mutex is still held by the
+        // process on its way out -- which the guard below would report as "TaskSpaces is already
+        // running", leaving the user with the old version and a confusing dialog.
+        //
+        // So a build started by an update waits for the previous one to let go, instead of giving
+        // up on the first try. Only ever with this switch: an ordinary double-click still gets the
+        // immediate answer, because there the other instance is not going anywhere.
+        //
+        // Ten seconds is a shutdown, not a download -- the old instance has already finished
+        // fetching by the time it starts this one, and all it has left to do is dispose a tray icon
+        // and restore window titles.
+        if (!isOnlyInstance && e.Args.Contains(AwaitPreviousSwitch))
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!isOnlyInstance && DateTime.UtcNow < deadline)
+            {
+                // Disposed and re-created rather than waited on: this process never owned the
+                // mutex, and WaitOne on a mutex owned by a process that dies would hand back an
+                // abandoned-mutex exception rather than a clean acquisition.
+                singleInstance.Dispose();
+                System.Threading.Thread.Sleep(250);
+                singleInstance = new System.Threading.Mutex(initiallyOwned: true, @"Local\TaskSpaces.SingleInstance", out isOnlyInstance);
+            }
+        }
+
         if (!isOnlyInstance)
         {
             // Told, not silently exited: a portable exe that appears to do nothing when
@@ -295,6 +443,11 @@ public partial class App : Application
         // the process under EcoQoS throttling, and we need WinEvent callbacks handled
         // promptly to re-apply renames and route new windows without visible lag.
         trayIcon.ForceCreate(enablesEfficiencyMode: false);
+
+        // Clicking the notification is what a notification saying "click here to update" has to do.
+        // Subscribed ONCE, here, rather than alongside each ShowNotification: routed-event handlers
+        // accumulate, so re-adding it per check would run the flow twice after the second check.
+        trayIcon.TrayBalloonTipClicked += (_, _) => OnUpdateNotificationClicked();
 
         // AFTER ForceCreate, necessarily: a balloon needs a registered shell icon to come out of,
         // and announcing an update into a tray icon that does not exist yet is a silent no-op.

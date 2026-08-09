@@ -69,10 +69,43 @@ public class UpdateCheckTests
           "tag_name": "v1.7.0",
           "html_url": "https://github.com/AppifySheets/TaskSpaces/releases/tag/v1.7.0",
           "assets": [
-            { "name": "TaskSpaces-1.7.0.exe", "browser_download_url": "https://example.invalid/TaskSpaces-1.7.0.exe" }
+            { "name": "TaskSpaces-1.7.0.exe", "browser_download_url": "https://github.com/AppifySheets/TaskSpaces/releases/download/v1.7.0/TaskSpaces-1.7.0.exe" }
           ]
         }
         """;
+
+    // The asset url is held to a higher standard than the page url, because they are used
+    // differently: the page goes to a browser, the asset is downloaded and then EXECUTED. Anything
+    // that is not GitHub over https is dropped -- otherwise a release payload could point this app
+    // at any binary on the internet and have it fetched and run.
+    [Theory]
+    [InlineData("https://example.invalid/TaskSpaces.exe")]
+    [InlineData("http://github.com/AppifySheets/TaskSpaces/x.exe")]   // http, not https
+    [InlineData("https://github.com.evil.invalid/x.exe")]             // suffix trick
+    [InlineData("https://notgithub.com/x.exe")]
+    public void An_asset_hosted_anywhere_but_github_is_dropped(string url)
+    {
+        var release = UpdateCheck.ReadRelease($$"""
+            {
+              "tag_name": "v1.7.0",
+              "html_url": "https://github.com/AppifySheets/TaskSpaces/releases/tag/v1.7.0",
+              "assets": [ { "name": "TaskSpaces.exe", "browser_download_url": "{{url}}" } ]
+            }
+            """);
+
+        Assert.True(release.IsSuccess);
+        Assert.Null(release.Value.AssetUrl);
+        Assert.False(UpdateCheck.IsDownloadable(url));
+    }
+
+    // github.com is where browser_download_url points; *.githubusercontent.com is where it
+    // REDIRECTS. A downloader that follows redirects has to accept both or it would refuse the
+    // very file it was sent to.
+    [Theory]
+    [InlineData("https://github.com/AppifySheets/TaskSpaces/releases/download/v1.7.0/x.exe")]
+    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/x.exe")]
+    public void Github_and_its_redirect_target_are_both_downloadable(string url) =>
+        Assert.True(UpdateCheck.IsDownloadable(url));
 
     [Fact]
     public void A_release_yields_its_version_page_and_exe()
@@ -83,7 +116,7 @@ public class UpdateCheckTests
         Assert.Equal("v1.7.0", release.Value.Version);
         Assert.Equal("https://github.com/AppifySheets/TaskSpaces/releases/tag/v1.7.0", release.Value.PageUrl);
         Assert.Equal("TaskSpaces-1.7.0.exe", release.Value.AssetName);
-        Assert.Equal("https://example.invalid/TaskSpaces-1.7.0.exe", release.Value.AssetUrl);
+        Assert.Equal("https://github.com/AppifySheets/TaskSpaces/releases/download/v1.7.0/TaskSpaces-1.7.0.exe", release.Value.AssetUrl);
     }
 
     // The app is portable -- one exe -- so the exe IS the download. A release carrying only
@@ -116,8 +149,8 @@ public class UpdateCheckTests
               "tag_name": "v1.7.0",
               "html_url": "https://example.invalid/tag/v1.7.0",
               "assets": [
-                { "name": "TaskSpaces-x64.exe", "browser_download_url": "https://example.invalid/x64.exe" },
-                { "name": "TaskSpaces-arm64.exe", "browser_download_url": "https://example.invalid/arm64.exe" }
+                { "name": "TaskSpaces-x64.exe", "browser_download_url": "https://github.com/AppifySheets/TaskSpaces/releases/download/v1.7.0/x64.exe" },
+                { "name": "TaskSpaces-arm64.exe", "browser_download_url": "https://github.com/AppifySheets/TaskSpaces/releases/download/v1.7.0/arm64.exe" }
               ]
             }
             """);
@@ -181,7 +214,7 @@ public class UpdateCheckTests
             {
               "tag_name": "v1.7.0",
               "html_url": "https://example.invalid/tag/v1.7.0",
-              "assets": [ { "name": "{{encoded}}", "browser_download_url": "https://example.invalid/x.exe" } ]
+              "assets": [ { "name": "{{encoded}}", "browser_download_url": "https://github.com/AppifySheets/TaskSpaces/releases/download/v1.7.0/x.exe" } ]
             }
             """);
 

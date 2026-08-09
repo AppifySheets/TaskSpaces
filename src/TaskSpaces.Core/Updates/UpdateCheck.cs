@@ -112,11 +112,32 @@ public static class UpdateCheck
     // that can name something to execute, so both are checked HERE, where it is testable, rather
     // than at the call sites where one would eventually be forgotten.
     static bool IsSafeAsset(string? name, string? url) =>
-        name is not null && url is not null && IsHttp(url) && IsBareFileName(name);
+        name is not null && url is not null && IsGitHubDownload(url) && IsBareFileName(name);
 
     static bool IsHttp(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri)
         && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+
+    // The asset url is held to a higher standard than the page url, because they are used
+    // differently: the page is handed to a browser, while THIS one is downloaded and then
+    // executed. So it must be https and it must be GitHub.
+    //
+    // Not paranoia about GitHub itself -- it is where the release came from -- but about the
+    // release payload being able to point the download anywhere at all. A tag whose asset url
+    // said "https://example.invalid/x.exe" would otherwise have this app fetch and run it.
+    //
+    // github.com is where browser_download_url points; the *.githubusercontent.com hosts are where
+    // it REDIRECTS, so both have to be acceptable or a redirect-following download would refuse
+    // the file it was sent to.
+    static bool IsGitHubDownload(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps
+        && (uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+            || uri.Host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase));
+
+    // Public so the downloader can re-check the url it is about to follow rather than trusting that
+    // it came from here unmodified.
+    public static bool IsDownloadable(string? url) => url is not null && IsGitHubDownload(url);
 
     // A name and nothing else: no directory part, no drive, no traversal. The download lands
     // BESIDE the running exe, so a name carrying "..\..\" would choose where.
