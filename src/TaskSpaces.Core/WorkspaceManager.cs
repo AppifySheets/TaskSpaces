@@ -720,6 +720,23 @@ public sealed class WorkspaceManager(
             })),
         };
 
+    // Petre: "minimized workspace rows: right-click to shrink a row to a third of its height",
+    // and "the right-click menu on a minimized row offers Unminimize to restore it".
+    //
+    // Presentational, like the active-window highlight and unlike most of its neighbours here: it
+    // changes how tall a row is DRAWN and nothing else. Membership, placement and the roster are
+    // untouched, and a minimized workspace is still switched to, dropped on and walked by the
+    // chord exactly as before.
+    //
+    // Idempotent by construction -- setting it to what it already is still persists and pulses,
+    // which costs one redraw and saves a special case that could only ever fire on a menu click
+    // nobody makes twice.
+    public Result SetWorkspaceMinimized(Guid id, bool minimized) =>
+        Workspace(id).Tap(_ => Persist(State with
+        {
+            Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Minimized = minimized } : w).ToList(),
+        }));
+
     IReadOnlyList<Workspace> Repositioned(int from, int to)
     {
         var reordered = State.Workspaces.ToList();

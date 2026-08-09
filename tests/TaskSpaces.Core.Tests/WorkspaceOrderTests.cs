@@ -103,6 +103,62 @@ public class WorkspaceOrderTests
         Assert.Equal(boundBefore, manager.State.Workspaces.Single(w => w.Id == second).DesktopId);
     }
 
+    // --- minimized rows (#52) ---------------------------------------------------------------
+    //
+    // Petre: "minimized workspace rows: right-click to shrink a row to a third of its height."
+    // How SMALL is the bar's business; that it survives a restart and disturbs nothing else is
+    // this layer's.
+
+    [Fact]
+    public void A_workspace_starts_un_minimized() =>
+        Assert.DoesNotContain(Started().manager.State.Workspaces, w => w.Minimized);
+
+    [Fact]
+    public void Minimizing_a_workspace_persists_and_pulses()
+    {
+        var (manager, _, second, _) = Started();
+        var savesBefore = store.SaveCount;
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        Assert.True(manager.SetWorkspaceMinimized(second, true).IsSuccess);
+
+        Assert.True(manager.State.Workspaces.Single(w => w.Id == second).Minimized);
+        Assert.True(store.Stored.Workspaces.Single(w => w.Id == second).Minimized);
+        Assert.Equal(savesBefore + 1, store.SaveCount);
+        Assert.Equal(1, pulses);
+    }
+
+    [Fact]
+    public void Restoring_a_workspace_undoes_it()
+    {
+        var (manager, _, second, _) = Started();
+        Assert.True(manager.SetWorkspaceMinimized(second, true).IsSuccess);
+
+        Assert.True(manager.SetWorkspaceMinimized(second, false).IsSuccess);
+
+        Assert.False(manager.State.Workspaces.Single(w => w.Id == second).Minimized);
+    }
+
+    // Presentational and nothing more: a minimized workspace keeps its name, its place in the
+    // order and -- the one that would actually lose windows -- its bound desktop.
+    [Fact]
+    public void Minimizing_changes_nothing_but_the_flag()
+    {
+        var (manager, _, second, _) = Started();
+        var before = manager.State.Workspaces.Single(w => w.Id == second);
+
+        Assert.True(manager.SetWorkspaceMinimized(second, true).IsSuccess);
+
+        var after = manager.State.Workspaces.Single(w => w.Id == second);
+        Assert.Equal(before with { Minimized = true }, after);
+        Assert.Equal(["GEPHA", "Sparrow", "TaskSpace"], NamesOf(manager));
+    }
+
+    [Fact]
+    public void Minimizing_an_unknown_workspace_fails() =>
+        Assert.True(Started().manager.SetWorkspaceMinimized(Guid.NewGuid(), true).IsFailure);
+
     // --- move to top / move to end (#40) ----------------------------------------------------
     //
     // Petre: "menu options: add move to the end and to the top."

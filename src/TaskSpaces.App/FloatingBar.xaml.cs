@@ -1058,7 +1058,8 @@ public partial class FloatingBar : Window
                     onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
                     g.Running,
                     tint: LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)),
-                    rowKey: g.Workspace.Id));
+                    rowKey: g.Workspace.Id,
+                    minimized: g.Workspace.Minimized));
                 });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
@@ -1228,7 +1229,23 @@ public partial class FloatingBar : Window
     // rowKey identifies this row to the switch gesture (see rowRings). Null for rows the chord
     // can never land on: 📌 Pinned, "Unplaced", and unbound desktops -- the chord walks
     // WORKSPACES, so only those need to be repaintable.
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null)
+    // Petre: "a minimized row is about a third of the regular row height... everything still works
+    // in that state -- clicks, drags, highlights -- it is just tiny, icons included."
+    //
+    // A LayoutTransform on the whole row, which is what makes "everything still works" true for
+    // free: hit testing, drag-and-drop and the rings all go through the same transform as the
+    // pixels, so nothing needs a second, scaled-down implementation. It is also the reason this is
+    // a transform rather than smaller icons and fonts -- that would be a second layout to keep in
+    // step with the first, forever.
+    //
+    // LayoutTransform, not RenderTransform, for the third time in this file and the same reason
+    // each time: only a layout transform is part of MEASURE, so the row genuinely occupies a third
+    // of the height rather than painting small inside a full-size slot. The row still spans the
+    // bar's full width, because the transform scales the space it is given as well as what it
+    // draws there.
+    const double MinimizedRowScale = 1.0 / 3;
+
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -1369,7 +1386,11 @@ public partial class FloatingBar : Window
         // the menu of the INNERMOST element that has one, which is exactly the right split:
         // right-clicking an icon is about that window, right-clicking anywhere else on the row is
         // about the workspace.
-        if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel);
+        if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel, minimized);
+
+        // A third of the height, everything included (#52). Applied to the whole row and applied
+        // LAST, so nothing built above has to know it is being drawn small.
+        if (minimized) container.LayoutTransform = new ScaleTransform(MinimizedRowScale, MinimizedRowScale);
 
         container.Tag = new RowTag(groupKey);
         container.MouseEnter += (_, _) => EnterRow(groupKey, rowKey, ordered);
@@ -2442,7 +2463,7 @@ public partial class FloatingBar : Window
     // Deliberately NOT here: Remove. It is the one item that cannot be undone, this menu now opens
     // on a click that used to do nothing, and a mis-aimed right-click landing on "Remove
     // workspace" is a bad way to find that out. Manage still has it.
-    ContextMenu WorkspaceMenu(Guid workspaceId, string name)
+    ContextMenu WorkspaceMenu(Guid workspaceId, string name, bool minimized)
     {
         var menu = new ContextMenu();
         HoldFadeWhileOpen(menu);
@@ -2474,6 +2495,18 @@ public partial class FloatingBar : Window
         // one past it, and InsertWorkspace clamps both.
         Add("✚", "Insert before…", () => InsertAt(IndexOf()));
         Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1));
+
+        menu.Items.Add(new Separator());
+
+        // Petre: "a minimized row is about a third of the regular row height... the right-click
+        // menu on a minimized row offers Unminimize to restore it."
+        //
+        // One item that flips rather than two that argue: a row is one or the other, and a menu
+        // offering "Minimize" on an already-minimized row would be asking a question the row has
+        // already answered. `minimized` comes from the row this menu was built for, and rows are
+        // rebuilt whenever state changes, so it cannot go stale in a way the user could reach.
+        Add(minimized ? "⊞" : "⊖", minimized ? "Restore row height" : "Minimize row",
+            () => Report(manager.SetWorkspaceMinimized(workspaceId, !minimized)));
 
         menu.Items.Add(new Separator());
 
