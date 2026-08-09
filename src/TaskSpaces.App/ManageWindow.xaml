@@ -70,6 +70,26 @@
                     </StackPanel>
                 </DockPanel>
             </TabItem>
+            <!-- Petre: "vertical arrangement, rows as columns, configurable in the settings."
+                 A tab of its own rather than a corner of Shortcuts: that tab is about chords the
+                 app takes from the whole system, which is a different kind of setting from how
+                 the bar looks, and the bar has other knobs (scale, idle opacity) still living in
+                 state.json that belong here as they surface. -->
+            <TabItem Header="Bar">
+                <DockPanel Margin="8">
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock Text="Arrangement" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,8"
+                                   Text="How the bar lays out its workspaces. Rows stack downwards and icons run across them; columns stack across and icons run down, which suits a bar parked against the side of a screen. Applies immediately."/>
+                        <RadioButton x:Name="ArrangementRows" GroupName="Arrangement" Margin="0,2,0,2"
+                                     Content="Rows — icons across, workspaces down" Checked="OnArrangementChosen"/>
+                        <RadioButton x:Name="ArrangementColumns" GroupName="Arrangement" Margin="0,2,0,2"
+                                     Content="Columns — icons down, workspaces across" Checked="OnArrangementChosen"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,10,0,0"
+                                   Text="Workspace names rotate to run down a column, so the bar stays as slim as its icons. Drag either end of the bar to set how far it runs before icons wrap onto another line — the width in rows, the height in columns. Each arrangement remembers its own."/>
+                    </StackPanel>
+                </DockPanel>
+            </TabItem>
             <TabItem Header="Rules">
                 <DockPanel Margin="8">
                     <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"

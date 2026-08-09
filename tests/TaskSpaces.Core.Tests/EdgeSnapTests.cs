@@ -85,4 +85,31 @@ public class EdgeSnapTests
         Assert.Equal(-1920, EdgeSnap.Snap(-1920 + 5, 5, BarW, BarH, -1920, 0, -920, H).Left);
         Assert.False(EdgeSnap.GrowsLeftwards(left: -1920, workAreaLeft: -1920));
     }
+
+    // --- the vertical twin (#38) ------------------------------------------------------------
+    //
+    // Only width growth was ever anchored, which was defensible while a group was always a ROW: a
+    // new window widens one and only occasionally adds another. Columns invert that -- every new
+    // window makes a column taller -- and the bar's home is the bottom-right corner, so unanchored
+    // height growth walks it off the bottom of the screen.
+
+    [Fact]
+    public void Snapped_to_the_top_edge_it_grows_downwards() =>
+        Assert.False(EdgeSnap.GrowsUpwards(top: 0, workAreaTop: 0));
+
+    [Fact]
+    public void Snapped_to_the_bottom_edge_it_grows_upwards() =>
+        Assert.True(EdgeSnap.GrowsUpwards(top: H - BarH, workAreaTop: 0));
+
+    // The ordinary case, and the same answer its horizontal twin gives: floating in open space it
+    // grows upwards, because the bottom-right corner is where the bar lives.
+    [Fact]
+    public void Floating_in_open_space_it_grows_upwards() =>
+        Assert.True(EdgeSnap.GrowsUpwards(top: 300, workAreaTop: 0));
+
+    // A taskbar at the top of the screen puts the work area's top below zero-equivalent, so "at
+    // the top" is a work-area fact and never a screen one.
+    [Fact]
+    public void The_top_of_the_work_area_is_what_counts_not_the_top_of_the_screen() =>
+        Assert.False(EdgeSnap.GrowsUpwards(top: 48, workAreaTop: 48));
 }

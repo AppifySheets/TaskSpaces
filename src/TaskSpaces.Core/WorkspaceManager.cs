@@ -723,6 +723,17 @@ public sealed class WorkspaceManager(
         return Result.Success();
     }
 
+    // Petre: "vertical arrangement, rows as columns, configurable in the settings."
+    //
+    // Persist pulses stateChanged, and that pulse IS the live switch: the bar rebuilds on it like
+    // it does for every other change, and re-reads the arrangement while doing so. Nothing here
+    // has to know the bar exists, which is what keeps a layout decision out of the manager.
+    public Result SetBarArrangement(BarArrangement arrangement)
+    {
+        Persist(State with { BarArrangement = arrangement });
+        return Result.Success();
+    }
+
     public Result AssignWindow(WindowHandle window, Guid workspaceId) =>
         knownWindows.TryGetValue(window, out var info)
             // Explicitly moving a pinned window to ONE workspace is a statement that it

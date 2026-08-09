@@ -39,6 +39,15 @@ public sealed record AppState(
     // "never fade", so no separate on/off flag is needed.
     public double? BarIdleOpacity { get; init; }
 
+    // Petre: "vertical arrangement, rows as columns, configurable in the settings."
+    //
+    // Not nullable, unlike its neighbours above, and the difference is deliberate: those are
+    // numbers whose sensible default has to be supplied by a clamp that also has to survive a
+    // hand-edited file, while this has exactly two valid values and one of them IS the historical
+    // behaviour. An older state.json with no such key deserializes to Horizontal, which is what
+    // the bar has always done -- so the no-migration promise holds without a Maybe in sight.
+    public BarArrangement BarArrangement { get; init; } = BarArrangement.Horizontal;
+
     // The two placements the Inventory above cannot express (Petre: "last placement IS the
     // rule"). Inventory already records identity -> workspace on every Place(), but a
     // PINNED window belongs to no single workspace and a DETACHED one belongs to none at
@@ -123,4 +132,25 @@ public sealed record FloatingBarState(double Left, double Top, bool Visible)
     // Window.Width on the next start. Changing the scale therefore keeps the bar the same size on
     // screen rather than rescaling a number that was chosen by eye at the old scale.
     public double? Width { get; init; }
+
+    // The same value for the other orientation (#38): in a vertical bar the dimension that decides
+    // where a column wraps is the HEIGHT, so that is what the user drags there.
+    //
+    // Stored separately rather than as one "size along the wrapping axis", because a number chosen
+    // by eye against a row of icons means nothing against a column of them -- switching
+    // orientation would inherit a width as a height and land somewhere absurd. Two keys cost
+    // nothing and let each orientation remember what it was actually given.
+    public double? Height { get; init; }
+
+    // The vertical twin of Right, and it becomes load-bearing with the column arrangement (#38).
+    //
+    // Right exists because a horizontal bar's WIDTH follows its content, so the right edge is what
+    // a restore has to reproduce. A vertical bar's HEIGHT follows its content for exactly the same
+    // reason -- every window added to a column makes it taller -- and the bar's home is the
+    // bottom-right corner, so restoring Top instead would let the bottom edge land wherever this
+    // session's content reaches, which is off the screen.
+    //
+    // Init property with no default, so files written before this key load as null, which
+    // PositionFromState reads as "fall back to Top".
+    public double? Bottom { get; init; }
 }

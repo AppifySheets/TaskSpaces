@@ -66,6 +66,34 @@ public partial class ManageWindow : Window
         // BOUND -- including the fallback to the default when state.json holds something
         // unusable. Assigning Text raises TextChanged, which validates it for free.
         SwitcherShortcutBox.Text = manager.SwitcherShortcut;
+
+        // Checking a RadioButton raises Checked, which is the handler that PERSISTS -- so a reload
+        // would write the value it has just read back, and every Reload (there is one after each
+        // rules save, workspace add, rename...) would pulse the bar for nothing. The guard makes
+        // the assignment silent, leaving the handler to mean only what it says: the user clicked.
+        reloadingArrangement = true;
+        ArrangementRows.IsChecked = manager.State.BarArrangement == BarArrangement.Horizontal;
+        ArrangementColumns.IsChecked = manager.State.BarArrangement == BarArrangement.Vertical;
+        reloadingArrangement = false;
+    }
+
+    // --- Bar tab --------------------------------------------------------------------------
+    // Petre: "vertical arrangement, rows as columns, configurable in the settings."
+
+    bool reloadingArrangement;
+
+    // Applies immediately, with no Apply button and nothing else to press: SetBarArrangement
+    // persists and pulses StateChanged, the bar rebuilds on that pulse and re-reads the
+    // arrangement while doing it. Choosing a layout is a look-at-it decision, so the answer has to
+    // be on screen before the mouse has left the radio button.
+    //
+    // No Reload() afterwards either, unlike the shortcut handlers: nothing else on this window
+    // shows the arrangement, and reloading would only re-assign the box that was just clicked.
+    void OnArrangementChosen(object s, RoutedEventArgs e)
+    {
+        if (reloadingArrangement) return;
+        Report(manager.SetBarArrangement(
+            ArrangementColumns.IsChecked == true ? BarArrangement.Vertical : BarArrangement.Horizontal).Map(() => true));
     }
 
     // --- Shortcuts tab ------------------------------------------------------------------

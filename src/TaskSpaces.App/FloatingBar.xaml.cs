@@ -69,7 +69,7 @@ public partial class FloatingBar : Window
         //
         // Clamped on the way in rather than trusted: state.json is hand-editable, and a width
         // below the info line's own would clip it with no way to drag it back.
-        if (manager.State.FloatingBar?.Width is { } stored) ApplyWidth(Math.Max(MinimumWidth, stored));
+        ApplyStoredSize();
 
         // Starts dim, because at startup the pointer is wherever the user left it and almost never
         // on a bar that has just appeared. Waiting for the first MouseLeave instead would show a
@@ -330,7 +330,11 @@ public partial class FloatingBar : Window
         if (ResizeSideAt(e.GetPosition(this)) is { } side)
         {
             NativeMethods.GetCursorPos(out var cursor);
-            resizing = (side, cursor.X, Width, Left);
+            // ActualWidth/ActualHeight rather than Width/Height: the first drag of a bar that has
+            // never been sized starts from NaN, and every arithmetic result from NaN is NaN.
+            resizing = Vertical
+                ? (side, cursor.Y, ActualHeight, Top)
+                : (side, cursor.X, ActualWidth, Left);
             // `moving` suppresses BOTH the 1s topmost re-assert and OnSizeChanged's growth
             // anchor. The anchor is the one that matters: it exists to hold the right edge still
             // while the bar grows, which is precisely what a left-edge resize must be allowed to
@@ -557,7 +561,30 @@ public partial class FloatingBar : Window
         return null;
     }
 
-    // --- resizing the bar's width ---------------------------------------------------
+    // --- which way round the bar is ---------------------------------------------------
+    //
+    // Petre: "vertical arrangement, rows as columns, configurable in the settings."
+    //
+    // Read from state on every rebuild rather than captured at construction, because the setting
+    // applies LIVE: Manage calls SetBarArrangement, that persists and pulses stateChanged, and the
+    // bar's existing subscription rebuilds on the pulse. Nothing new carries the message.
+    //
+    // Everything downstream asks this one property rather than keeping its own copy, so there is
+    // no second place for the two orientations to disagree.
+    bool Vertical => manager.State.BarArrangement == BarArrangement.Vertical;
+
+    // What the WINDOW has actually been set up for, as against what state now says. Null until the
+    // first build, so the first pass always applies -- including the ctor's, which is what puts the
+    // bar into its stored arrangement before anything is drawn.
+    BarArrangement? appliedArrangement;
+
+    // The dimension a wrap is measured against, and therefore the one the user drags: WIDTH decides
+    // where a row breaks, HEIGHT decides where a column does. Everything about resizing is written
+    // in terms of these two rather than of width, which is what lets one implementation serve both
+    // orientations instead of two that have to be kept in step.
+    double ChosenSize => Vertical ? Height : Width;
+
+    // --- resizing the bar along its wrapping axis ------------------------------------
     //
     // Petre: "make the floatingwindow resizeable in width and persist it in settings", and
     // "i want no less than 3 icons per row width".
@@ -578,6 +605,15 @@ public partial class FloatingBar : Window
     // Scaled, because BarScale is a LayoutTransform on the content: the window's own width is the
     // content's width times the scale.
     double MinimumWidth => (18 + 150 + 8) * BarScaling.Clamp(manager.State.BarScale);
+
+    // The vertical bar's floor, and it is a different KIND of number from the one above. That one
+    // is set by fixed chrome -- the info line, which sits under the groups in both orientations and
+    // so constrains the bar's width whichever way round it is. Nothing chrome-like constrains the
+    // height, so this is Petre's own rule instead: three icon cells, never fewer, plus the info
+    // line's own band.
+    double MinimumHeight => (IconCellWidth * IconRowLimit.MinimumIconsPerLine + 28) * BarScaling.Clamp(manager.State.BarScale);
+
+    double MinimumSize => Vertical ? MinimumHeight : MinimumWidth;
 
     // What one icon occupies along a row: the 20x20 artwork, plus IconButton's 1px padding and
     // 1px border on each side. Its horizontal margin is deliberately zero (Petre: "the separation
@@ -604,53 +640,100 @@ public partial class FloatingBar : Window
     double IconRoomOn(UIElement label)
     {
         label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        return Width / BarScaling.Clamp(manager.State.BarScale) - RootPadding * 2 - label.DesiredSize.Width;
+        // The label is rotated in a vertical bar, so what it costs the icons is its HEIGHT there --
+        // and DesiredSize already accounts for the rotation, because the label carries it as a
+        // LayoutTransform rather than a RenderTransform (see RowLabel).
+        var gutter = Vertical ? label.DesiredSize.Height : label.DesiredSize.Width;
+        return ChosenSize / BarScaling.Clamp(manager.State.BarScale) - RootPadding * 2 - gutter;
     }
 
-    enum ResizeSide { Left, Right }
+    // Named for the axis rather than the compass: Start is the left edge of a horizontal bar and
+    // the top of a vertical one -- the edge whose drag has to MOVE the window as well as resize it,
+    // because the opposite edge is the one being held still.
+    enum ResizeSide { Start, End }
 
-    (ResizeSide Side, int StartCursorX, double StartWidth, double StartLeft)? resizing;
+    (ResizeSide Side, int StartCursor, double StartSize, double StartPosition)? resizing;
 
-    // Which side strip a point is in, or none. Uses ActualWidth rather than Width so it works
-    // before a width has ever been set, when Width is NaN (SizeToContent).
-    ResizeSide? ResizeSideAt(Point point) =>
-        point.Y < 0 || point.Y > ActualHeight ? null
-        : point.X >= 0 && point.X <= ResizeGrip ? ResizeSide.Left
-        : point.X >= ActualWidth - ResizeGrip && point.X <= ActualWidth ? ResizeSide.Right
-        : null;
+    // Which grip strip a point is in, or none -- along the WRAPPING axis only, since the other one
+    // follows its content and has nothing to drag.
+    //
+    // ActualWidth/ActualHeight rather than Width/Height, so this works before any size has been
+    // chosen, when the property is still NaN under SizeToContent.
+    ResizeSide? ResizeSideAt(Point point)
+    {
+        var (along, across) = Vertical ? (point.Y, point.X) : (point.X, point.Y);
+        var (length, breadth) = Vertical ? (ActualHeight, ActualWidth) : (ActualWidth, ActualHeight);
+        return across < 0 || across > breadth ? null
+            : along >= 0 && along <= ResizeGrip ? ResizeSide.Start
+            : along >= length - ResizeGrip && along <= length ? ResizeSide.End
+            : null;
+    }
 
     // Cursor from GetCursorPos, NOT from the event's position: the event's position is measured
     // relative to a window this very method is moving and resizing, so the delta would shrink to
     // nothing as the window caught up. Identical trap to the middle-drag move above, and it is
-    // worse here -- a left-edge resize moves Left AND Width at once.
+    // worse here -- a Start-edge resize moves the window AND resizes it at once.
     bool Resizing()
     {
         if (resizing is not { } grip) return false;
 
         NativeMethods.GetCursorPos(out var cursor);
         var dpi = VisualTreeHelper.GetDpi(this);
-        var travelled = (cursor.X - grip.StartCursorX) / dpi.DpiScaleX;
+        var travelled = (Vertical ? (cursor.Y - grip.StartCursor) / dpi.DpiScaleY : (cursor.X - grip.StartCursor) / dpi.DpiScaleX);
 
-        // Dragging the LEFT edge holds the right edge still: the width grows by what the cursor
-        // travelled leftwards, and Left follows it. Dragging the right edge is the plain case,
-        // Left untouched.
-        var wanted = grip.Side == ResizeSide.Left ? grip.StartWidth - travelled : grip.StartWidth + travelled;
-        var width = Math.Max(MinimumWidth, MonitorBounds(Left, Top) is { } work ? Math.Min(wanted, work.Right - work.Left) : wanted);
+        // Dragging the START edge holds the far edge still: the size grows by what the cursor
+        // travelled backwards, and the window's position follows it. The END edge is the plain
+        // case, position untouched.
+        var wanted = grip.Side == ResizeSide.Start ? grip.StartSize - travelled : grip.StartSize + travelled;
+        var room = MonitorBounds(Left, Top) is { } work ? (Vertical ? work.Bottom - work.Top : work.Right - work.Left) : double.PositiveInfinity;
+        var size = Math.Max(MinimumSize, Math.Min(wanted, room));
 
-        ApplyWidth(width);
-        // From the RESTING geometry, not from the live Left: clamping the width above means the
-        // cursor can outrun the edge, and deriving Left from a value that has already been
-        // clamped would drift the bar a little further on every move.
-        if (grip.Side == ResizeSide.Left) Left = grip.StartLeft + (grip.StartWidth - width);
+        ApplySize(size);
+        // From the RESTING geometry, not from the live position: clamping above means the cursor
+        // can outrun the edge, and deriving the position from an already-clamped value would drift
+        // the bar a little further on every move.
+        if (grip.Side != ResizeSide.Start) return true;
+        if (Vertical) Top = grip.StartPosition + (grip.StartSize - size);
+        else Left = grip.StartPosition + (grip.StartSize - size);
         return true;
     }
 
-    // The one place the bar stops being SizeToContent in the width axis. Height stays content-driven
-    // -- rows wrap, and how tall that makes the bar is not something anyone wants to drag.
-    void ApplyWidth(double width)
+    // The one place the bar stops following its content along the wrapping axis. The OTHER axis
+    // stays content-driven in both orientations -- how tall a wrapped row makes a horizontal bar,
+    // or how wide another column makes a vertical one, is not something anyone wants to drag.
+    void ApplySize(double size)
     {
-        SizeToContent = SizeToContent.Height;
-        Width = width;
+        SizeToContent = Vertical ? SizeToContent.Width : SizeToContent.Height;
+        if (Vertical) Height = size;
+        else Width = size;
+    }
+
+    // The size this orientation was last dragged to, or nothing if it never was.
+    //
+    // Each orientation remembers its OWN number, and inheriting one for the other was rejected
+    // outright: a width chosen by eye against a row of icons is meaningless as the height of a
+    // column of them, so a switch would land somewhere absurd and look like a bug in the switch.
+    //
+    // Clamped on the way in rather than trusted -- state.json is hand-editable, and a size below
+    // the minimum would clip the info line with no grip left to drag it back.
+    //
+    // A null here does not merely leave a default size: it selects the FIXED five-per-line wrap,
+    // which is what the bar has always done and what every state.json written before this gets.
+    void ApplyStoredSize()
+    {
+        var stored = Vertical ? manager.State.FloatingBar?.Height : manager.State.FloatingBar?.Width;
+        if (stored is { } size) ApplySize(Math.Max(MinimumSize, size));
+        else ClearSize();
+    }
+
+    // Back to following the content in both axes. Needed because the arrangement can now change at
+    // runtime: switching to an orientation that has never been dragged must RELEASE the explicit
+    // size the other one left behind, or a vertical bar would inherit a horizontal bar's height.
+    void ClearSize()
+    {
+        Width = double.NaN;
+        Height = double.NaN;
+        SizeToContent = SizeToContent.WidthAndHeight;
     }
 
     void OnPreviewMouseMove(object sender, MouseEventArgs e)
@@ -659,7 +742,9 @@ public partial class FloatingBar : Window
         // Only when nothing else owns the mouse, so the cursor cannot flip to a resize arrow in
         // the middle of dragging the bar across the screen.
         if (e.LeftButton != MouseButtonState.Pressed)
-            Cursor = ResizeSideAt(e.GetPosition(this)) is not null ? Cursors.SizeWE : Cursors.Arrow;
+            Cursor = ResizeSideAt(e.GetPosition(this)) is null ? Cursors.Arrow
+                : Vertical ? Cursors.SizeNS
+                : Cursors.SizeWE;
         if (MiddleDragging(e)) return;
         if (e.LeftButton != MouseButtonState.Pressed || dragStart is not { } start) return;
         var current = PointToScreen(e.GetPosition(this));
@@ -845,6 +930,24 @@ public partial class FloatingBar : Window
 
     void RebuildCore()
     {
+        // Read from state on every pass, which is what makes the Manage setting apply LIVE: the
+        // setter persists and pulses, the pulse rebuilds, and this is where the new answer takes
+        // effect. The rows below are rebuilt from scratch anyway; only these window-level
+        // consequences need saying once.
+        //
+        // Guarded on CHANGE rather than written every time, because ApplyStoredSize is not free of
+        // consequence: on a bar with no stored size it assigns NaN and SizeToContent, which asks
+        // WPF for a fresh measure -- on every rebuild, of which there are many.
+        if (appliedArrangement != manager.State.BarArrangement)
+        {
+            appliedArrangement = manager.State.BarArrangement;
+            Rows.Orientation = Vertical ? Orientation.Horizontal : Orientation.Vertical;
+            // The stored size belongs to the arrangement, so a switch re-reads it -- and RELEASES
+            // the other orientation's explicit size, or a vertical bar inherits a horizontal one's
+            // width as its height.
+            ApplyStoredSize();
+        }
+
         Rows.Children.Clear();
         // The rows these pointed at have just been thrown away, so every entry is now a Border
         // that is no longer in the tree. Repopulated as the new rows are built.
@@ -979,12 +1082,16 @@ public partial class FloatingBar : Window
     // Task 11 fix round 5: a 1px, ~20%-opacity hairline between rows so adjacent
     // workspace groups read as visually distinct at a glance, without adding real
     // borders/backgrounds that would compete with the icons themselves.
-    static UIElement Separator() => new Border
+    // Turns with the arrangement: a divider between stacked rows is a horizontal rule, and between
+    // side-by-side columns it is a vertical one. Same 1px at 20%, same 2px of air either side --
+    // only the axis differs, so the bar reads the same way whichever way round it is.
+    UIElement Separator() => new Border
     {
-        Height = 1,
+        Height = Vertical ? double.NaN : 1,
+        Width = Vertical ? 1 : double.NaN,
         // 3 -> 2 per side, so the gap between rows goes 6px to 4px. The hairline still has to
         // read as a divider at a glance, which is why this is tightened rather than removed.
-        Margin = new Thickness(0, 2, 0, 2),
+        Margin = Vertical ? new Thickness(2, 0, 2, 0) : new Thickness(0, 2, 0, 2),
         Background = Brushes.White,
         Opacity = 0.2,
     };
@@ -1030,9 +1137,21 @@ public partial class FloatingBar : Window
         // one pinned left, label in an auto-width one on the right. Because rows stretch to the
         // bar's full width, that right column lines every label up against the same right edge,
         // so the raggedness moves to where nothing is aimed at.
+        // Two cells: icons take what is left, the label takes what it needs. Which AXIS they are
+        // laid along is the whole of the arrangement difference here -- columns in a horizontal
+        // bar, rows in a vertical one -- and the star/auto split is identical either way, so the
+        // gutter behaves the same on both.
         var container = new Grid { Background = idle };
-        container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (Vertical)
+        {
+            container.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+        else
+        {
+            container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        }
 
         // Petre: "if any one workspace grows too wide, then it's inefficient... there's an icon
         // limit, and if that's exceeded, then it's the next row that needs to be added."
@@ -1045,11 +1164,15 @@ public partial class FloatingBar : Window
         //
         // Centred vertically as a block, so a wrapped workspace keeps ONE label beside the
         // whole lane rather than one per line.
+        // The OUTER stack holds the wrapped lines, so it runs ACROSS the icons: lines sit below one
+        // another in a horizontal bar, beside one another in a vertical one. Centred on the cross
+        // axis and packed against the start of the main one, so a wrapped group keeps ONE label
+        // beside the whole block rather than one per line.
         var icons = new StackPanel
         {
-            Orientation = Orientation.Vertical,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left,
+            Orientation = Vertical ? Orientation.Horizontal : Orientation.Vertical,
+            VerticalAlignment = Vertical ? VerticalAlignment.Top : VerticalAlignment.Center,
+            HorizontalAlignment = Vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left,
         };
 
         // Built BEFORE the icons, which it did not used to be. Once the bar has a width the user
@@ -1114,7 +1237,11 @@ public partial class FloatingBar : Window
 
         lines.ToList().ForEach(line =>
         {
-            var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            // ...and each LINE runs along the icons' own axis: across in a horizontal bar, down in
+            // a vertical one.
+            var linedUp = Vertical
+                ? new StackPanel { Orientation = Orientation.Vertical, VerticalAlignment = VerticalAlignment.Top }
+                : new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
             line.ToList().ForEach(r =>
             {
                 if (opensGroup.Contains(r.Window.Handle)) linedUp.Children.Add(MonitorMarker(r.MonitorRank.Value));
@@ -1130,10 +1257,10 @@ public partial class FloatingBar : Window
             });
             icons.Children.Add(linedUp);
         });
-        Grid.SetColumn(icons, 0);
+        if (Vertical) Grid.SetRow(icons, 0); else Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
 
-        Grid.SetColumn(label, 1);
+        if (Vertical) Grid.SetRow(label, 1); else Grid.SetColumn(label, 1);
         container.Children.Add(label);
 
         // Hover freeze: hold this row's icon order while the pointer is inside it. Wired for
@@ -1591,6 +1718,17 @@ public partial class FloatingBar : Window
             Child = textBlock,
             Padding = new Thickness(5, 1, 5, 1),
             VerticalAlignment = VerticalAlignment.Center,
+            // Petre chose rotated names over flat ones for the column arrangement, from three
+            // drawn options. Flat names would make each column as wide as its name -- "Messaging"
+            // is about nine icons wide -- which turns a slim bar into a grid of blocks and gives
+            // up the reason to go vertical at all.
+            //
+            // LayoutTransform, NOT RenderTransform, and it is the same distinction BarScale turns
+            // on: a RenderTransform paints the rotation without telling the layout, so the label
+            // would claim its unrotated width and the gutter would be sized for text that is no
+            // longer horizontal. LayoutTransform participates in measure, so DesiredSize comes
+            // back rotated -- which is exactly what IconRoomOn reads to decide the wrap.
+            LayoutTransform = Vertical ? new RotateTransform(90) : Transform.Identity,
             // 8 -> 6 on the left: the gutter still has to separate the label from the icons,
             // but it was the widest single gap on the bar.
             Margin = new Thickness(6, 0, 2, 0),
@@ -2045,7 +2183,7 @@ public partial class FloatingBar : Window
     // those rows got an indent of its margin alone, matching no other row's. Reserving the gutter
     // for every group fixed the alignment and left an empty indent on the commonest row; Petre
     // saw both and chose flush.
-    static UIElement MonitorMarker(int rank)
+    UIElement MonitorMarker(int rank)
     {
         var tally = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         // Capped at two strokes, which is also what sets the reserved width below. Past the
@@ -2080,6 +2218,12 @@ public partial class FloatingBar : Window
             // separating them, which it also does.
             Margin = new Thickness(1, 0, 1, 0),
             VerticalAlignment = VerticalAlignment.Center,
+            // Turns with the row it marks: strokes that stand upright between side-by-side icons
+            // have to lie flat between stacked ones, or the mark stops reading as a boundary and
+            // starts reading as an icon. LayoutTransform for the same reason the label uses one --
+            // the space it claims has to be the space it occupies, since the wrap arithmetic
+            // budgets MonitorMarkerWidth for it either way round.
+            LayoutTransform = Vertical ? new RotateTransform(90) : Transform.Identity,
         };
     }
 
@@ -2261,7 +2405,15 @@ public partial class FloatingBar : Window
             { } s => s.Left,
             null => work.Right - ActualWidth,
         };
-        var rawTop = stored?.Top ?? work.Bottom - ActualHeight;
+        // Top follows the same rule as Left, for the same reason and now with the same weight: a
+        // vertical bar's height follows its content, so the BOTTOM edge is what a restore has to
+        // reproduce (see FloatingBarState.Bottom).
+        var rawTop = stored switch
+        {
+            { Bottom: { } bottom } => bottom - ActualHeight,
+            { } s => s.Top,
+            null => work.Bottom - ActualHeight,
+        };
 
         (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
         AnchorFromPosition(work);
@@ -2283,14 +2435,26 @@ public partial class FloatingBar : Window
     // Deriving the choice means the two cannot disagree and nothing extra is persisted: a null
     // anchor is "pin the left edge", which is WPF's own behaviour, so OnSizeChanged does
     // nothing at all.
-    void AnchorFromPosition((double Left, double Top, double Right, double Bottom) work) =>
+    void AnchorFromPosition((double Left, double Top, double Right, double Bottom) work)
+    {
         anchorRight = EdgeSnap.GrowsLeftwards(Left, work.Left) ? Left + ActualWidth : null;
+        // The vertical twin, and it stops being optional once groups can be COLUMNS: every window
+        // added to a column makes the bar taller, and the bar lives in the bottom-right corner, so
+        // without this it grows straight off the bottom of the screen.
+        //
+        // Derived on the same pass and from the same fact -- where the bar actually is -- so the
+        // two axes cannot disagree, and neither is persisted as a decision that could go stale.
+        anchorBottom = EdgeSnap.GrowsUpwards(Top, work.Top) ? Top + ActualHeight : null;
+    }
 
     // The screen x the bar's right edge is pinned to. Null until the bar has been positioned,
     // which is what stops the initial layout passes -- several of them, as rows are built and
     // the info line is measured -- from being mistaken for growth and dragging the bar
     // leftwards before it has been placed at all.
     double? anchorRight;
+
+    // ...and the screen y its bottom edge is pinned to, on exactly the same terms.
+    double? anchorBottom;
 
     // Keeps the right edge still while the bar gets wider or narrower, which is the whole ask:
     // the bar is parked against the right of the screen, so growing rightwards walks it off.
@@ -2299,11 +2463,20 @@ public partial class FloatingBar : Window
     // only known once WPF has measured the new content, and Rebuild returns long before that.
     void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (!e.WidthChanged || anchorRight is not { } anchor || moving) return;
+        if (moving) return;
         if (MonitorBounds(Left, Top) is not { } work) return;
-        // Clamped like every other placement here: a bar grown wider than the work area cannot
-        // keep its right edge AND stay on screen, and staying on screen wins.
-        (Left, Top) = WorkAreaClamp.Clamp(anchor - ActualWidth, Top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
+
+        // Each axis independently, because either can grow on its own: a horizontal bar widens as
+        // windows arrive and only occasionally gains a row, and a vertical one does the mirror
+        // image. An anchor that is null means "pin the near edge", which is WPF's own behaviour,
+        // so the axis is simply left alone.
+        var left = e.WidthChanged && anchorRight is { } right ? right - ActualWidth : Left;
+        var top = e.HeightChanged && anchorBottom is { } bottom ? bottom - ActualHeight : Top;
+        if (left.Equals(Left) && top.Equals(Top)) return;
+
+        // Clamped like every other placement here: a bar grown larger than the work area cannot
+        // keep its far edge AND stay on screen, and staying on screen wins.
+        (Left, Top) = WorkAreaClamp.Clamp(left, top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
     }
 
     // The work area of whichever monitor holds the given point, in DIPs. Null when Windows
@@ -2356,11 +2529,21 @@ public partial class FloatingBar : Window
     // double.NaN is what Width reads as while the bar is still SizeToContent, and it is the honest
     // "no width chosen" here too -- persisting it as a number would freeze the bar at whatever its
     // content happened to measure on the day, which is the opposite of following the content.
+    // Each orientation's size is written back to its OWN key and the other one is preserved
+    // untouched -- reading the stored value rather than the live window, which in the other
+    // orientation is following its content and would come back as NaN.
     void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)
     {
         Right = anchorRight,
-        Width = double.IsNaN(Width) ? null : Width,
+        Bottom = anchorBottom,
+        Width = Vertical ? manager.State.FloatingBar?.Width : Chosen(Width),
+        Height = Vertical ? Chosen(Height) : manager.State.FloatingBar?.Height,
     });
+
+    // NaN is what Width and Height read as while SizeToContent still owns them, and it is the
+    // honest "no size chosen" in state.json too: persisting it as a number would freeze the bar at
+    // whatever its content happened to measure on the day, which is the opposite of following it.
+    static double? Chosen(double size) => double.IsNaN(size) ? null : size;
 
     // Owned by the bar for the same reason PromptDialog.Ask now takes an owner: this window
     // is Topmost, so an unowned message box can open behind it and strand the user with an
