@@ -887,6 +887,7 @@ public partial class FloatingBar : Window
             ClickTrace.Write($"REBUILD WHILE PRESSED mouseOver={IsMouseOver}");
 
         rebuilding = true;
+        var clock = ClickTrace.On ? System.Diagnostics.Stopwatch.StartNew() : null;
         try
         {
             RebuildCore();
@@ -894,6 +895,12 @@ public partial class FloatingBar : Window
         finally
         {
             rebuilding = false;
+            // How long the UI thread was NOT available, which is the other half of #51: a dialog
+            // whose frame is up and whose contents are missing is a dialog waiting for this. Only
+            // the slow ones are logged -- a rebuild is COM-heavy (one DesktopOf per known window)
+            // and there are many, so logging every one would bury the interesting ones.
+            if (clock is { } elapsed && elapsed.ElapsedMilliseconds >= 150)
+                ClickTrace.Write($"rebuild took {elapsed.ElapsedMilliseconds}ms");
         }
 
         // The suppressed pulse still carried real news (a window opened, closed or moved),
