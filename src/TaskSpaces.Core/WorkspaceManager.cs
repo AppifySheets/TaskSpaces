@@ -751,11 +751,25 @@ public sealed class WorkspaceManager(
     // Clamped rather than validated, because every caller derives the index from a row that was on
     // screen when the menu opened, and a workspace removed in between should land the new one at
     // the end instead of raising an error at somebody who asked for something reasonable.
-    public Result<Workspace> InsertWorkspace(string name, int index) =>
+    // `parentId` makes the new workspace a SIBLING of the row it was invoked on rather than a
+    // top-level workspace (#74). Petre: "before/after is relative to the row it was invoked on, at
+    // that row's depth."
+    //
+    // Null for a top-level row, which is the whole previous behaviour and why it defaults.
+    //
+    // The parent is validated exactly as NestWorkspace and AddChildWorkspace validate it -- it must
+    // exist and must not itself be nested -- rather than trusted because a caller derived it from a
+    // row. A UI that only offers legal choices is not a guarantee; it is a UI.
+    public Result<Workspace> InsertWorkspace(string name, int index, Guid? parentId = null) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
             .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
+            .Bind(() => parentId is { } parent
+                ? Workspace(parent).Bind(p => p.ParentId is not null
+                    ? Result.Failure($"'{p.Name}' is itself nested. Workspaces nest one level deep.")
+                    : Result.Success())
+                : Result.Success())
             .Bind(() => desktops.Create(name))
-            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id))
+            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id) { ParentId = parentId })
             .Tap(w => Persist(State with { Workspaces = Inserted(w, Math.Clamp(index, 0, State.Workspaces.Count)) }));
 
     IReadOnlyList<Workspace> Inserted(Workspace workspace, int index)

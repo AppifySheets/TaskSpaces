@@ -2800,10 +2800,19 @@ public partial class FloatingBar : Window
 
         menu.Items.Add(new Separator());
 
+        // The parent of the row this menu belongs to, read at CLICK time for the same reason
+        // IndexOf is (#74). Petre: "before/after is relative to the row it was invoked on, at that
+        // row's depth" -- so on a nested row the new workspace joins the same parent instead of
+        // landing at the top level between a parent and its children, which is what it used to do
+        // and which read as the bar putting a stranger inside somebody's family.
+        //
+        // Null on a top-level row, which is the previous behaviour unchanged.
+        Guid? ParentOfRow() => manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.ParentId;
+
         // "on top or under the current workspace" -- before is this row's own index, after is the
         // one past it, and InsertWorkspace clamps both.
-        Add("✚", "Insert before…", () => InsertAt(IndexOf()));
-        Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1));
+        Add("✚", "Insert before…", () => InsertAt(IndexOf(), ParentOfRow()));
+        Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1, ParentOfRow()));
         // Petre: "add child as a right click menu item" (#42). Only offered on a row that CAN be a
         // parent -- workspaces nest one level deep, so a child row does not offer to have children
         // of its own rather than offering it and refusing afterwards.
@@ -2961,12 +2970,15 @@ public partial class FloatingBar : Window
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    void InsertAt(int index) =>
+    // `parentId` is the DEPTH the new workspace is created at (#74): the parent of the row the
+    // menu was invoked on, so a sibling of a nested row is nested under the same workspace, and
+    // null on a top-level row exactly as before.
+    void InsertAt(int index, Guid? parentId) =>
         PromptDialog.Ask("New workspace", "Name:", owner: this)
             // Result<Workspace> converts implicitly to Result, which is all Report needs: it only
             // ever shows the ERROR, and the new Workspace has no reader here -- the bar redraws
             // off the pulse that creating it sent.
-            .Tap(fresh => Report(manager.InsertWorkspace(fresh, index)));
+            .Tap(fresh => Report(manager.InsertWorkspace(fresh, index, parentId)));
 
     ContextMenu IconMenu(WindowRow row)
     {

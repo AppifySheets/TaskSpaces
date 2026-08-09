@@ -241,4 +241,51 @@ public class NestedWorkspaceTests
 
         Assert.True(manager.AddChildWorkspace(child, "Too deep").IsFailure);
     }
+
+    // #74. Petre: "before/after is relative to the row it was invoked on, at that row's depth."
+    //
+    // Insert-before/after on a NESTED row used to make a top-level workspace, which then rendered
+    // between a parent and its children -- a stranger drawn inside somebody's family box.
+    [Fact]
+    public void Inserting_beside_a_nested_row_creates_a_sibling_under_the_same_parent()
+    {
+        var (manager, parent, child, _) = Started();
+        Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
+        var at = manager.State.Workspaces.ToList().FindIndex(w => w.Id == child);
+
+        var created = manager.InsertWorkspace("Project notes", at + 1, parent);
+
+        Assert.True(created.IsSuccess);
+        Assert.Equal(parent, ParentOf(manager, created.Value.Id));
+        // Beside the row it was invoked on, not appended after every child the parent has.
+        Assert.Equal(at + 1, manager.State.Workspaces.ToList().FindIndex(w => w.Id == created.Value.Id));
+    }
+
+    // The other half of "at that row's depth": on a top-level row nothing changes.
+    [Fact]
+    public void Inserting_beside_a_top_level_row_still_creates_a_top_level_workspace()
+    {
+        var (manager, parent, _, _) = Started();
+        var at = manager.State.Workspaces.ToList().FindIndex(w => w.Id == parent);
+
+        var created = manager.InsertWorkspace("Elsewhere", at, null);
+
+        Assert.True(created.IsSuccess);
+        Assert.Null(ParentOf(manager, created.Value.Id));
+    }
+
+    // The UI only offers a legal parent, but a UI is not a guarantee -- the same rule
+    // NestWorkspace and AddChildWorkspace enforce is enforced here too.
+    [Fact]
+    public void Inserting_under_a_workspace_that_is_itself_nested_is_refused()
+    {
+        var (manager, parent, child, _) = Started();
+        Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
+
+        Assert.True(manager.InsertWorkspace("Too deep", 0, child).IsFailure);
+    }
+
+    [Fact]
+    public void Inserting_under_a_workspace_that_does_not_exist_is_refused() =>
+        Assert.True(Started().manager.InsertWorkspace("Orphan", 0, Guid.NewGuid()).IsFailure);
 }
