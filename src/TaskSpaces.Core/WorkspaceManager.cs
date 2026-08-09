@@ -902,6 +902,18 @@ public sealed class WorkspaceManager(
             Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Minimized = minimized } : w).ToList(),
         }));
 
+    // The update check's opt-out (#71). Petre: "an opt-out setting -- this would be the app's only
+    // phone-home behaviour."
+    //
+    // A no-op when the value has not actually changed, and that is not micro-optimisation: Manage
+    // sets the checkbox from state when it opens, which raises Checked, which lands here. Without
+    // this, merely opening the window would write state.json and pulse every subscriber -- one of
+    // which rebuilds the whole bar.
+    public Result SetCheckForUpdates(bool enabled) =>
+        State.CheckForUpdates == enabled
+            ? Result.Success()
+            : Result.Success().Tap(() => Persist(State with { CheckForUpdates = enabled }));
+
     // The colour picker on the bar's right-click menu (#68). Petre: "add color picker in the right
     // click context menu."
     //

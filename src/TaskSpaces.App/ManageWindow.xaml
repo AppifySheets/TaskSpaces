@@ -18,6 +18,13 @@
              that shows windows and jumps to them, so offering to switch it off is like
              offering to switch off the taskbar. It also left a trap, since hiding it removed
              the only way to reach your own windows. The bar is now always on. -->
+        <!-- #71. The opt-out for the app's only phone-home behaviour, so it sits where the other
+             machine-level setting already does rather than somewhere it would have to be hunted
+             for. Wording says what actually happens: it checks and tells you, and that is all.
+             Nothing is downloaded and the running exe is never replaced. -->
+        <CheckBox x:Name="CheckForUpdates" DockPanel.Dock="Bottom" Margin="8,0,8,8"
+                  Content="Check GitHub for new versions (tells you; never installs anything)"
+                  Checked="OnCheckForUpdatesToggled" Unchecked="OnCheckForUpdatesToggled"/>
         <CheckBox x:Name="StartWithWindows" DockPanel.Dock="Bottom" Margin="8"
                   Content="Start TaskSpaces with Windows"
                   Checked="OnStartupToggled" Unchecked="OnStartupToggled"/>

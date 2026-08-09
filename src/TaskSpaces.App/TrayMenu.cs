@@ -18,7 +18,13 @@ namespace TaskSpaces.App;
 // stopped being a switcher.
 public static class TrayMenu
 {
-    public static ContextMenu Build(bool compatibilityMode, Action openManage, Action exit)
+    // `update` is the one item that is not always here: null until a check finds a newer release
+    // (#71), at which point App rebuilds this menu with it. A permanent "Check for updates…" item
+    // was considered and left out -- it would be a button that usually reports nothing, on a menu
+    // Petre deliberately cut to two commands. The check runs on its own; the menu only ever says
+    // there IS one.
+    public static ContextMenu Build(bool compatibilityMode, Action openManage, Action exit,
+        (string Label, Action Open)? update = null)
     {
         var menu = new ContextMenu();
 
@@ -31,6 +37,16 @@ public static class TrayMenu
                 Header = "⚠ Virtual desktops unavailable on this Windows build",
                 IsEnabled = false,
             });
+
+        // FIRST, and separated, because it is news rather than a command: it appears once and
+        // stops being there again as soon as the user is on the new version.
+        if (update is { } available)
+        {
+            var item = new MenuItem { Header = available.Label };
+            item.Click += (_, _) => available.Open();
+            menu.Items.Add(item);
+            menu.Items.Add(new Separator());
+        }
 
         var manage = new MenuItem { Header = "Manage…" };
         manage.Click += (_, _) => openManage();

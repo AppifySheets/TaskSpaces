@@ -10,6 +10,7 @@ using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Time;
+using TaskSpaces.Core.Updates;
 using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Monitoring;
@@ -41,6 +42,85 @@ public partial class App : Application
     System.Threading.Mutex? singleInstance;
     IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
     bool floatingBarPinned; // Task 11 fix round 4: pin the bar's real hwnd to all desktops exactly once (see PinFloatingBar)
+
+    // --- check for updates (#71) ------------------------------------------------------
+    //
+    // Petre: "tell the user a new version exists and offer a link to the new file", with ground
+    // rules that decide the whole shape of this: check on startup and daily, fail silently
+    // offline, never block the UI, and an opt-out because it is the app's only phone-home.
+    //
+    // The announcement is deliberately quiet -- one balloon, and an item on the tray menu that
+    // stays until the user is on the new version. Nothing is downloaded and nothing is replaced;
+    // the app is portable on purpose and the link hands the decision back to the user.
+
+    // Held so the timer cannot be collected, and so the tray menu can be rebuilt with it.
+    System.Windows.Threading.DispatcherTimer? updateTimer;
+    ReleaseInfo? availableUpdate;
+
+    void StartUpdateChecks()
+    {
+        // The only gate. With it off nothing below ever runs, so no request leaves the machine.
+        if (manager?.State.CheckForUpdates != true) return;
+
+        // Daily, and the first one is on a delay rather than immediate. Startup is already the
+        // busiest moment this process has -- desktop enumeration, the placement sweep, the rename
+        // sweep -- and an update is never so urgent that it cannot wait half a minute for them.
+        updateTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        updateTimer.Tick += (_, _) =>
+        {
+            // After the first tick this becomes the daily timer. Re-setting the interval on the
+            // running timer beats a second timer that would have to be kept alive too.
+            updateTimer!.Interval = TimeSpan.FromHours(24);
+            CheckForUpdate();
+        };
+        updateTimer.Start();
+    }
+
+    // Fire-and-forget on purpose: nothing waits for the answer and nothing reports its absence.
+    // `async void` is the honest signature for that -- there is no caller to hand a Task to -- and
+    // it is safe here because the awaited method catches every failure it can produce and returns
+    // it as a Result rather than throwing.
+    async void CheckForUpdate()
+    {
+        var latest = await UpdateService.NewerThanRunningAsync().ConfigureAwait(true);
+
+        // A failure is today's answer, not a problem: no network, a proxy, GitHub rate-limiting a
+        // shared IP. Tomorrow's tick asks again, and the user is never told any of it.
+        if (latest.IsFailure || latest.Value.HasNoValue) return;
+
+        var release = latest.Value.Value;
+
+        // Already announced this exact version. The daily tick would otherwise re-balloon the same
+        // release every day for as long as the user chooses not to update, which is nagging.
+        if (availableUpdate?.Version == release.Version) return;
+        availableUpdate = release;
+
+        // ConfigureAwait(true) above put us back on the dispatcher, which both of these need.
+        trayIcon!.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp,
+            ($"Update available: {release.Version}", () => OpenReleasePage(release)));
+
+        trayIcon.ShowNotification(
+            title: $"TaskSpaces {release.Version} is available",
+            message: $"You are running {UpdateService.RunningVersion}. Right-click the tray icon to open the download page.");
+    }
+
+    // UseShellExecute is what makes this open a BROWSER rather than trying to execute the string.
+    // The url is already known to be http(s) -- UpdateCheck refuses a release whose html_url is
+    // anything else -- which matters because it arrived from the network.
+    static void OpenReleasePage(ReleaseInfo release)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(release.PageUrl) { UseShellExecute = true });
+        }
+        catch (Exception e)
+        {
+            // No browser registered, or the shell refused. Worth saying, because unlike the check
+            // itself this one happened because the user just clicked something.
+            MessageBox.Show($"Could not open the download page:\n{e.Message}\n\n{release.PageUrl}",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     // The app's icon, loaded once from the Resource the csproj also stamps into the exe.
     // Public so every window can bind its own Icon to it (Manage, switcher, prompts) without
@@ -90,6 +170,11 @@ public partial class App : Application
             Shutdown();
             return;
         }
+
+        // AFTER the single-instance guard, deliberately: a second copy that is about to tell the
+        // user it is already running has no business rewriting where startup points. Only the
+        // instance that actually takes ownership gets to claim it.
+        StartupRegistration.ReassertIfEnabled();
 
         // Reviewer (fix round 1, Critical, last-ditch backstop): an unhandled exception on
         // the dispatcher thread -- e.g. the ArgumentException a duplicate-name dictionary
@@ -210,6 +295,10 @@ public partial class App : Application
         // the process under EcoQoS throttling, and we need WinEvent callbacks handled
         // promptly to re-apply renames and route new windows without visible lag.
         trayIcon.ForceCreate(enablesEfficiencyMode: false);
+
+        // AFTER ForceCreate, necessarily: a balloon needs a registered shell icon to come out of,
+        // and announcing an update into a tray icon that does not exist yet is a silent no-op.
+        StartUpdateChecks();
         // NOTE: no StateChanged subscription rebuilding this menu any more. It used to be
         // rebuilt on every pulse so the workspace list and the "Show floating bar" checkmark
         // stayed accurate; the menu now holds neither, so it is built once and never needs

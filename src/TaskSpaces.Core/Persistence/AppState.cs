@@ -103,6 +103,19 @@ public sealed record AppState(
     public const string DefaultSwitcherShortcut = "Win+Ctrl+Tab";
 
 
+    // Petre, on the update check (#71): "an opt-out setting -- this would be the app's only
+    // phone-home behaviour."
+    //
+    // Opt-OUT rather than opt-in, and default ON: an update check nobody knows to switch on is an
+    // update check that never runs, and the whole point is that a portable exe cannot update
+    // itself. Defaulted here by the initializer rather than as a nullable, because unlike
+    // BarScale there is no third state worth distinguishing -- "never configured" and "on" want
+    // exactly the same behaviour, and an older state.json with no such key gets it.
+    //
+    // What it gates is the network call and nothing else. Everything about the check is inert
+    // without it: no request leaves the machine, and nothing is announced.
+    public bool CheckForUpdates { get; init; } = true;
+
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }
 

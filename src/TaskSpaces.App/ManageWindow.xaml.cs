@@ -48,6 +48,10 @@ public partial class ManageWindow : Window
         InitializeComponent();
         if (compatibilityMode) CompatBanner.Visibility = Visibility.Visible;
         StartWithWindows.IsChecked = StartupRegistration.IsEnabled;
+        // Raises Checked, which lands in OnCheckForUpdatesToggled -- harmless, because
+        // SetCheckForUpdates ignores a value that has not changed rather than writing state.json
+        // every time this window opens.
+        CheckForUpdates.IsChecked = manager.State.CheckForUpdates;
         WorkspaceRulesGrid.ItemsSource = workspaceRules;
         RenameRulesGrid.ItemsSource = renameRules;
         // Task 10: the Windows tab is now the shared WindowGroupsView (same control the
@@ -272,6 +276,18 @@ public partial class ManageWindow : Window
     {
         if (StartWithWindows.IsChecked == true) StartupRegistration.Enable(); else StartupRegistration.Disable();
     }
+
+    // #71. Persisted immediately rather than on a Save button, matching the checkbox above it:
+    // both are single switches with no editing state to confirm, and a setting that needs saving
+    // is one a user can lose by closing the window.
+    //
+    // Takes effect on the next start, and deliberately says nothing about that. Turning it OFF
+    // mid-session leaves at most one already-scheduled check, which cannot surprise anyone -- it
+    // can only ever result in a balloon the user has just said they do not want, once. Tearing
+    // down a live timer from here to buy that would mean this window reaching into the app's
+    // composition root for no outcome anybody would notice.
+    void OnCheckForUpdatesToggled(object s, RoutedEventArgs e) =>
+        manager.SetCheckForUpdates(CheckForUpdates.IsChecked == true).TapError(err => MessageBox.Show(err));
 
 
     void OnSaveRules(object s, RoutedEventArgs e)
