@@ -10,20 +10,38 @@ namespace TaskSpaces.Core.Domain;
 // surface tints a workspace the same way the bar does.
 public static class WorkspacePalette
 {
-    // Muted rather than saturated: these sit behind app icons on a translucent bar, so they
-    // have to separate the lanes without competing with the icons or with the active-window
-    // highlight. Ordered so adjacent lanes are far apart in hue.
+    // Petre: "the default workspace lane colours feel lame and dark, i want something more
+    // cheerful and bright" (#68).
+    //
+    // These were muted on purpose and the purpose still holds: they sit BEHIND app icons on a
+    // translucent bar, so they have to separate the lanes without competing with the icons, the
+    // active-window highlight or the amber candidate ring. Brightening them naively fights all
+    // three.
+    //
+    // So the brightness went into the HUES and not into the lanes. The bar dilutes every one of
+    // these to ~22% alpha before painting it (FloatingBar.LaneTint), and that dilution is what
+    // keeps the icons winning -- it is doing the restraining, so the colour underneath does not
+    // have to. A dark base diluted to 22% is a grey smudge; a saturated one at the same 22% is a
+    // clear, cheerful wash. Same ink, more colour.
+    //
+    // Each is the same hue family it was, roughly two stops brighter, so a workspace does not
+    // change identity -- teal is still the teal one. The alpha is untouched, which is the whole
+    // point: if these ever do compete with the icons, LaneTint's alpha is the dial to turn, not
+    // this list.
+    //
+    // Ordered, as before, so adjacent lanes are far apart in hue -- neighbouring rows are the ones
+    // that have to be told apart, and the ordering is the only thing that guarantees it.
     static readonly IReadOnlyList<string> Defaults =
     [
-        "#3C48BE", // indigo, matching the app icon
-        "#2E7D6B", // teal
-        "#8A4CD6", // violet
-        "#B06A2C", // amber
-        "#2F6FA8", // steel blue
-        "#9A3B5A", // plum
-        "#4B7A2E", // moss
-        "#6A5ACD", // slate blue
-        "#A8562C", // rust
+        "#5C6BF5", // indigo, still the app icon's family
+        "#1FC9A7", // teal
+        "#A95CF2", // violet
+        "#FFAA2B", // amber
+        "#2BA6F5", // sky
+        "#F5568C", // rose
+        "#6ECF3D", // green
+        "#8B7DFF", // periwinkle
+        "#FF7A45", // coral
     ];
 
     // index is the workspace's position in the user's own ordering, so the colour follows the

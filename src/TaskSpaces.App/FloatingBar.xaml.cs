@@ -2554,10 +2554,12 @@ public partial class FloatingBar : Window
     static readonly Brush AttentionDot = Frozen(0xFF, 0xFF, 0xA7, 0x26);
     static readonly Brush AttentionDotRim = Frozen(0xB0, 0x20, 0x20, 0x24);
 
-    // Bright and saturated, deliberately unlike WorkspacePalette's muted lane tints: those sit
-    // BEHIND icons and must not compete, while these are three-pixel slivers on top of arbitrary
-    // artwork and have to survive it. Ordered so the first two -- by far the commonest case, two
-    // windows of one app -- are as far apart in hue as the list allows.
+    // Bright and saturated, and painted at FULL strength -- which is the difference from the lane
+    // tints, now that those are bright too (#68). A lane colour is diluted to ~22% before it goes
+    // behind an icon, because it must not compete with it; these are three-pixel slivers drawn ON
+    // TOP of arbitrary artwork and have to survive it, so they keep all of their alpha. Ordered so
+    // the first two -- by far the commonest case, two windows of one app -- are as far apart in hue
+    // as the list allows.
     static readonly IReadOnlyList<Brush> OrdinalBands =
     [
         Frozen(0xFF, 0x4F, 0xC3, 0xF7), // sky
