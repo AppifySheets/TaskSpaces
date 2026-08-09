@@ -31,8 +31,12 @@ public static class WindowInfoFactory
             //
             // That number is spent on the DISPATCHER THREAD, inside the WinEvent callback, every
             // time any window appears anywhere on the machine. See TryCommandLine.
+            // With a batch in hand (the startup snapshot), a miss is worth ONE more try -- the fast
+            // one. WMI has already been asked about every process at that point, so falling all the
+            // way through to TryCommandLine would re-ask it per window and pay 656ms for an answer
+            // it has already declined to give.
             var commandLine = commandLines is not null
-                ? commandLines.GetValueOrDefault(pid)
+                ? commandLines.GetValueOrDefault(pid) ?? ProcessCommandLine.TryRead(pid)
                 : TryCommandLine(pid);
             return new WindowInfo(new WindowHandle(hwnd), (int)pid, process.ProcessName, path, TitleOf(hwnd), commandLine);
         }
@@ -89,6 +93,20 @@ public static class WindowInfoFactory
         // it is exact rather than approximate: Environment.CommandLine IS this process's command
         // line, which is more than WMI can promise for anyone else's.
         if (pid == (uint)Environment.ProcessId) return Environment.CommandLine;
+
+        // Read from the process itself before asking WMI, because the difference is not small
+        // (#59). Measured on Petre's machine over the 19 processes that owned a visible window:
+        //
+        //     WMI   656ms each   12,468ms for all 19
+        //     PEB     0.1ms each        2ms for all 19
+        //
+        // ...with zero disagreements -- both answered for 18 of the 19, byte for byte, and the one
+        // neither could read was the same protected process on both sides.
+        //
+        // WMI stays as the fallback rather than being deleted. It answers as SYSTEM, so it can
+        // still speak for an elevated process that ProcessCommandLine cannot open, and paying
+        // 656ms for one of those is a fair price now that ordinary windows never reach it.
+        if (ProcessCommandLine.TryRead(pid) is { Length: > 0 } fromProcess) return fromProcess;
 
         try
         {

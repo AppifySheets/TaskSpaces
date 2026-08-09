@@ -14,6 +14,14 @@
     <ProjectReference Include="..\TaskSpaces.Core\TaskSpaces.Core.csproj" />
   </ItemGroup>
 
+  <!-- ProcessCommandLine stays internal, being an implementation detail of WindowInfoFactory
+       rather than something other code should reach for. It walks undocumented PEB offsets
+       though, which is exactly the kind of correctness that wants pinning by a test. Same trade
+       the App project makes for the bar's press-routing helpers. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="TaskSpaces.Windows.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="CSharpFunctionalExtensions" Version="3.7.0" />
     <PackageReference Include="Slions.VirtualDesktop" Version="6.9.2" />
