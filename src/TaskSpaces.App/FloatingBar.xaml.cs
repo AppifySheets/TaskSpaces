@@ -1395,17 +1395,27 @@ public partial class FloatingBar : Window
     // draws there.
     const double MinimizedRowScale = 1.0 / 3;
 
-    // Petre: "maybe a little indented". Ten, not the twenty a tree view would use: the bar is a
-    // tight surface where every icon is a target, and an indent only has to be big enough to be
-    // SEEN once the spine and the shared lane colour have already said what it means.
-    //
-    // Taken out of the icons' own space rather than the row's, so a nested row still starts and
-    // ends where every other row does and the monitor alignment (#39) still lines up across rows.
-    const double NestedIndent = 10;
-
     // The spine down the left of a nested row, in its parent's colour. Two pixels: a hairline
     // reads as an artefact and anything wider starts competing with the icons.
     const double SpineWidth = 2;
+
+    // Petre: "maybe a little indented", then, on seeing it against the row above: "gap before the
+    // beginning of the left edge and the browser icon."
+    //
+    // It was ten, which is small for a tree view and large for this bar -- a nested row's first
+    // icon stood a whole third of an icon clear of its parent's, and on a surface where every row
+    // is read against the row above it that gap is the loudest thing about the row. It cost icon
+    // room on every nested row too.
+    //
+    // Just the spine's width and its margin now, so the icons begin exactly where the spine ends:
+    // no gap at all, and no overlap either. The indent has stopped being a signal of its own,
+    // which it can afford to be -- the family outline (#42) draws the relationship around the
+    // whole family, which is a stronger statement than a per-row indent ever made, and the spine
+    // and the shared lane colour are both still there saying it row by row.
+    //
+    // Taken out of the icons' own space rather than the row's, so a nested row still starts and
+    // ends where every other row does and the monitor alignment (#39) still lines up across rows.
+    const double NestedIndent = SpineWidth + 1;
 
     UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null)
     {
@@ -2597,7 +2607,27 @@ public partial class FloatingBar : Window
     // saw both and chose flush.
     static UIElement MonitorMarker(int rank)
     {
-        var tally = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        // CENTRED in the fixed 3px box below, and that is a fix rather than a detail. Petre: "space
+        // between the hairline and icons following on the right is not consistent across
+        // workspaces."
+        //
+        // The box is a constant 3px so that a monitor-2 group and a monitor-3 group reserve exactly
+        // the same width and no row's icons shift against another's. But the tally inside it is as
+        // wide as its STROKE COUNT -- 1px for monitor 2, 3px for monitor 3 -- and a stretched stack
+        // lays its children out from the left. So a single stroke sat hard against the left of its
+        // box with the other 2px trailing after it as dead space, which lands entirely on the right
+        // of the mark: two pixels before the hairline, five after it.
+        //
+        // Centring spends that space evenly, which is what "before and after the hairline space
+        // should be the same" asked for and what the fixed-width box has been quietly undoing ever
+        // since -- and it makes the gap identical whatever the monitor number, which is the half
+        // that varies from row to row.
+        var tally = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
         // Capped at two strokes, which is also what sets the reserved width below. Past the
         // third display the exact count matters less than "not one of the first two", and an
         // uncapped tally would widen every row on a machine with many screens.
