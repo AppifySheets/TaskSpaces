@@ -125,6 +125,11 @@ public sealed class WorkspaceManager(
             .Tap(() =>
             {
                 monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
+                // Before anything else looks at where windows are: a crash while standing inside a
+                // nested workspace leaves the parent's windows pinned to every desktop, and every
+                // sweep and overview after that would be reading a machine we left in a borrowed
+                // state (#42).
+                RepairInheritedPins();
                 // Seeded before the first UI build: foreground events only report CHANGES, so
                 // without this the active-window highlight would stay blank from launch until
                 // Petre next switched windows -- indistinguishable from the feature not working.
@@ -556,7 +561,92 @@ public sealed class WorkspaceManager(
     void OnDesktopChanged(Guid arriving)
     {
         currentDesktopId = arriving;
+        // Before the focus restore, because this is what puts the parent's windows ON this desktop
+        // -- and restoring focus to one of them only makes sense once it is here.
+        ApplyInheritance(arriving);
         RestoreLastActive(arriving);
+    }
+
+    // --- a nested workspace borrows its parent's windows (#42) ---------------------------------
+    //
+    // Petre: "i want parent's windows to be present in the child workspace... but on the desktop."
+    // Not icons on a row -- actually there, alongside the child's own windows.
+    //
+    // Windows' own pin is the only mechanism that puts one window on more than one desktop, and it
+    // is ALL-OR-NOTHING: a pinned window is on every desktop, not on a chosen few. So "the parent's
+    // windows, on its children only" is emulated by pinning them while you are inside a child and
+    // unpinning them when you leave. The over-share exists, but only for as long as you are
+    // standing in the subtree that wants it.
+    //
+    // Two facts make this survivable, and both had to be built rather than assumed:
+    //
+    //   * UNPINNING DOES NOT SEND A WINDOW HOME. It leaves it on whatever desktop is current, so
+    //     unpinning while standing in the child would quietly MOVE the parent's windows into the
+    //     child. Every release therefore unpins AND moves the window back to the desktop it was
+    //     borrowed from.
+    //   * A CRASH WOULD STRAND THEM pinned and homeless, which is precisely the failure this app
+    //     avoids by being built on desktops rather than on hiding windows. So every borrow is
+    //     written to state.json with its home desktop, and RepairInheritedPins puts them back at
+    //     the next start.
+    //
+    // Kept live as well as persisted: the set is what the next switch releases, and reading it
+    // back from state on every switch would be slower and no more correct.
+    readonly Dictionary<WindowHandle, Guid> borrowed = [];
+
+    void ApplyInheritance(Guid arriving)
+    {
+        var parentDesktop = ParentDesktopOf(arriving);
+
+        // Standing somewhere that borrows nothing, or somewhere that borrows from a DIFFERENT
+        // parent: either way, give back what is held before taking anything new.
+        if (borrowed.Count > 0 && borrowed.Values.FirstOrDefault() != parentDesktop) ReleaseBorrowed();
+        if (parentDesktop is not { } home || borrowed.Count > 0) return;
+
+        // Every window we know to be on the parent's desktop right now. Asked of the OS rather
+        // than of `memberships`, which records where a window was PLACED and not where it is.
+        knownWindows.Keys
+            .Where(w => desktops.DesktopOf(w).Map(d => d == home).GetValueOrDefault(false))
+            .ToList()
+            .ForEach(w => desktops.Pin(w).Tap(() => borrowed[w] = home));
+
+        PersistBorrowed();
+    }
+
+    void ReleaseBorrowed()
+    {
+        borrowed.ToList().ForEach(b =>
+        {
+            // Order matters and is the whole trick: unpin first, then put it back. Unpinning alone
+            // would leave the window on whichever desktop is current -- which, on a switch out of a
+            // nested workspace, is the wrong one.
+            desktops.Unpin(b.Key).Tap(() => desktops.MoveWindow(b.Key, b.Value));
+        });
+        borrowed.Clear();
+        PersistBorrowed();
+    }
+
+    void PersistBorrowed() =>
+        Persist(State with
+        {
+            InheritedPins = borrowed.Select(b => new InheritedPin(b.Key.Value, b.Value)).ToList(),
+        });
+
+    Guid? ParentDesktopOf(Guid desktop) =>
+        State.Workspaces.FirstOrDefault(w => w.DesktopId == desktop)?.ParentId is { } parentId
+            ? State.Workspaces.FirstOrDefault(w => w.Id == parentId)?.DesktopId
+            : null;
+
+    // Called once at startup. Anything still recorded as borrowed is the residue of a crash or a
+    // kill while standing inside a nested workspace: unpin it and put it back where it came from.
+    // A window that has since closed is simply dropped -- IsWindow is not asked, because Unpin and
+    // MoveWindow both fail harmlessly for a dead handle and their Results are already ignored here.
+    void RepairInheritedPins()
+    {
+        if (State.InheritedPins.Count == 0) return;
+        State.InheritedPins.ToList().ForEach(pin =>
+            desktops.Unpin(new WindowHandle((nint)pin.Window))
+                .Tap(() => desktops.MoveWindow(new WindowHandle((nint)pin.Window), pin.HomeDesktop)));
+        Persist(State with { InheritedPins = [] });
     }
 
     // ...and put focus back on arrival.
@@ -771,6 +861,32 @@ public sealed class WorkspaceManager(
                 {
                     Workspaces = State.Workspaces.Select(w => w.Id == child ? w with { ParentId = parent } : w).ToList(),
                 }));
+
+    // Petre: "add child as a right click menu item" (#42).
+    //
+    // Create-and-nest in one call, and inserted directly AFTER the parent's existing children
+    // rather than at the end of the list -- a child created from a row should appear under that
+    // row, not at the bottom of the bar where the eye has to go looking for it.
+    //
+    // Not a convenience wrapper the UI could have assembled itself: two persists would pulse
+    // twice, and the intermediate state -- a new top-level workspace that exists for one frame
+    // before becoming a child -- would be visible on the bar as a row that jumps.
+    public Result<Workspace> AddChildWorkspace(Guid parent, string name) =>
+        Workspace(parent)
+            .Bind(p => p.ParentId is not null
+                ? Result.Failure<Workspace>($"'{p.Name}' is itself nested. Workspaces nest one level deep.")
+                : Result.Success(p))
+            .Bind(_ => Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required"))
+            .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
+            .Bind(() => desktops.Create(name))
+            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id) { ParentId = parent })
+            .Tap(child => Persist(State with { Workspaces = Inserted(child, AfterLastChildOf(parent)) }));
+
+    // One past the parent, then one past each child it already has.
+    int AfterLastChildOf(Guid parent) =>
+        State.Workspaces.ToList().FindIndex(w => w.Id == parent) is var at && at < 0
+            ? State.Workspaces.Count
+            : at + 1 + State.Workspaces.Count(w => w.ParentId == parent);
 
     // Back to the top level. Its own method rather than NestWorkspace(child, null), because
     // "un-nest" is a thing a person does and a nullable parameter is a thing a compiler accepts.
@@ -1123,10 +1239,21 @@ public sealed class WorkspaceManager(
             var windows = knownWindows.Values.ToList();
             var pinned = windows
                 .Where(w => desktops.IsPinned(w.Handle).GetValueOrDefault(false))
+                // A window we BORROWED for a nested workspace is pinned as a mechanism, not as a
+                // statement (#42) -- so it must not surface in the 📌 row, which means "you asked
+                // for this everywhere". Without this the parent's windows would vanish out of the
+                // row you are standing in and reappear under a pin nobody asked for, which is the
+                // opposite of "present in the child workspace".
+                .Where(w => !borrowed.ContainsKey(w.Handle))
                 .Select(w => w.Handle).ToHashSet();
             var desktopOf = windows
                 .Where(w => !pinned.Contains(w.Handle))
-                .Select(w => (w.Handle, Desktop: desktops.DesktopOf(w.Handle)))
+                .Select(w => (w.Handle, Desktop: borrowed.ContainsKey(w.Handle)
+                    // ...and it belongs, for this build, to the desktop it is being borrowed ONTO.
+                    // It is genuinely there -- that is what the pin achieved -- and DesktopOf still
+                    // answers with its home, which would draw it in the parent's row instead.
+                    ? Result.Success(current)
+                    : desktops.DesktopOf(w.Handle)))
                 .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);
             // One screen sweep per build, alongside the DesktopOf calls above -- and far cheaper

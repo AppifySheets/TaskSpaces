@@ -116,51 +116,118 @@ public class NestedWorkspaceTests
         Assert.Null(ParentOf(manager, child));
     }
 
-    // --- what a nested workspace SHOWS ------------------------------------------------------
+    // --- the parent's windows are actually THERE (#42) ---------------------------------------
+    //
+    // Petre: "i want parent's windows to be present in the child workspace, not in the workspace
+    // row... but on the desktop." An earlier version drew them as extra icons and he rejected it
+    // on sight -- so what is tested now is the OS-level borrow, not a rendering.
 
     static WindowInfo Window(nint handle, string process) =>
         new(new WindowHandle(handle), (int)handle, process, $@"C:\{process}.exe", $"{process} window", $@"""C:\{process}.exe""");
 
-    [Fact]
-    public void A_nested_workspace_shows_its_parents_windows_separately()
+    (WorkspaceManager manager, Guid parent, Guid child, WindowInfo onParent) NestedWithAParentWindow()
     {
         var (manager, parent, child, _) = Started();
         Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
 
         var parentDesktop = manager.State.Workspaces.Single(w => w.Id == parent).DesktopId!.Value;
-        var childDesktop = manager.State.Workspaces.Single(w => w.Id == child).DesktopId!.Value;
         var onParent = Window(0xA, "slack");
-        var onChild = Window(0xB, "code");
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, onParent));
         desktops.WindowPlacements[onParent.Handle] = parentDesktop;
-        desktops.WindowPlacements[onChild.Handle] = childDesktop;
-
-        var overview = OverviewBuilder.Build(
-            manager.State,
-            [onParent, onChild],
-            _ => Maybe<string>.None,
-            new HashSet<WindowHandle>(),
-            new Dictionary<WindowHandle, Guid> { [onParent.Handle] = parentDesktop, [onChild.Handle] = childDesktop },
-            [new DesktopInfo(parentDesktop, "Project"), new DesktopInfo(childDesktop, "Project docs")],
-            childDesktop);
-
-        var nested = overview.Workspaces.Single(g => g.Workspace.Id == child);
-        // Its own windows stay its own -- the inherited ones are NOT merged into Running, because
-        // they are not on this desktop and everything downstream (drag targets, counts, placement
-        // memory) would inherit that lie.
-        Assert.Equal(onChild.Handle, Assert.Single(nested.Running).Window.Handle);
-        Assert.Equal(onParent.Handle, Assert.Single(nested.Inherited).Window.Handle);
+        return (manager, parent, child, onParent);
     }
 
     [Fact]
-    public void A_top_level_workspace_inherits_nothing()
+    public void Arriving_in_a_nested_workspace_borrows_the_parents_windows()
     {
-        var (manager, parent, _, _) = Started();
-        var desktop = manager.State.Workspaces.Single(w => w.Id == parent).DesktopId!.Value;
+        var (manager, _, child, onParent) = NestedWithAParentWindow();
+        var childDesktop = manager.State.Workspaces.Single(w => w.Id == child).DesktopId!.Value;
 
-        var overview = OverviewBuilder.Build(
-            manager.State, [], _ => Maybe<string>.None, new HashSet<WindowHandle>(),
-            new Dictionary<WindowHandle, Guid>(), [new DesktopInfo(desktop, "Project")], desktop);
+        desktops.CurrentChangedSubject.OnNext(childDesktop);
 
-        Assert.All(overview.Workspaces, g => Assert.Empty(g.Inherited));
+        Assert.True(desktops.IsPinned(onParent.Handle).Value);
+    }
+
+    // Unpinning does NOT send a window home -- it leaves it on whatever desktop is current. So a
+    // release that only unpinned would quietly move the parent's windows into the child, which is
+    // the one outcome worse than not having the feature.
+    [Fact]
+    public void Leaving_gives_them_back_to_the_desktop_they_came_from()
+    {
+        var (manager, parent, child, onParent) = NestedWithAParentWindow();
+        var parentDesktop = manager.State.Workspaces.Single(w => w.Id == parent).DesktopId!.Value;
+        var childDesktop = manager.State.Workspaces.Single(w => w.Id == child).DesktopId!.Value;
+        var elsewhere = manager.State.Workspaces.Single(w => w.Name == "Personal").DesktopId!.Value;
+
+        desktops.CurrentChangedSubject.OnNext(childDesktop);
+        desktops.CurrentChangedSubject.OnNext(elsewhere);
+
+        Assert.False(desktops.IsPinned(onParent.Handle).Value);
+        Assert.Equal(parentDesktop, desktops.WindowPlacements[onParent.Handle]);
+    }
+
+    // A crash while standing in a nested workspace leaves the parent's windows pinned to every
+    // desktop. The borrow is written to state.json precisely so the next start can undo it.
+    [Fact]
+    public void A_borrow_left_by_a_crash_is_repaired_at_startup()
+    {
+        var (manager, parent, child, onParent) = NestedWithAParentWindow();
+        var parentDesktop = manager.State.Workspaces.Single(w => w.Id == parent).DesktopId!.Value;
+        var childDesktop = manager.State.Workspaces.Single(w => w.Id == child).DesktopId!.Value;
+        desktops.CurrentChangedSubject.OnNext(childDesktop);
+        Assert.NotEmpty(manager.State.InheritedPins);
+
+        // A fresh manager over the same state and the same machine: exactly what the next start
+        // sees after a kill.
+        var restarted = new WorkspaceManager(desktops, monitor, titles, store);
+        Assert.True(restarted.Start().IsSuccess);
+
+        Assert.False(desktops.IsPinned(onParent.Handle).Value);
+        Assert.Equal(parentDesktop, desktops.WindowPlacements[onParent.Handle]);
+        Assert.Empty(restarted.State.InheritedPins);
+    }
+
+    // A borrowed window is pinned as a MECHANISM, not as a statement, so it must not surface in the
+    // 📌 row -- that row means "you asked for this on every desktop". It belongs in the row of the
+    // workspace you are standing in, which is where it actually is.
+    [Fact]
+    public void A_borrowed_window_shows_in_the_nested_row_not_in_pinned()
+    {
+        var (manager, _, child, onParent) = NestedWithAParentWindow();
+        var childDesktop = manager.State.Workspaces.Single(w => w.Id == child).DesktopId!.Value;
+        desktops.CurrentDesktopId = childDesktop;
+        desktops.CurrentChangedSubject.OnNext(childDesktop);
+
+        var overview = manager.WindowsByWorkspace().Value;
+
+        Assert.DoesNotContain(overview.Pinned, r => r.Window.Handle == onParent.Handle);
+        Assert.Contains(overview.Workspaces.Single(g => g.Workspace.Id == child).Running,
+            r => r.Window.Handle == onParent.Handle);
+    }
+
+    // --- creating one from the bar ------------------------------------------------------------
+
+    [Fact]
+    public void A_child_can_be_created_directly_under_its_parent()
+    {
+        var (manager, parent, child, _) = Started();
+        Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
+
+        Assert.True(manager.AddChildWorkspace(parent, "Project notes").IsSuccess);
+
+        var created = manager.State.Workspaces.Single(w => w.Name == "Project notes");
+        Assert.Equal(parent, created.ParentId);
+        // Directly under the parent's existing children rather than at the end of the list, so a
+        // child created from a row appears under that row.
+        Assert.Equal(2, manager.State.Workspaces.ToList().FindIndex(w => w.Id == created.Id));
+    }
+
+    [Fact]
+    public void A_child_cannot_be_given_children_of_its_own()
+    {
+        var (manager, parent, child, _) = Started();
+        Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
+
+        Assert.True(manager.AddChildWorkspace(child, "Too deep").IsFailure);
     }
 }

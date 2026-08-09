@@ -1058,22 +1058,35 @@ public partial class FloatingBar : Window
                     // Recorded so ApplyCandidate can restore the white ring here when the amber
                     // one moves away, without needing another overview query to ask again.
                     if (g.IsCurrent) currentRow = g.Workspace.Id;
-                    // Petre: "a nested workspace is easily identifiable as nested". Two marks
-                    // rather than one, because they answer at different distances: the indent is
-                    // what you see without reading, and the ↳ is what confirms it when the row
-                    // above happens to be short. The full name still reads plainly in the label.
+                    // The parent's own position, which is what the child borrows its colour from.
+                    // -1 when there is no parent, and LaneTint reads that as "index 0" -- which
+                    // never happens here, because it is only used when ParentId is set.
+                    var parentAt = g.Workspace.ParentId is { } pid
+                        ? overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == pid)
+                        : -1;
+                    var parentWorkspace = parentAt >= 0 ? overview.Workspaces[parentAt].Workspace : null;
+
+                    // The name, plainly. The ↳ prefix that was here first is gone: Petre asked for
+                    // "a better representation that it's a child", and a glyph inside a label that
+                    // already sits in a narrow gutter is the weakest place to put it. The spine,
+                    // the shared colour and the indent all say it at the edge of the row instead.
                     groupRows.Add(GroupRow(
-                    g.Workspace.ParentId is null ? g.Workspace.Name : $"↳ {g.Workspace.Name}",
+                    g.Workspace.Name,
                     g.Workspace.Name, g.IsCurrent,
                     switchTo: () => manager.Switch(g.Workspace.Id),
                     groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
                     onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
                     g.Running,
-                    tint: LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)),
+                    // A child wears its PARENT's lane colour rather than its own. Colour is what
+                    // groups things on this bar, so giving a nested workspace a colour of its own
+                    // would be the surface saying "unrelated" while the layout says "belongs to".
+                    tint: parentWorkspace is not null
+                        ? LaneTint(parentWorkspace, parentAt)
+                        : LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)),
                     rowKey: g.Workspace.Id,
                     minimized: g.Workspace.Minimized,
                     nested: g.Workspace.ParentId is not null,
-                    inherited: g.Inherited));
+                    spine: parentWorkspace is not null ? LaneAccent(parentWorkspace, parentAt) : null));
                 });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
@@ -1259,18 +1272,19 @@ public partial class FloatingBar : Window
     // draws there.
     const double MinimizedRowScale = 1.0 / 3;
 
-    // How far a nested row is pushed in (#42). One icon's width, so the indent reads as a level
-    // rather than as a wobble -- and taken out of the icons' own space rather than the row's, so
-    // a nested row still starts and ends where every other row does and the monitor alignment
-    // (#39) still lines up across the bar.
-    const double NestedIndent = 14;
+    // Petre: "maybe a little indented". Ten, not the twenty a tree view would use: the bar is a
+    // tight surface where every icon is a target, and an indent only has to be big enough to be
+    // SEEN once the spine and the shared lane colour have already said what it means.
+    //
+    // Taken out of the icons' own space rather than the row's, so a nested row still starts and
+    // ends where every other row does and the monitor alignment (#39) still lines up across rows.
+    const double NestedIndent = 10;
 
-    // Inherited icons are dimmer than the row's own, because they are not the same KIND of thing:
-    // these windows live on the parent's desktop and clicking one leaves this workspace. Same
-    // device the bar already uses for minimised windows -- opacity means "present but not here".
-    const double InheritedIconOpacity = 0.55;
+    // The spine down the left of a nested row, in its parent's colour. Two pixels: a hairline
+    // reads as an artefact and anything wider starts competing with the icons.
+    const double SpineWidth = 2;
 
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, IReadOnlyList<WindowRow>? inherited = null)
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -1394,21 +1408,47 @@ public partial class FloatingBar : Window
 
         lines.ToList().ForEach(line => icons.Children.Add(LineOf(line, opensGroup, groupLabel, groupKey, rowKey, iconButtons)));
 
-        // The parent's windows, on a nested workspace's row (#42). Petre: "everything from the
-        // main workspace is pinned to the nested ones."
+        // The parent's windows USED to be drawn here, dimmed, on every nested row -- the issue
+        // asked for "everything from the main workspace pinned to the nested ones". Petre, seeing
+        // it: "ugly. i don't want to see parent's windows in the children. only children but with
+        // a better representation that it's a child."
         //
-        // A trailing line of their own rather than mixed in with this row's icons, because they
-        // are not on this desktop: clicking one switches to the parent and focuses it there. Given
-        // its own panel, they also stay out of the wrap arithmetic and the monitor alignment, both
-        // of which are about the windows that actually live here.
-        if (inherited is { Count: > 0 })
-            icons.Children.Add(new Border
-            {
-                Opacity = InheritedIconOpacity,
-                Child = LineOf(inherited, opensGroup: new HashSet<WindowHandle>(), groupLabel, groupKey, rowKey: null, iconButtons),
-            });
+        // Right, and worth keeping the reason rather than just the deletion: a row's icons are
+        // what you aim at, so doubling them halves the value of every one. Belonging is a
+        // relationship, and a relationship is better drawn once at the edge of the row than
+        // restated by copying its contents.
         Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
+
+        // Petre: "only children but with a better representation that it's a child", then "maybe a
+        // little indented".
+        //
+        // Three signals, and they are deliberately all about the row's EDGE rather than its
+        // contents -- the icons are what you aim at, and the first version proved that adding to
+        // them costs more than it says:
+        //
+        //   * a spine down the left, in the PARENT's colour;
+        //   * the parent's lane tint on the row itself (passed in as `tint`), so a family reads as
+        //     one colour rather than as two neighbours that happen to touch;
+        //   * a small indent on the icons.
+        //
+        // The spine spans both columns of the row and sits at its left edge, inside the indent the
+        // icons give up -- so it lands in space that would otherwise be empty, and costs the row
+        // nothing at all.
+        if (nested && spine is not null)
+        {
+            var mark = new Border
+            {
+                Width = SpineWidth,
+                Background = spine,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(1, 1, 0, 1),
+                CornerRadius = new CornerRadius(1),
+            };
+            Grid.SetColumn(mark, 0);
+            container.Children.Add(mark);
+        }
 
         Grid.SetColumn(label, 1);
         container.Children.Add(label);
@@ -1429,7 +1469,7 @@ public partial class FloatingBar : Window
         // the menu of the INNERMOST element that has one, which is exactly the right split:
         // right-clicking an icon is about that window, right-clicking anywhere else on the row is
         // about the workspace.
-        if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel, minimized);
+        if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel, minimized, nested);
 
         // A third of the height, everything included (#52). Applied to the whole row and applied
         // LAST, so nothing built above has to know it is being drawn small.
@@ -1750,16 +1790,24 @@ public partial class FloatingBar : Window
     // new brushes per rebuild would be wasteful, and the set of workspace colours is tiny.
     static readonly Dictionary<string, Brush> LaneTints = [];
 
-    static Brush? LaneTint(Workspace workspace, int index)
+    static Brush? LaneTint(Workspace workspace, int index) => Lane(workspace, index, 0x38);
+
+    // The same lane colour at full strength, for the spine down the left of a nested row (#42).
+    // Deriving it from the same hex rather than picking a second colour is the whole point: the
+    // spine has to read as "this belongs to the lane above", and two colours cannot say that.
+    static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xC8);
+
+    static Brush? Lane(Workspace workspace, int index, byte alpha)
     {
         var hex = WorkspacePalette.For(workspace, index < 0 ? 0 : index);
-        if (LaneTints.TryGetValue(hex, out var cached)) return cached;
+        var key = $"{hex}:{alpha:X2}";
+        if (LaneTints.TryGetValue(key, out var cached)) return cached;
         try
         {
             var solid = (Color)ColorConverter.ConvertFromString(hex);
-            var brush = new SolidColorBrush(Color.FromArgb(0x38, solid.R, solid.G, solid.B));
+            var brush = new SolidColorBrush(Color.FromArgb(alpha, solid.R, solid.G, solid.B));
             brush.Freeze();
-            LaneTints[hex] = brush;
+            LaneTints[key] = brush;
             return brush;
         }
         catch (FormatException)
@@ -2506,7 +2554,7 @@ public partial class FloatingBar : Window
     // Deliberately NOT here: Remove. It is the one item that cannot be undone, this menu now opens
     // on a click that used to do nothing, and a mis-aimed right-click landing on "Remove
     // workspace" is a bad way to find that out. Manage still has it.
-    ContextMenu WorkspaceMenu(Guid workspaceId, string name, bool minimized)
+    ContextMenu WorkspaceMenu(Guid workspaceId, string name, bool minimized, bool nested)
     {
         var menu = new ContextMenu();
         HoldFadeWhileOpen(menu);
@@ -2538,6 +2586,13 @@ public partial class FloatingBar : Window
         // one past it, and InsertWorkspace clamps both.
         Add("✚", "Insert before…", () => InsertAt(IndexOf()));
         Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1));
+        // Petre: "add child as a right click menu item" (#42). Only offered on a row that CAN be a
+        // parent -- workspaces nest one level deep, so a child row does not offer to have children
+        // of its own rather than offering it and refusing afterwards.
+        if (!nested)
+            Add("↳", "Add child…", () =>
+                PromptDialog.Ask("New nested workspace", "Name:", owner: this)
+                    .Tap(child => Report(manager.AddChildWorkspace(workspaceId, child))));
 
         menu.Items.Add(new Separator());
 

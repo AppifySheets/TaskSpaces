@@ -51,6 +51,20 @@ public sealed record AppState(
     // values, human-readable in state.json, and RosterIdentity.Of(entry) derives the
     // identity anyway. Init properties with empty defaults, so older state.json files load
     // without migration (same pattern as PersistedRenames and FloatingBar).
+    // Windows we OS-pinned so a nested workspace could show its parent's windows (#42), and the
+    // desktop each one came from.
+    //
+    // Persisted for exactly one reason: crash recovery. Pinning is a real change to the user's
+    // machine, and unpinning leaves a window on whatever desktop is current -- so a crash while
+    // inside a nested workspace would strand the parent's windows both pinned and homeless. With
+    // this, the next start unpins each one and puts it back where it came from.
+    //
+    // Raw hwnds rather than roster identities, and that is right HERE while being wrong everywhere
+    // else in this file: those windows belong to processes that outlive our crash, so their handles
+    // are still valid on the next start -- and a handle is exactly what Unpin and MoveWindow need.
+    // Anything that no longer exists is simply dropped.
+    public IReadOnlyList<InheritedPin> InheritedPins { get; init; } = [];
+
     public IReadOnlyList<InventoryEntry> PinnedApps { get; init; } = [];
     public IReadOnlyList<InventoryEntry> DetachedApps { get; init; } = [];
 

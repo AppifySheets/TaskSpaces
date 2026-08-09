@@ -63,22 +63,16 @@ public sealed record WindowRow(
     Maybe<int> MonitorRank = default);
 
 // A workspace's slice of the world: live windows + roster entries not running anywhere.
-// Inherited (#42): the PARENT's windows, on a nested workspace's row. Petre: "everything from the
-// main workspace is pinned to the nested ones."
+// There was briefly an `Inherited` list here, carrying the parent's windows so a nested row could
+// draw them (#42). Petre, seeing it: "ugly. i don't want to see parent's windows in the children",
+// then the sentence that redefined the feature -- "i want parent's windows to be present in the
+// child workspace, not in the workspace row... but on the desktop."
 //
-// Carried as a separate list rather than mixed into Running, and that separation is the feature
-// being honest about itself. These windows are NOT on this desktop -- they are on the parent's, and
-// clicking one goes there. Merging them into Running would make a nested row claim membership it
-// does not have, and the next thing to read that list (a drag target, a count, placement memory)
-// would inherit the lie.
-//
-// Empty for every top-level workspace, which is all of them until somebody nests one.
-public sealed record WorkspaceGroup(
-    Workspace Workspace,
-    bool IsCurrent,
-    IReadOnlyList<WindowRow> Running,
-    IReadOnlyList<InventoryEntry> NotRunning,
-    IReadOnlyList<WindowRow> Inherited);
+// So they are not shown twice, they are actually THERE: WorkspaceManager borrows them onto the
+// child's desktop while you are standing in it, and they arrive in Running like any other window
+// that is genuinely on that desktop. Nothing here needs to know -- which is the point, and the
+// reason this record went back to what it was.
+public sealed record WorkspaceGroup(Workspace Workspace, bool IsCurrent, IReadOnlyList<WindowRow> Running, IReadOnlyList<InventoryEntry> NotRunning);
 
 // A desktop that is NOT a TaskSpaces workspace still has a name ("Desktop 1") -- its
 // windows group under that name, never under a generic "Unassigned" (Petre's ask).
