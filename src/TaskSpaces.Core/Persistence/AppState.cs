@@ -30,6 +30,15 @@ public sealed record AppState(
     // configured" -- same init-property/no-migration pattern as FloatingBar above.
     public double? BarScale { get; init; }
 
+    // Petre: "when i leave the floating window i want it to fade away, still be visible, but much
+    // dimmer, so i can see what's behind it better."
+    //
+    // How dim the bar sits when the pointer is elsewhere. Read through BarFading.Clamp, which
+    // supplies the default and tolerates whatever a hand-edited file contains -- same
+    // init-property/no-migration pattern as BarScale above, and 1.0 is the honest way to say
+    // "never fade", so no separate on/off flag is needed.
+    public double? BarIdleOpacity { get; init; }
+
     // The two placements the Inventory above cannot express (Petre: "last placement IS the
     // rule"). Inventory already records identity -> workspace on every Place(), but a
     // PINNED window belongs to no single workspace and a DETACHED one belongs to none at

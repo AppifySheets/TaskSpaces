@@ -71,6 +71,14 @@ public partial class FloatingBar : Window
         // below the info line's own would clip it with no way to drag it back.
         if (manager.State.FloatingBar?.Width is { } stored) ApplyWidth(Math.Max(MinimumWidth, stored));
 
+        // Starts dim, because at startup the pointer is wherever the user left it and almost never
+        // on a bar that has just appeared. Waiting for the first MouseLeave instead would show a
+        // fully opaque bar until the pointer happened to cross it once.
+        idleOpacity = BarFading.Clamp(manager.State.BarIdleOpacity);
+        Opacity = idleOpacity;
+        MouseEnter += (_, _) => UpdateFade();
+        MouseLeave += (_, _) => UpdateFade();
+
         Rebuild();
         // Live-refresh while visible, same pattern as WindowGroupsView.Bind: windows
         // opening/closing (manual script item 36) must update the bar without Petre
@@ -102,6 +110,53 @@ public partial class FloatingBar : Window
             else iconWatch.Stop();
         };
         Closed += (_, _) => { iconWatch.Stop(); subscription?.Dispose(); };
+    }
+
+    // --- fading while the pointer is elsewhere ---------------------------------------
+    //
+    // Petre: "when i leave the floating window i want it to fade away, still be visible, but much
+    // dimmer, so i can see what's behind it better."
+    //
+    // On the WINDOW's opacity rather than on the content's, so the translucent background dims
+    // with everything else -- dimming only the icons would leave the dark panel behind them at
+    // full strength, which is most of what is actually in the way.
+    //
+    // Unlike the row-order freeze, this needs none of that feature's hit-test discipline: rebuilds
+    // destroy rows, but the window itself outlives every one of them, so its own MouseEnter and
+    // MouseLeave cannot be raised by anything but a pointer genuinely arriving or leaving.
+    readonly double idleOpacity;
+
+    // Instant on the way in, gentle on the way out. Reaching for the bar should feel like it was
+    // already there; leaving should not flicker as the pointer clips a corner on its way past.
+    const int BrightenMs = 60, FadeMs = 180;
+
+    // Three cases where the bar is in use without being touched, and dimming any of them would
+    // hide the very thing being looked at:
+    //
+    //   * A switch gesture is in flight. Win+Ctrl+Tab is a KEYBOARD gesture -- the pointer is
+    //     nowhere near the bar by definition -- and the amber candidate ring it paints is the
+    //     entire feedback for it.
+    //   * A window is being dragged between rows. The OLE loop owns the mouse, the pointer is
+    //     over another row, and the bar is the drop target being aimed at.
+    //   * A context menu is open. The menu is its own window, so the pointer standing in it
+    //     counts as having left the bar -- which would fade the row the menu belongs to.
+    bool HoldsFullStrength => candidate is not null || draggingWindow || openMenu?.IsOpen == true;
+
+    bool draggingWindow;
+    ContextMenu? openMenu;
+
+    void UpdateFade()
+    {
+        var bright = IsMouseOver || HoldsFullStrength;
+        var target = bright ? 1.0 : idleOpacity;
+        // Already there, or already on the way there: Opacity reads the ANIMATED value while an
+        // animation is running, so this also stops a rebuild mid-fade from restarting the same
+        // fade from wherever it had reached. Rebuilds are frequent; the fade should not be.
+        if (Math.Abs(Opacity - target) < 0.001) return;
+        // BeginAnimation rather than assigning Opacity: an animation that is still running owns
+        // the property, and a plain assignment underneath it would be overwritten mid-flight.
+        BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(
+            target, TimeSpan.FromMilliseconds(bright ? BrightenMs : FadeMs)));
     }
 
     // 1s, matching IconCache's own probe interval: ticking faster would just be throttled
@@ -420,6 +475,13 @@ public partial class FloatingBar : Window
         // and a freeze nobody clears would pin that row's order for the rest of the session.
         // This bounds every one of those at one second.
         if (hoveredRow is { } stale) ReleaseRowIfPointerLeft(stale.Key);
+
+        // Same belt and braces for the fade. Every input it reads can change without an event
+        // reaching this window -- a menu dismissed by clicking another application, a drag that
+        // ended somewhere else -- and the cost of missing one is a bar stuck bright, which is
+        // exactly the thing being fixed. Cheap: UpdateFade returns immediately unless the answer
+        // has actually changed.
+        UpdateFade();
 
         if (Mouse.LeftButton == MouseButtonState.Pressed) return;
         FlushDeferredRebuild();
@@ -1284,6 +1346,12 @@ public partial class FloatingBar : Window
     // constantly -- the walk starts on the row you are standing on.
     void ApplyCandidate()
     {
+        // Every begin/step/end of the switch gesture comes through here, so this is the one place
+        // the fade has to learn that the bar is being used from the KEYBOARD -- where the pointer
+        // is elsewhere by definition, and a dimmed bar would hide the rings this method is
+        // painting.
+        UpdateFade();
+
         rowRings.ToList().ForEach(row =>
             row.Value.BorderBrush = row.Key == candidate ? CandidateRowRing
                 : row.Key == currentRow ? CurrentRowRing
@@ -1753,7 +1821,13 @@ public partial class FloatingBar : Window
         // dropped on the switcher panel (and vice versa) if both happen to be open.
         // onDragStarting clears the info line: the icon under the cursor never raises
         // MouseLeave once the modal drag loop owns the mouse, so nothing else would.
-        WindowDragSource.Attach(button, row.Window.Handle, groupKey, onDragStarting: ClearInfo);
+        // The two callbacks are the same fact told to two different features: the pointer is about
+        // to stop being ours (the info line has to be dismissed by hand, since the icon under the
+        // cursor raises no MouseLeave during a drag) and the bar must not fade while it is being
+        // dragged ONTO (the OLE loop owns the mouse and the pointer is over another row).
+        WindowDragSource.Attach(button, row.Window.Handle, groupKey,
+            onDragStarting: () => { ClearInfo(); draggingWindow = true; UpdateFade(); },
+            onDragFinished: () => { draggingWindow = false; UpdateFade(); });
         button.ContextMenu = IconMenu(row);
         return button;
     }
@@ -2087,6 +2161,16 @@ public partial class FloatingBar : Window
     ContextMenu IconMenu(WindowRow row)
     {
         var menu = new ContextMenu();
+
+        // A context menu is its own window, so a pointer standing in it has -- as far as WPF is
+        // concerned -- left the bar, which would fade the very row the menu was opened on.
+        //
+        // The menu itself is remembered rather than a flag being set, because the flag could get
+        // stuck: menus belong to icon Buttons, every rebuild throws those Buttons away, and a menu
+        // destroyed with its owner is not guaranteed to raise Closed. Asking the remembered menu
+        // whether it IsOpen cannot get stuck the same way -- a menu that went away answers no.
+        menu.Opened += (_, _) => { openMenu = menu; UpdateFade(); };
+        menu.Closed += (_, _) => { if (ReferenceEquals(openMenu, menu)) openMenu = null; UpdateFade(); };
 
         var rename = new MenuItem { Header = "Rename this window…" };
         rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title, owner: this)

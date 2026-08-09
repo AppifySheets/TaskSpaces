@@ -41,7 +41,11 @@ static class WindowDragSource
     // `title` used to be a parameter, read only by the DnDTrace calls that have now been
     // stripped. Removed rather than left in place: a parameter nothing reads is a standing
     // invitation to wonder what it was for.
-    internal static void Attach(Button button, WindowHandle handle, string groupKey, Action? onDragStarting = null)
+    // onDragFinished fires once the modal OLE loop has given the mouse back, whatever the outcome
+    // -- dropped, cancelled or dropped on nothing. The bar uses it to stop holding itself at full
+    // strength; nothing else can tell it, because DoDragDrop below BLOCKS for the whole drag and
+    // the caller's onDragStarting has long since returned by then.
+    internal static void Attach(Button button, WindowHandle handle, string groupKey, Action? onDragStarting = null, Action? onDragFinished = null)
     {
         Point? dragStart = null;
 
@@ -87,7 +91,17 @@ static class WindowDragSource
             button.ReleaseMouseCapture();
 
             onDragStarting?.Invoke();
-            DragDrop.DoDragDrop(button, new DataObject(DraggedWindow.DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
+            // try/finally: a drag that throws must not leave the caller believing one is still in
+            // flight -- for the bar that would mean staying at full strength for the rest of the
+            // session, with nothing left to clear it.
+            try
+            {
+                DragDrop.DoDragDrop(button, new DataObject(DraggedWindow.DragFormat, new DraggedWindow(handle, groupKey)), DragDropEffects.Move);
+            }
+            finally
+            {
+                onDragFinished?.Invoke();
+            }
         };
     }
 }
