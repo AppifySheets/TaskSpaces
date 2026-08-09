@@ -377,8 +377,86 @@ public partial class FloatingBar : Window
     // mouse-up can go missing, not just the one that was noticed.
     public void FlushIfIdle()
     {
+        // Belt and braces for the hover freeze, on the same principle as the flush below: a
+        // release that depends on a MouseLeave arriving is a release that can fail to happen.
+        // The pointer can end up off a frozen row with no leave event at all -- the container is
+        // destroyed by a rebuild mid-move, the bar is hidden, another window takes the mouse --
+        // and a freeze nobody clears would pin that row's order for the rest of the session.
+        // This bounds every one of those at one second.
+        if (hoveredRow is { } stale) ReleaseRowIfPointerLeft(stale.Key);
+
         if (Mouse.LeftButton == MouseButtonState.Pressed) return;
         FlushDeferredRebuild();
+    }
+
+    // --- hover freeze ---------------------------------------------------------------
+    //
+    // Petre: "when an app becomes the top app, if i press on it in the workspace, it moves to the
+    // first position, which is good, but i want that position changing to happen after i've left
+    // the floating window with a mouse... so that i can minimize it back if i didn't want to use
+    // it and am testing what it is." Then, on scope: on leaving THE ROW, not the bar.
+    //
+    // The ordering rule itself is pure and lives in RowOrderFreeze (with its own tests and its
+    // own reasoning). This is the half that cannot be pure: which row the pointer is in.
+    //
+    // One slot, because one row is hovered at a time. Keyed by groupKey rather than by the row's
+    // rowKey: rowKey is null for unbound-desktop rows, and an unbound desktop IS the current
+    // desktop on Petre's machine most of the time -- which makes it exactly the row that sorts by
+    // z-order and therefore the one that needs holding.
+    (string Key, IReadOnlyList<WindowHandle> Order)? hoveredRow;
+
+    // The order to re-impose on this row, or nothing if it is not the hovered one.
+    IReadOnlyList<WindowHandle> HeldOrder(string groupKey) =>
+        hoveredRow is { } h && h.Key == groupKey ? h.Order : [];
+
+    // Marks a row container for HoveredRowKey below. A dedicated type rather than the bare string:
+    // icon Buttons already carry Tag = IconTag, so a walk up the tree looking for "any string Tag"
+    // would stop at the icon and report "icon" as the row key -- releasing the freeze the instant
+    // the pointer touched the very icons it exists to hold still.
+    sealed record RowTag(string Key);
+
+    void EnterRow(string groupKey, IReadOnlyList<WindowRow> displayed)
+    {
+        // Re-entering the row we are already holding -- which happens every time a rebuild swaps
+        // the container out from under a stationary pointer. Keeping the ORIGINAL snapshot
+        // matters: re-capturing here would be capturing the same order anyway (the row is frozen,
+        // so nothing has moved), but only by luck, and the luck runs out the moment anything else
+        // is allowed to reorder a frozen row.
+        if (hoveredRow is { } held && held.Key == groupKey) return;
+
+        var wasHolding = hoveredRow is not null;
+        hoveredRow = (groupKey, RowOrderFreeze.Capture(displayed));
+        // Moving straight from one row to another: the row just left has to re-sort now, and its
+        // own MouseLeave cannot do it -- by the time that deferred check runs, the freeze belongs
+        // to this row and it will (correctly) leave it alone.
+        if (wasHolding) Rebuild();
+    }
+
+    // Deferred to the next dispatcher turn, and that is the load-bearing part of this whole
+    // feature. A rebuild removes the hovered container from the tree, and WPF raises MouseLeave on
+    // removal -- so acting on the event directly would unfreeze a row the pointer never left, and
+    // rebuilds are most frequent precisely while the user is working in the bar. By the next turn
+    // the new row exists, so asking where the pointer ACTUALLY is answers correctly.
+    void LeaveRow(string groupKey) =>
+        Dispatcher.BeginInvoke(new Action(() => ReleaseRowIfPointerLeft(groupKey)));
+
+    void ReleaseRowIfPointerLeft(string groupKey)
+    {
+        if (hoveredRow is not { } held || held.Key != groupKey) return; // another row already owns the freeze
+        if (HoveredRowKey() == groupKey) return;                        // still inside it; the container was merely rebuilt
+        hoveredRow = null;
+        Rebuild(); // the promotion the user has been waiting for, served the moment they step off
+    }
+
+    // Which row the pointer is actually inside, by hit test rather than by remembered events.
+    string? HoveredRowKey()
+    {
+        if (!IsVisible || !IsMouseOver) return null;
+        for (var node = Rows.InputHitTest(Mouse.GetPosition(Rows)) as DependencyObject;
+             node is not null;
+             node = VisualTreeHelper.GetParent(node))
+            if (node is FrameworkElement { Tag: RowTag tag }) return tag.Key;
+        return null;
     }
 
     void OnPreviewMouseMove(object sender, MouseEventArgs e)
@@ -734,6 +812,11 @@ public partial class FloatingBar : Window
         // transparent, or dragging over a workspace would permanently strip its tint.
         var idle = tint ?? Brushes.Transparent;
 
+        // Held still while the pointer is inside this row (see the hover-freeze section above).
+        // Applied HERE, before anything reads the rows, so the order drawn, the order captured on
+        // enter and the order the wrap splits into lines are all the same list.
+        var ordered = RowOrderFreeze.Apply(rows.ToList(), HeldOrder(groupKey));
+
         // Petre: "do you think it would make more sense if the captions for the spaces were on
         // the right and icons started from the left edge?"
         //
@@ -798,7 +881,7 @@ public partial class FloatingBar : Window
         // genuinely changes -- including at a line start, when the change happens to fall there.
         Maybe<int> previous = Maybe<int>.None;
 
-        IconRowLimit.Lines(rows.ToList()).ToList().ForEach(line =>
+        IconRowLimit.Lines(ordered).ToList().ForEach(line =>
         {
             var linedUp = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
             line.ToList().ForEach(r =>
@@ -831,6 +914,17 @@ public partial class FloatingBar : Window
         var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo);
         Grid.SetColumn(label, 1);
         container.Children.Add(label);
+
+        // Hover freeze: hold this row's icon order while the pointer is inside it. Wired for
+        // EVERY row, including the ones that can never re-sort (📌 Pinned and Unplaced have no
+        // z-order): entering an inert row still has to RELEASE the row you came from, and routing
+        // that through the same pair of handlers is what makes "the row under the pointer" the
+        // whole rule, with no row that quietly does not count.
+        //
+        // `ordered` rather than `rows`: the capture must be what is on screen, which is this list.
+        container.Tag = new RowTag(groupKey);
+        container.MouseEnter += (_, _) => EnterRow(groupKey, ordered);
+        container.MouseLeave += (_, _) => LeaveRow(groupKey);
 
 
         // Petre: "i'd prefer to be able to click on the empty row as well and it takes me to
