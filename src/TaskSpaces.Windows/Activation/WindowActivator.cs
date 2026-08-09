@@ -96,4 +96,9 @@ public sealed class WindowActivator : IWindowActivator
     public Result Minimize(WindowHandle window) =>
         Result.Try(() => ShowWindowAsync(window.Value, SW_MINIMIZE),
             e => $"Could not minimize window {window.Value}: {e.Message}");
+
+    // The live answer, read at the moment somebody needs it rather than remembered from a sweep.
+    // Same call Activate uses above to decide whether to restore, which is what keeps the two
+    // halves of the bar's toggle talking about the same fact.
+    public bool IsMinimized(WindowHandle window) => IsIconic(window.Value);
 }

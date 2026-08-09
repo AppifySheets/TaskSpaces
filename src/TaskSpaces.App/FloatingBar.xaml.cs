@@ -1579,9 +1579,12 @@ public partial class FloatingBar : Window
         button.Click += (_, _) =>
         {
             MarkPressConsumed();
-            Report(row.IsActive
-                ? manager.MinimizeWindow(row.Window.Handle, activator)
-                : manager.JumpTo(row.Window.Handle, activator));
+            // Which half of the toggle this is belongs to the manager, NOT to the row: a row is a
+            // snapshot, and both facts the decision needs (is this the window you are in, is it
+            // already down) can be older than the click by the time it happens. See
+            // WorkspaceManager.ToggleWindow for what that cost -- a minimized window that could
+            // not be brought back.
+            Report(manager.ToggleWindow(row.Window.Handle, activator));
         };
 
         // Petre: "i also want to be able to drag them around across tabs" -- the same drag

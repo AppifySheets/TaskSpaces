@@ -175,6 +175,68 @@ public class ActiveWindowTests
         Assert.Equal(1, pulses);
     }
 
+    // Petre: "when i minimize an app in the floatingwindow, i can't bring it back up, maybe not
+    // always", then "after several attempts, it does come up and back down minimized, and then
+    // nothing, stays minimized".
+    //
+    // The bug, and it is deterministic rather than the "maybe" it looked like. Clicking a bar
+    // icon activates the BAR, which WindowMonitor deliberately ignores, so Foreground() reports
+    // None and MarkActive -- which never clears on None, on purpose -- goes on naming the window
+    // that was just minimized. Nothing else corrects it either: minimizing raises no event this
+    // app hooks (see MinimizeWindow), so no rebuild follows the one MinimizeWindow itself pulses,
+    // and THAT one races ShowWindowAsync and is usually taken before the window is iconic.
+    //
+    // So the row stays marked "active, not minimized" and every further click re-minimizes an
+    // already-minimized window, which Windows treats as a no-op. It only recovers when some other
+    // TRACKED window takes the foreground -- which is the "after several attempts" part.
+    //
+    // Hence the toggle asks the OS at the moment of the decision instead of reading a snapshot: a
+    // minimized window is never the window you are in, whatever the highlight still says.
+    [Fact]
+    public void A_minimized_window_is_restored_even_while_it_is_still_marked_active()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        var window = new WindowHandle(0x1);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, Code(0x1, "one - Visual Studio Code")));
+        var activator = new FakeActivator();
+        activator.Iconic.Add(window); // the user already put it away from the bar
+
+        Assert.True(manager.ToggleWindow(window, activator).IsSuccess);
+
+        Assert.Equal(window, Assert.Single(activator.Activated));
+        Assert.Empty(activator.Minimized);
+    }
+
+    // The other half of the toggle, unchanged: clicking the window you are actually in puts it
+    // away (Petre: "i want to be able to minimize windows from the floating bar").
+    [Fact]
+    public void Clicking_the_window_you_are_in_puts_it_away()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        var window = new WindowHandle(0x1);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, Code(0x1, "one - Visual Studio Code")));
+        var activator = new FakeActivator();
+
+        Assert.True(manager.ToggleWindow(window, activator).IsSuccess);
+
+        Assert.Equal(window, Assert.Single(activator.Minimized));
+        Assert.Empty(activator.Activated);
+    }
+
+    // Any other window is a jump, which is the overwhelmingly common case.
+    [Fact]
+    public void Clicking_a_window_you_are_not_in_jumps_to_it()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, Code(0x1, "one - Visual Studio Code")));
+        var activator = new FakeActivator();
+
+        Assert.True(manager.ToggleWindow(new WindowHandle(0x2), activator).IsSuccess);
+
+        Assert.Equal(new WindowHandle(0x2), Assert.Single(activator.Activated));
+        Assert.Empty(activator.Minimized);
+    }
+
     // Minimizing is presentational, exactly like activation: where a window BELONGS is not
     // changed by putting it down.
     [Fact]

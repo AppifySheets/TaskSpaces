@@ -98,8 +98,13 @@ public sealed class FakeActivator : IWindowActivator
 {
     public List<WindowHandle> Activated { get; } = [];
     public List<WindowHandle> Minimized { get; } = [];
+    // What the OS would answer for IsIconic RIGHT NOW. Set by tests; deliberately NOT fed from
+    // the Minimize calls above, so a test can describe the state the bug actually lives in --
+    // a window already put away, with the bar still saying it is the active one.
+    public HashSet<WindowHandle> Iconic { get; } = [];
     public Result Activate(WindowHandle w) { Activated.Add(w); return Result.Success(); }
     public Result Minimize(WindowHandle w) { Minimized.Add(w); return Result.Success(); }
+    public bool IsMinimized(WindowHandle w) => Iconic.Contains(w);
 }
 
 // Flashing taskbar buttons. Tests push handles through Subject to mean "this window's button

@@ -1049,6 +1049,35 @@ public sealed class WorkspaceManager(
     public Result MinimizeWindow(WindowHandle window, IWindowActivator windowActivator) =>
         windowActivator.Minimize(window).Tap(() => stateChanged.OnNext(Unit.Default));
 
+    // Which half of that toggle a click on the bar means. It used to be decided by the BAR, from
+    // the IsActive flag on the row it had drawn, and Petre found what that costs: "when i minimize
+    // an app in the floatingwindow, i can't bring it back up... after several attempts, it does
+    // come up and back down minimized, and then nothing, stays minimized."
+    //
+    // Neither fact the decision needs survives being read from a rendered row:
+    //
+    //   * IsActive is STICKY, deliberately. Clicking a bar icon activates the bar, which
+    //     WindowMonitor ignores by hwnd, so Foreground() reports None and MarkActive -- which
+    //     never clears on None, for good reasons of its own -- goes on naming the window that was
+    //     just put away.
+    //   * IsMinimized is a SNAPSHOT, and a stale one here. Minimizing raises no event this app
+    //     hooks, so the only rebuild that follows is the pulse MinimizeWindow sends itself, and
+    //     that races ShowWindowAsync -- it is usually taken before the window is iconic.
+    //
+    // So the row went on saying "active, not minimized" and each further click re-minimized an
+    // already-minimized window, which Windows treats as a no-op: nothing happened, repeatedly.
+    // It recovered only when some other tracked window took the foreground, which is exactly the
+    // intermittency Petre reported.
+    //
+    // Decided here, from the live active window and a live IsIconic, so neither input can be
+    // older than the click. A minimized window is never the window you are in, whatever the
+    // highlight still claims -- and that ordering makes restore the fallback, which is the safe
+    // way round: the worst a wrong guess can now do is raise a window you meant to put away.
+    public Result ToggleWindow(WindowHandle window, IWindowActivator windowActivator) =>
+        activeWindow.GetValueOrDefault() == window && !windowActivator.IsMinimized(window)
+            ? MinimizeWindow(window, windowActivator)
+            : JumpTo(window, windowActivator);
+
     // Which of a workspace's roster apps are not currently running anywhere. Checks ALL
     // known windows rather than just this workspace's, because Rider-on-X sitting in another
     // workspace still counts as running.
