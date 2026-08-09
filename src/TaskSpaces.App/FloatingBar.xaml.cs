@@ -1185,25 +1185,28 @@ public partial class FloatingBar : Window
         // report an error into, and the next StateChanged pulse retries for free.
     }
 
-    // One line of a row's icons, with each monitor's group pushed to its own end.
+    // One line of a row's icons, grouped by monitor, packed left with a mark between the groups.
     //
     // Petre: "if apps are separated by monitor, let them be aligned to the left and right, not all
     // left... let the current width of the floating bar be as it is, apps on each monitor will be
     // left and right aligned, hairline in the middle between them."
     //
-    // A Grid rather than the StackPanel this used to be, with the groups in Auto columns and a
-    // STAR column between each pair. The star columns share whatever the icons do not use, which
-    // is what pushes the first group left and the last group right -- and generalises past two
-    // monitors on its own, since three groups simply get two gaps and come out evenly spread.
-    // There is no case here for "two monitors" as such, which is why none is written.
+    // That was built as written and #58 takes half of it back: spreading the groups to opposite
+    // ends put the right-hand one under the label, far from the hairline that names it.
     //
-    // The hairline moves INTO the gap and is centred there, which is the literal reading of "in
-    // the middle between them". It used to lead its group, so it sat hard against the left of the
-    // right-hand group and read as belonging to it rather than as dividing the two.
+    // A Grid rather than the StackPanel this used to be. Every column is Auto and the groups pack
+    // left-to-right with their marks between them, so a row reads: left-screen icons, mark,
+    // right-screen icons -- then whatever width is left over, then the label gutter. The slack
+    // collects at the END of the row instead of between the groups, which is the difference: a
+    // star column between each pair used to share it out, and on a wide bar that carried the
+    // right-hand group all the way across until it sat under the label.
     //
-    // The gap's MinWidth is what keeps a bar with no slack looking exactly as it does today: a
-    // star column will shrink below its content, so without it the mark would be clipped to
-    // nothing on a SizeToContent bar -- the very case that has no room to spare.
+    // What survives from that arrangement is the leading gap below, which is a different rule
+    // about a different thing (which SCREEN a row starts on, not how its groups are spaced).
+    //
+    // The mark still divides rather than leads: it is its own column between the two groups, with
+    // symmetric margins, rather than the first thing inside the right-hand group -- which is what
+    // it was before "in the middle between them", and which read as belonging to that group.
     UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons)
     {
         // Runs of consecutive icons that share a monitor. `opensGroup` already knows where each
@@ -1230,12 +1233,27 @@ public partial class FloatingBar : Window
             var (run, index) = entry;
             var opens = opensGroup.Contains(run[0].Window.Handle);
 
-            // Every group but the first is preceded by a gap, and the gap carries the mark.
-            if (index > 0)
-                AddColumn(
-                    new Grid { Children = { MonitorMarker(run[0].MonitorRank.Value) }, HorizontalAlignment = HorizontalAlignment.Center },
-                    new GridLength(1, GridUnitType.Star),
-                    MonitorMarkerWidth);
+            // Every group but the first is preceded by its mark, and the groups PACK against it
+            // (#58). Petre: "all icons align left, the splitting stays in the middle, the
+            // right-screen icons sit immediately next to the hairline, not pushed to the right
+            // edge."
+            //
+            // This column used to be a STAR, and the slack it soaked up is what pushed the
+            // right-hand group away across the row until it sat under the label. Auto instead: it
+            // is exactly the mark's own width, so the group that follows begins where the mark
+            // ends. The leftover width now collects at the END of the row, before the label
+            // gutter, where it is empty space rather than a gap holding two groups apart.
+            //
+            // The mark's symmetric 1px margins are the whole separation now, which is the same
+            // spacing it already had against the group it names ("before and after the hairline
+            // space should be the same"). No MinWidth is needed any more -- an Auto column cannot
+            // shrink below its content, which is precisely what the MinWidth was protecting a star
+            // column from on a bar with no slack.
+            //
+            // Untouched deliberately: the LEADING gap below, which pushes a row whose windows are
+            // all on a later screen towards the end it belongs at. That answers a different
+            // question ("which screen is this row on") and was asked for separately.
+            if (index > 0) AddColumn(MonitorMarker(run[0].MonitorRank.Value), GridLength.Auto);
 
             // A line can BEGIN with a group that is not the leftmost monitor's -- Petre's
             // BusinessOffer and Messaging rows, whose windows are all on the second screen.
