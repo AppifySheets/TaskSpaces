@@ -70,6 +70,12 @@ public partial class App : Application
         // "Local\" scopes the mutex to the login SESSION, not the machine: two users on one
         // PC should each get their own instance, since every piece of state this app touches
         // (state.json under %APPDATA%, the HKCU Run key, the user's own desktops) is per-user.
+        // Before anything else that could be worth tracing, and it writes only when tracing is on
+        // -- so the log's first line always says WHICH switch turned it on, and an empty log means
+        // "not recording" rather than "nothing happened". Losing a reproduction to that ambiguity
+        // is what put this line here (see ClickTrace).
+        ClickTrace.Announce();
+
         singleInstance = new System.Threading.Mutex(initiallyOwned: true, @"Local\TaskSpaces.SingleInstance", out var isOnlyInstance);
         if (!isOnlyInstance)
         {

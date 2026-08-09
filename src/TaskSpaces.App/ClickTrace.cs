@@ -32,9 +32,21 @@ namespace TaskSpaces.App;
 // It is intermittent and nobody has made it happen on demand, so the trace has to be ON before it
 // occurs. That is the whole reason this is an environment variable and not a menu item.
 //
-//   1. Turn it on permanently, once:      setx TASKSPACES_TRACE 1
-//      Then restart TaskSpaces (a running process does not see a new setx).
-//      To turn it off:                    setx TASKSPACES_TRACE ""
+//   1. Turn it on permanently, once, by creating a marker file:
+//
+//          type nul > "%APPDATA%\TaskSpaces\trace.on"
+//
+//      Then restart TaskSpaces. To turn it off, delete that file and restart.
+//
+//      TASKSPACES_TRACE=1 in the environment also works, but PREFER THE FILE. `setx` writes the
+//      user-scope value, and a process only ever inherits its parent's environment block as
+//      captured when that parent started -- so anything launched from a shell that predates the
+//      setx runs with tracing OFF while every check of the setting insists it is on. That cost a
+//      reproduction of #51 already: the dialog was slow, the trace was not recording, and nothing
+//      said so.
+//
+//      Whichever switch is used, the log's first line names it. A log that does not begin with a
+//      `--- trace on ...` line was not recording, and an empty log means the same.
 //
 //   2. Use the bar normally. When a click on a workspace does nothing, note ROUGHLY what time it
 //      was and which workspace -- the log is timestamped and each line names the group, so
@@ -89,13 +101,45 @@ namespace TaskSpaces.App;
 // example, so the fourth visit starts where the third finished.
 static class ClickTrace
 {
-    static readonly bool Enabled = Environment.GetEnvironmentVariable("TASKSPACES_TRACE") == "1";
+    // A MARKER FILE beside state.json, or the environment variable. Two switches because the
+    // variable alone cost a reproduction: `setx TASKSPACES_TRACE 1` writes the user-scope value,
+    // but a process only ever inherits its PARENT's environment block, captured when that parent
+    // started -- so anything launched from a shell that predates the setx runs with tracing off
+    // while every check of the setting says it is on. Petre reproduced the slow dialog against a
+    // build that was silently not recording, and nothing said so.
+    //
+    // The file has no such failure mode: it is either there or it is not, and the same check
+    // answers for every process on the machine whatever launched it.
+    //
+    //     to enable:   type nul > "%APPDATA%\TaskSpaces\trace.on"     (then restart TaskSpaces)
+    //     to disable:  del "%APPDATA%\TaskSpaces\trace.on"
+    static readonly string MarkerPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces", "trace.on");
+
+    static readonly bool Enabled =
+        Environment.GetEnvironmentVariable("TASKSPACES_TRACE") == "1" || Exists(MarkerPath);
 
     static readonly string LogPath = Path.Combine(Path.GetTempPath(), "taskspaces-trace.log");
 
     static readonly Lock Gate = new();
 
     public static bool On => Enabled;
+
+    static bool Exists(string path)
+    {
+        try { return File.Exists(path); }
+        catch { return false; }
+    }
+
+    // Called once at startup, and it earns its place: an empty log is otherwise ambiguous between
+    // "tracing is off" and "nothing happened yet", and telling those apart after the fact is
+    // exactly what was missing when the first reproduction was lost. A log that starts with this
+    // line is a log that was recording.
+    public static void Announce()
+    {
+        if (!Enabled) return;
+        Write($"--- trace on (marker={Exists(MarkerPath)}, env={Environment.GetEnvironmentVariable("TASKSPACES_TRACE") == "1"}) pid={Environment.ProcessId} ---");
+    }
 
     public static void Write(string message)
     {
