@@ -902,6 +902,23 @@ public sealed class WorkspaceManager(
             Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Minimized = minimized } : w).ToList(),
         }));
 
+    // The colour picker on the bar's right-click menu (#68). Petre: "add color picker in the right
+    // click context menu."
+    //
+    // NULL is a real argument and not a missing one: it clears the override and hands the workspace
+    // back to WorkspacePalette's by-position default. Without that there would be no way back from
+    // a colour once chosen except hand-editing state.json, which is the state this issue found the
+    // app in.
+    //
+    // The hex is stored exactly as given rather than parsed here: Core has no colour type, and the
+    // bar already treats an unreadable value as "no tint" rather than as a crash (see
+    // FloatingBar.Lane), which is the right answer for a file a user can edit anyway.
+    public Result SetWorkspaceColor(Guid id, string? color) =>
+        Workspace(id).Tap(_ => Persist(State with
+        {
+            Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Color = color } : w).ToList(),
+        }));
+
     IReadOnlyList<Workspace> Repositioned(int from, int to)
     {
         var reordered = State.Workspaces.ToList();

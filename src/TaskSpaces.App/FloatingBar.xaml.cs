@@ -1948,32 +1948,64 @@ public partial class FloatingBar : Window
     // to any future surface built off the UI thread. Freezing also lets WPF skip
     // change-tracking on a value that never changes. Same reasoning as IconCache's frozen
     // bitmaps.
-    // A workspace's lane colour, heavily diluted. WorkspacePalette gives an opaque "#RRGGBB";
-    // painted at full strength behind app icons on a translucent bar it would drown them, so the
-    // alpha is dropped to ~0x38. The result still separates lanes at a glance, which is the
-    // request, without competing with the icons or with the active-window highlight.
+    // A workspace's lane colour, diluted. WorkspacePalette gives an opaque "#RRGGBB"; painted at
+    // full strength behind app icons on a translucent bar it would drown them, so the alpha is
+    // dropped. The result still separates lanes at a glance, which is the request, without
+    // competing with the icons or with the active-window highlight.
     //
     // Frozen for the same thread-affinity reason every other brush here is (see Frozen below),
     // and cached per colour because Rebuild runs on every window event: an unbounded number of
     // new brushes per rebuild would be wasteful, and the set of workspace colours is tiny.
     static readonly Dictionary<string, Brush> LaneTints = [];
 
-    static Brush? LaneTint(Workspace workspace, int index) => Lane(workspace, index, 0x38);
+    // Petre: "no contrast", then "dark was better", then "dark but not gloomy, can you do that?"
+    //
+    // 0x38 -> 0xC0, and THIS is the fix rather than the palette, which is why brightening the
+    // palette three times did not work. A lane is painted over the bar's near-black background, so
+    // at 0x38 what reached the eye was two thirds background and one third colour: every hue
+    // arrived as the same dark grey with a hint, which is the gloom. Making the colours lighter
+    // instead just blended pale into black and produced the washed-out middle he called "no
+    // contrast".
+    //
+    // At 0xC0 the lane is mostly its own colour, so a DEEP one stays deep and stays coloured --
+    // dark without being gloomy, which is exactly the pair that could not be had while the alpha
+    // was doing the darkening. The palette went dark and chromatic to match (WorkspacePalette).
+    //
+    // The icons still win: they are bright artwork on a dark, unlit field, and the contrast
+    // between them and the lane is HIGHER now than when the lane was a grey wash.
+    static Brush? LaneTint(Workspace workspace, int index) => Lane(workspace, index, 0xC0);
 
-    // The same lane colour at full strength, for the spine down the left of a nested row (#42).
-    // Deriving it from the same hex rather than picking a second colour is the whole point: the
-    // spine has to read as "this belongs to the lane above", and two colours cannot say that.
-    static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xC8);
+    // The spine down the left of a nested row and the outline around a family (#42), derived from
+    // the same lane colour -- which is the whole point, since it has to read as "this belongs to
+    // the lane above", and two colours cannot say that.
+    //
+    // LIGHTENED rather than just laid on at a higher alpha, and that is new with the dark palette.
+    // A dark hex at any alpha is a dark line, and a dark line on this bar's dark background is an
+    // invisible one: the spine and the family outline sit against the BAR, not against the lane,
+    // so unlike the tint they have nothing bright to contrast with. Mixing toward white keeps the
+    // hue -- the relationship survives -- and buys the contrast the background will not give.
+    static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xE0, lighten: 0.45);
 
-    static Brush? Lane(Workspace workspace, int index, byte alpha)
+    static Brush? Lane(Workspace workspace, int index, byte alpha, double lighten = 0) =>
+        Tint(WorkspacePalette.For(workspace, index < 0 ? 0 : index), alpha, lighten);
+
+    // Split out of Lane so the colour picker can draw a swatch from a bare hex, with no workspace
+    // to ask and no position to look up -- and so it shares the same cache, since the picker's
+    // nine swatches are the same nine colours the lanes are already using.
+    //
+    // `lighten` mixes the colour towards white before the alpha is applied, 0 for none and 1 for
+    // white. Done to the COLOUR rather than by stacking a white brush over it, because these are
+    // painted on a translucent window: a second layer would also lighten whatever shows through
+    // from the desktop behind, which changes as windows move underneath.
+    static Brush? Tint(string hex, byte alpha, double lighten = 0)
     {
-        var hex = WorkspacePalette.For(workspace, index < 0 ? 0 : index);
-        var key = $"{hex}:{alpha:X2}";
+        var key = $"{hex}:{alpha:X2}:{lighten:F2}";
         if (LaneTints.TryGetValue(key, out var cached)) return cached;
         try
         {
             var solid = (Color)ColorConverter.ConvertFromString(hex);
-            var brush = new SolidColorBrush(Color.FromArgb(alpha, solid.R, solid.G, solid.B));
+            byte Mixed(byte channel) => (byte)Math.Round(channel + (255 - channel) * lighten);
+            var brush = new SolidColorBrush(Color.FromArgb(alpha, Mixed(solid.R), Mixed(solid.G), Mixed(solid.B)));
             brush.Freeze();
             LaneTints[key] = brush;
             return brush;
@@ -2804,6 +2836,14 @@ public partial class FloatingBar : Window
         Add(minimized ? "⊞" : "⊖", minimized ? "Restore row height" : "Minimize row",
             () => Report(manager.SetWorkspaceMinimized(workspaceId, !minimized)));
 
+        // Petre: "add color picker in the right click context menu" (#68).
+        //
+        // Workspace.Color has been honoured since colours existed and there has never been a way to
+        // SET it -- the only route was hand-editing state.json, which is what left "i don't like
+        // the green for sparrow" with nothing to do about it but re-pick the whole palette for
+        // everyone. A per-workspace choice is the answer to a per-workspace complaint.
+        menu.Items.Add(ColourPicker(workspaceId));
+
         menu.Items.Add(new Separator());
 
         // Out-of-range moves succeed as no-ops by design (see MoveWorkspace), so "Move up" on the
@@ -2832,6 +2872,66 @@ public partial class FloatingBar : Window
     // Segoe MDL2 Assets: MDL2 has prettier icons and needs its own FontFamily plus private-use
     // codepoints, and a private-use codepoint that turns out wrong renders as a hollow box rather
     // than as anything recognisable.
+    // The nine palette colours as a submenu, plus the way back out of one (#68).
+    //
+    // "By position" is not decoration: it writes NULL and hands the workspace back to
+    // WorkspacePalette's by-position default. A picker with no way to un-pick would make the first
+    // click permanent, and this menu is one mis-aimed right-click away at all times.
+    //
+    // The current choice is marked by RINGING its swatch rather than by MenuItem.IsChecked. WPF
+    // draws the check in the same column as the Icon, so a checked item with an icon shows the
+    // icon and swallows the tick -- and the icon here is the whole point, since the colour is what
+    // is being chosen. The ring is the same white "you are here" marker the bar uses on its
+    // current row, which is the same claim.
+    MenuItem ColourPicker(Guid workspaceId)
+    {
+        // Read now rather than captured from the row, because the row was built with a lane colour
+        // that may have come from the palette by position -- what this menu needs is whether the
+        // workspace has an override of its OWN, which only the state can answer.
+        var chosen = manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.Color;
+
+        var picker = new MenuItem { Header = "Colour", Icon = MenuGlyph("◑") };
+
+        WorkspacePalette.Swatches.ToList().ForEach(swatch =>
+        {
+            var item = new MenuItem
+            {
+                Header = swatch.Name,
+                Icon = ColourSwatch(swatch.Hex, string.Equals(chosen, swatch.Hex, StringComparison.OrdinalIgnoreCase)),
+            };
+            item.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, swatch.Hex));
+            picker.Items.Add(item);
+        });
+
+        picker.Items.Add(new Separator());
+
+        var byPosition = new MenuItem
+        {
+            Header = "By position",
+            // No swatch, because there is no one colour to draw: it is whatever this row's position
+            // in the list happens to hand it, today and after the next reorder.
+            Icon = MenuGlyph(string.IsNullOrWhiteSpace(chosen) ? "●" : "○"),
+        };
+        byPosition.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, null));
+        picker.Items.Add(byPosition);
+
+        return picker;
+    }
+
+    // Drawn at FULL strength, unlike the lane it will paint: a 12px square diluted to a lane's
+    // alpha would be nine near-identical greys, and the menu has no icons behind it to protect.
+    static UIElement ColourSwatch(string hex, bool chosen) => new Border
+    {
+        Width = 12,
+        Height = 12,
+        CornerRadius = new CornerRadius(3),
+        Background = Tint(hex, 0xFF) ?? Brushes.Transparent,
+        BorderBrush = chosen ? ActiveBorder : Brushes.Transparent,
+        BorderThickness = new Thickness(2),
+        HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
     static UIElement MenuGlyph(string glyph) => new TextBlock
     {
         Text = glyph,

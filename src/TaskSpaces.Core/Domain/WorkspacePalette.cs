@@ -10,39 +10,60 @@ namespace TaskSpaces.Core.Domain;
 // surface tints a workspace the same way the bar does.
 public static class WorkspacePalette
 {
-    // Petre: "the default workspace lane colours feel lame and dark, i want something more
-    // cheerful and bright" (#68).
+    // Petre, in order, and the order is the argument (#68): "lame and dark, i want something more
+    // cheerful and bright" -> "make them lighter still" -> "you're repeating gepha's and sparrow's
+    // colors, why? we have many colors to choose from, let's not repeat colors" -> "no contrast"
+    // -> "dark was better" -> "dark but not gloomy, can you do that?"
     //
-    // These were muted on purpose and the purpose still holds: they sit BEHIND app icons on a
-    // translucent bar, so they have to separate the lanes without competing with the icons, the
-    // active-window highlight or the amber candidate ring. Brightening them naively fights all
-    // three.
+    // Two separate faults, and chasing them with the palette alone is what took six rounds.
     //
-    // So the brightness went into the HUES and not into the lanes. The bar dilutes every one of
-    // these to ~22% alpha before painting it (FloatingBar.LaneTint), and that dilution is what
-    // keeps the icons winning -- it is doing the restraining, so the colour underneath does not
-    // have to. A dark base diluted to 22% is a grey smudge; a saturated one at the same 22% is a
-    // clear, cheerful wash. Same ink, more colour.
+    // THE REPEATS were real and measurable. Every hand-picked set clustered: 12 degrees between
+    // indigo and periwinkle, 19 between coral and amber, when nine colours spread evenly is 40
+    // apart. Two hues that close are one colour. So the hues are no longer chosen, they are
+    // CONSTRUCTED -- nine of them, 40 degrees apart, walked in steps of 200 so consecutive
+    // positions land on opposite sides of the wheel. No future edit can reintroduce a
+    // near-duplicate by eye.
     //
-    // Each is the same hue family it was, roughly two stops brighter, so a workspace does not
-    // change identity -- teal is still the teal one. The alpha is untouched, which is the whole
-    // point: if these ever do compete with the icons, LaneTint's alpha is the dial to turn, not
-    // this list.
+    // THE GLOOM was never in the palette at all, which is why brightening it kept failing. A lane
+    // is painted OVER the bar's near-black background, so at the old ~22% alpha what reached the
+    // eye was two thirds background and one third colour: every hue arrived as the same dark grey
+    // with a hint. Making the palette lighter did not fix it -- a pale colour blended two thirds
+    // into black is exactly the washed-out "no contrast" middle Petre saw next. The alpha was the
+    // gloom, and it is turned up in FloatingBar.LaneTint where it belongs.
     //
-    // Ordered, as before, so adjacent lanes are far apart in hue -- neighbouring rows are the ones
-    // that have to be told apart, and the ordering is the only thing that guarantees it.
-    static readonly IReadOnlyList<string> Defaults =
+    // Which is what lets these be DARK and still not gloomy: deep, properly chromatic jewel tones
+    // painted at most of their strength, rather than bright ones painted at a fraction of it. They
+    // sit at a common OKLCh lightness -- perceptual, so they read as equally dark, which equal RGB
+    // values do not -- with chroma short of the gamut edge, because at the edge these stop being
+    // lane tints and start being alarm colours.
+    //
+    // Names are what the picker shows, so they have to be the word someone would reach for rather
+    // than the hue number.
+    public sealed record Swatch(string Name, string Hex);
+
+    // Ordered by POSITION, and the order walks the wheel in steps of 200 degrees rather than 40 --
+    // so consecutive positions land on opposite sides of it and every neighbouring pair is 200
+    // degrees apart, the most nine colours allow. Neighbouring rows are the ones that have to be
+    // told apart; stepping round the wheel in sequence would have made each pair of neighbours the
+    // most similar ones on the bar.
+    //
+    // Rotated so slot 0 stays in the app icon's blue family, the one tie worth keeping.
+    public static readonly IReadOnlyList<Swatch> Swatches =
     [
-        "#5C6BF5", // indigo, still the app icon's family
-        "#1FC9A7", // teal
-        "#A95CF2", // violet
-        "#FFAA2B", // amber
-        "#2BA6F5", // sky
-        "#F5568C", // rose
-        "#6ECF3D", // green
-        "#8B7DFF", // periwinkle
-        "#FF7A45", // coral
+        new("Blue", "#3969D8"),   // OKLCh hue 264 -- the app icon's family
+        new("Olive", "#7A7436"),  // OKLCh hue 104
+        new("Violet", "#8D45D0"), // OKLCh hue 304
+        new("Green", "#3B843D"),  // OKLCh hue 144
+        new("Rose", "#B13F89"),   // OKLCh hue 344
+        new("Teal", "#3D7F76"),   // OKLCh hue 184
+        new("Rust", "#BD4141"),   // OKLCh hue  24
+        new("Azure", "#3C7B91"),  // OKLCh hue 224
+        new("Amber", "#966636"),  // OKLCh hue  64
     ];
+
+    // Declared AFTER Swatches on purpose: static fields initialise in declaration order, so
+    // reading Swatches from above it would read a null.
+    static readonly IReadOnlyList<string> Defaults = Swatches.Select(s => s.Hex).ToList();
 
     // index is the workspace's position in the user's own ordering, so the colour follows the
     // list rather than a hash of the name: renaming a workspace should not recolour it.
