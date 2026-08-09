@@ -1222,6 +1222,10 @@ public partial class FloatingBar : Window
     // groups are three equal thirds with a mark on each seam -- so there is no case here for "two
     // monitors" as such, which is why none is written.
     //
+    // "On the middle" is a default and not a promise: a half with more icons than fit in it takes
+    // the room it needs from the half that is not using it, and the mark moves with it. See the
+    // MinWidth below for why that beats wrapping the overflow onto another line.
+    //
     // On a bar with no width of its own (SizeToContent still owns it) the stars have no slack to
     // share and everything simply packs, which is the same thing this drew before any of it.
     UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons)
@@ -1298,7 +1302,27 @@ public partial class FloatingBar : Window
             // instead of being carried to the far end of its half. That is the whole of #58: the
             // right-hand group used to sit in an Auto column at the row's right edge, under the
             // label, with the slack between it and the hairline that names it.
-            AddColumn(stack, new GridLength(1, GridUnitType.Star));
+            //
+            // The MinWidth is not optional, and leaving it off is what Petre saw next: "icons in
+            // sparrow are not fully shown". A star column will happily shrink BELOW its content,
+            // so a group with more icons than fit in half a row simply lost the overflow -- and
+            // the wrap arithmetic could not have known, because it budgets against the whole row's
+            // width and has no idea the row is about to be halved.
+            //
+            // The obvious repair was to wrap instead -- give each half its own share of the budget
+            // so an overfull one runs onto a second line. Petre ruled it out, and the reason is
+            // worth keeping: "in that case, there's more room on the right... it should have
+            // shifted the middle line to the right, pushing the vscode icon to the right." Wrapping
+            // spends the bar's HEIGHT to protect a boundary while the other half sits half empty,
+            // and the empty half is right there to be borrowed.
+            //
+            // So the halves are equal WHENEVER BOTH FIT, and the fuller one takes what it needs
+            // when they do not: the mark moves along with it, and the group beyond the mark moves
+            // too, because it is packed against the mark rather than against the row's far end.
+            //
+            // Counted in IconCellWidth, the same constant the wrap budget uses, so the two agree
+            // about what an icon occupies rather than each having its own opinion.
+            AddColumn(stack, new GridLength(1, GridUnitType.Star), run.Count * IconCellWidth);
         });
 
         return grid;
