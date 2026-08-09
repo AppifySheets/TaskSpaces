@@ -92,6 +92,15 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     int DefinedIndexOf(Workspace workspace) =>
         Math.Max(0, manager.State.Workspaces.ToList().FindIndex(w => w.Id == workspace.Id));
 
+    // The workspace this one is nested under, or null (#42). Null is also the answer when the
+    // parent has since been deleted -- RemoveWorkspace promotes children rather than leaving them
+    // dangling, so that should never happen, and if it ever does the picker degrades to showing a
+    // plain name rather than an empty prefix.
+    Workspace? ParentOf(Workspace workspace) =>
+        workspace.ParentId is { } parentId
+            ? manager.State.Workspaces.FirstOrDefault(w => w.Id == parentId)
+            : null;
+
     // The picker's hwnd, so the composition root can hand it to WindowMonitor.Ignore. The monitor
     // no longer skips our own process (Petre wanted the Manage window in the bar), so without
     // this the picker would flicker into the bar as a window every time it appeared. Created
@@ -120,7 +129,14 @@ public sealed class WorkspaceSwitchGesture : IDisposable
             recent.Ordered.Select(workspace =>
                 // Colour by DEFINED position, not by position in the recency list -- the same
                 // rule the floating bar's lane tints follow, so the two surfaces agree.
-                new SwitcherChoice(workspace.Name, WorkspacePalette.For(workspace, DefinedIndexOf(workspace)))).ToList(),
+                new SwitcherChoice(
+                    workspace.Name,
+                    // Colour follows the PARENT for a nested workspace, exactly as the bar's lane
+                    // tint does (#42) -- the picker's swatch and the bar's lane are the same fact
+                    // told twice, and a family that shares a colour in one place has to share it
+                    // in the other.
+                    WorkspacePalette.For(ParentOf(workspace) ?? workspace, DefinedIndexOf(ParentOf(workspace) ?? workspace)),
+                    ParentOf(workspace)?.Name)).ToList(),
             selected,
             // The hint names the chord actually in force, not a hardcoded one -- the whole point
             // of making it configurable is undone if the picker still tells you to hold Ctrl+Alt

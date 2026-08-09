@@ -187,13 +187,22 @@ public class NestedWorkspaceTests
         Assert.Empty(restarted.State.InheritedPins);
     }
 
-    // A borrowed window is pinned as a MECHANISM, not as a statement, so it must not surface in the
-    // 📌 row -- that row means "you asked for this on every desktop". It belongs in the row of the
-    // workspace you are standing in, which is where it actually is.
+    // Where a borrowed window is DRAWN, which took two corrections from Petre to get right.
+    //
+    // It must not appear in the 📌 row: it is pinned as a mechanism, not as a statement, and that
+    // row means "you asked for this on every desktop".
+    //
+    // It must not appear in the CHILD's row either -- "i don't want to see parent's windows in the
+    // children" -- and it must not vanish from its parent's, which is what the first attempt did:
+    // "sparrow loses all windows and they're moved to the child, don't do that."
+    //
+    // So it stays exactly where it lives. Its presence on the child's desktop is a fact about the
+    // SCREEN and Windows' own taskbar, not about this bar -- "only show them in the taskbar, as are
+    // pinned windows, only for the children".
     [Fact]
-    public void A_borrowed_window_shows_in_the_nested_row_not_in_pinned()
+    public void A_borrowed_window_stays_in_its_parents_row()
     {
-        var (manager, _, child, onParent) = NestedWithAParentWindow();
+        var (manager, parent, child, onParent) = NestedWithAParentWindow();
         var childDesktop = manager.State.Workspaces.Single(w => w.Id == child).DesktopId!.Value;
         desktops.CurrentDesktopId = childDesktop;
         desktops.CurrentChangedSubject.OnNext(childDesktop);
@@ -201,7 +210,9 @@ public class NestedWorkspaceTests
         var overview = manager.WindowsByWorkspace().Value;
 
         Assert.DoesNotContain(overview.Pinned, r => r.Window.Handle == onParent.Handle);
-        Assert.Contains(overview.Workspaces.Single(g => g.Workspace.Id == child).Running,
+        Assert.DoesNotContain(overview.Workspaces.Single(g => g.Workspace.Id == child).Running,
+            r => r.Window.Handle == onParent.Handle);
+        Assert.Contains(overview.Workspaces.Single(g => g.Workspace.Id == parent).Running,
             r => r.Window.Handle == onParent.Handle);
     }
 

@@ -1248,11 +1248,20 @@ public sealed class WorkspaceManager(
                 .Select(w => w.Handle).ToHashSet();
             var desktopOf = windows
                 .Where(w => !pinned.Contains(w.Handle))
-                .Select(w => (w.Handle, Desktop: borrowed.ContainsKey(w.Handle)
-                    // ...and it belongs, for this build, to the desktop it is being borrowed ONTO.
-                    // It is genuinely there -- that is what the pin achieved -- and DesktopOf still
-                    // answers with its home, which would draw it in the parent's row instead.
-                    ? Result.Success(current)
+                .Select(w => (w.Handle, Desktop: borrowed.TryGetValue(w.Handle, out var home)
+                    // ...and it still belongs to the desktop it came FROM.
+                    //
+                    // This line said `current` for one build, and Petre saw the result immediately:
+                    // "sparrow loses all windows and they're moved to the child, don't do that."
+                    // Nothing had moved -- the windows were pinned, so they were on both desktops
+                    // -- but the BAR was told they belonged to whichever desktop he was standing
+                    // on, so the parent's row emptied and they piled into the child's.
+                    //
+                    // The rule that survives is the one his two corrections add up to: the bar
+                    // shows where a window LIVES, the desktop shows what is borrowed. A borrowed
+                    // window is present on the child's screen and stays in its parent's row, which
+                    // is also why the child's row is not doubled up -- the thing he rejected first.
+                    ? Result.Success(home)
                     : desktops.DesktopOf(w.Handle)))
                 .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);

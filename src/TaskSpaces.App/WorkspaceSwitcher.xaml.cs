@@ -13,7 +13,20 @@ namespace TaskSpaces.App;
 // WorkspacePalette lookup the floating bar uses, keyed by the workspace's defined position
 // rather than its position in the most-recently-used list -- a workspace must not change
 // colour just because you visited it.
-public sealed record SwitcherChoice(string Name, string Color);
+// Parent (#42): the name of the workspace this one is nested under, or null at the top level.
+//
+// Petre: "in task switching, show those two children as children, clearly indicate they're
+// children of sparrow, i'll be naming them dice-rolls, sparrow should come from the parent."
+//
+// So the child carries only its own short name and the picker supplies the rest. That is the
+// difference between naming a thing and describing where it sits: "Spr-dice-rolls" was a name
+// doing the job of a hierarchy, and now that the hierarchy exists the name can go back to being
+// just "dice-rolls".
+//
+// Resolved by the caller for the same reason Color is: the gesture already walks the workspace
+// list and knows what every id points at, so this window is handed strings and never has to look
+// anything up.
+public sealed record SwitcherChoice(string Name, string Color, string? Parent = null);
 
 // The Alt+Tab-style workspace picker. Purely a display: it knows how to draw a list and
 // which row is highlighted, and nothing about hotkeys, timers or switching. The gesture
@@ -78,6 +91,34 @@ public partial class WorkspaceSwitcher : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 6, 0),
         });
+        // A nested workspace reads "Sparrow › dice-rolls", with the parent dimmed (#42). The picker
+        // has neither the indent nor the lane colour the bar uses to say "belongs to" -- it is a
+        // flat MRU list where a child can appear nowhere near its parent -- so here the
+        // relationship has to be spelled out in words.
+        //
+        // Dimmed rather than same-strength, because the parent is CONTEXT and the child is the
+        // destination: at a glance you should read the thing you are about to land on, and only
+        // notice where it lives if you need to.
+        if (choice.Parent is { } parent)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = parent,
+                Foreground = Brushes.White,
+                Opacity = 0.5,
+                FontSize = 13,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = " › ",
+                Foreground = Brushes.White,
+                Opacity = 0.35,
+                FontSize = 13,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+
         content.Children.Add(new TextBlock
         {
             Text = choice.Name,
