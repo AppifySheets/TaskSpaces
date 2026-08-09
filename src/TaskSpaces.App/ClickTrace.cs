@@ -1,0 +1,114 @@
+using System.IO;
+
+namespace TaskSpaces.App;
+
+// Instrumentation for #48 -- "first click on a workspace sometimes does nothing; second click
+// works" -- and deliberately not a fix.
+//
+// That symptom has been declared fixed twice already: once by deferring rebuilds while a mouse
+// button is down (a rebuild between press and release destroys the pressed Button, and a Button
+// that no longer exists raises no Click), and once by listening on the bubbling MouseUp with
+// handledEventsToo (ButtonBase marks a release handled even when it raises no Click, and
+// MouseLeftButtonUp is a Direct event that then never travels). Both fixes are still in place, so
+// either one has a hole or there is a third mechanism -- and the honest way to tell which is to
+// make ONE failed click say where it was lost, rather than to reason about it a third time.
+//
+// Every stage of a click writes a line, so a failure reads as an absence: a press with no
+// matching switch names the gap between them.
+//
+// OFF unless TASKSPACES_TRACE=1 is in the environment, and the check is a static readonly bool, so
+// a normal run pays one branch per call and touches no disk. Left in the tree afterwards rather
+// than stripped: this is the third visit to this bug, and the next one should start with the log
+// rather than with a fresh set of guesses.
+//
+// Nothing here may ever throw. It is called from mouse handlers on the dispatcher, and an
+// exception on that path takes the process down -- which is exactly how the Run/ContentElement
+// crash killed the app, in the very handler this traces.
+//
+// ---------------------------------------------------------------------------------------------
+// WHEN THE BUG HAPPENS: WHAT TO DO
+// ---------------------------------------------------------------------------------------------
+//
+// It is intermittent and nobody has made it happen on demand, so the trace has to be ON before it
+// occurs. That is the whole reason this is an environment variable and not a menu item.
+//
+//   1. Turn it on permanently, once:      setx TASKSPACES_TRACE 1
+//      Then restart TaskSpaces (a running process does not see a new setx).
+//      To turn it off:                    setx TASKSPACES_TRACE ""
+//
+//   2. Use the bar normally. When a click on a workspace does nothing, note ROUGHLY what time it
+//      was and which workspace -- the log is timestamped and each line names the group, so
+//      "Sparrow, about ten past two" is enough to find it.
+//
+//   3. The log is at  %TEMP%\taskspaces-trace.log  and is appended to across restarts. It is
+//      small: a handful of lines per click, nothing while idle.
+//
+// READING IT. One click should produce this, in order:
+//
+//   press source=Border icon=False clickTarget=True rebuilding=False pending=False
+//   row-up group=Sparrow consumedByChild=False ourPress=True
+//   switch group=Sparrow ok=True
+//
+// A lost click is an ABSENCE, and which line is missing names the mechanism:
+//
+//   * No `press` at all
+//         The bar never saw the button go down. Not a bar bug: look at what else had the mouse
+//         (a drag loop, a menu, another topmost window).
+//
+//   * `press` but no `row-up`
+//         The release never reached the row's handler. This is the family both previous fixes
+//         belong to. Check for a `REBUILD WHILE PRESSED` line in between: if it is there, the
+//         deferral in Rebuild() has a hole and something is rebuilding despite a held button --
+//         find its trigger and defer that too. If it is NOT there, the row survived and the
+//         release went somewhere else, which points at the routing (ButtonBase handling the
+//         release, or a child element that did not exist when the press landed).
+//
+//   * `row-up` with `ourPress=False`
+//         The press was disowned: it started somewhere other than this row, so pressedRow does
+//         not match. Look at the `press` line's source -- a press that begins on one row and
+//         releases on another is correctly refused, but if BOTH lines name the same row then the
+//         bookkeeping was reset mid-click, and the reset in OnPreviewMouseLeftButtonDown is the
+//         place to look.
+//
+//   * `row-up` with `consumedByChild=True` but no `label-click`
+//         A child Button swallowed the press and raised no Click of its own -- the exact
+//         asymmetry the second fix was written for, recurring somewhere new.
+//
+//   * `switch ... ok=False`
+//         The click WORKED and the switch was refused. Petre's "it happens when the app has been
+//         idle" lead fits here: a stale virtual-desktop COM object, or the OS declining. The
+//         error text is on the line. This one is invisible without the trace, because the failure
+//         only raises a dialog behind a topmost bar.
+//
+//   * An `enter-row rebuild` immediately before a missing press
+//         Moving between rows re-sorts the row just left, and that is newer than both previous
+//         fixes. If this line keeps company with the failures, the pointer-driven rebuild needs
+//         the same deferral a window-driven one gets.
+//
+// THEN: fix the stage the log names, and add the failing sequence to this comment as a worked
+// example, so the fourth visit starts where the third finished.
+static class ClickTrace
+{
+    static readonly bool Enabled = Environment.GetEnvironmentVariable("TASKSPACES_TRACE") == "1";
+
+    static readonly string LogPath = Path.Combine(Path.GetTempPath(), "taskspaces-trace.log");
+
+    static readonly Lock Gate = new();
+
+    public static bool On => Enabled;
+
+    public static void Write(string message)
+    {
+        if (!Enabled) return;
+        try
+        {
+            // Locked because WinEvent callbacks and the dispatcher can both reach this, and a
+            // torn line is worse than no line when the whole point is reading a sequence.
+            lock (Gate) File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // A trace that cannot write is not a reason to lose the app.
+        }
+    }
+}

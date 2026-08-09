@@ -337,6 +337,12 @@ public partial class FloatingBar : Window
     // deliberate one.
     void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // Stage 1 of the click trace (#48). The SOURCE type matters as much as the fact of a
+        // press: it says which element the release will be delivered to, and two of the three
+        // known ways to lose a click turn on that.
+        if (ClickTrace.On)
+            ClickTrace.Write($"press source={e.OriginalSource.GetType().Name} icon={StartedOnIcon(e.OriginalSource)} clickTarget={StartedOnClickTarget(e.OriginalSource)} rebuilding={rebuilding} pending={rebuildRequested}");
+
         // A new press: nothing has claimed it yet, and no row owns it until the row's own
         // tunnelling handler (wired in GroupRow) runs a moment later, further down this route.
         pressConsumedByChild = false;
@@ -565,6 +571,11 @@ public partial class FloatingBar : Window
 
         var wasHolding = hoveredRow is not null;
         hoveredRow = (groupKey, RowOrderFreeze.Capture(displayed));
+        // A rebuild triggered by the POINTER rather than by a window event, which is new since
+        // this bug was last looked at: moving from one row to another re-sorts the row just left.
+        // If a click can be lost by arriving during that, this line will sit immediately before
+        // the press that goes missing.
+        if (ClickTrace.On && wasHolding) ClickTrace.Write($"enter-row rebuild for={groupKey}");
         // Moving straight from one row to another: the row just left has to re-sort now, and its
         // own MouseLeave cannot do it -- by the time that deferred check runs, the freeze belongs
         // to this row and it will (correctly) leave it alone.
@@ -866,6 +877,14 @@ public partial class FloatingBar : Window
             rebuildRequested = true;
             return;
         }
+
+        // Stage 2, and the one this bug keeps coming back to: a rebuild that runs BETWEEN a press
+        // and its release destroys the pressed Button, and a Button that no longer exists raises
+        // no Click. The deferral above is supposed to make that impossible while a button is down
+        // over the bar -- so a line here with pressed=True is the smoking gun, and its absence
+        // rules the mechanism out rather than leaving it suspected for a fourth time.
+        if (ClickTrace.On && Mouse.LeftButton == MouseButtonState.Pressed)
+            ClickTrace.Write($"REBUILD WHILE PRESSED mouseOver={IsMouseOver}");
 
         rebuilding = true;
         try
@@ -1312,10 +1331,20 @@ public partial class FloatingBar : Window
             container.AddHandler(Mouse.MouseUpEvent, new MouseButtonEventHandler((_, e) =>
             {
                 if (e.ChangedButton != MouseButton.Left) return;
-                // Not our press (started in another row, or outside the bar entirely), or a
-                // child already turned it into a jump/switch of its own.
+                // Stage 3: the release reached THIS row's handler. Both flags are logged whatever
+                // they say, because "the release arrived and was declined" and "the release never
+                // arrived" are the two halves this bug has to be split into, and only the first
+                // one leaves a line here.
+                if (ClickTrace.On)
+                    ClickTrace.Write($"row-up group={groupLabel} consumedByChild={pressConsumedByChild} ourPress={ReferenceEquals(pressedRow, container)}");
                 if (pressConsumedByChild || !ReferenceEquals(pressedRow, container)) return;
-                Report(switchTo());
+                // Stage 4: the switch itself, and its RESULT -- a failure here is invisible today
+                // because Report only shows a dialog, and a switch refused by a stale
+                // virtual-desktop COM object would look exactly like a click that did nothing.
+                var outcome = switchTo();
+                if (ClickTrace.On)
+                    ClickTrace.Write($"switch group={groupLabel} ok={outcome.IsSuccess}{(outcome.IsFailure ? $" error={outcome.Error}" : "")}");
+                Report(outcome);
             }), handledEventsToo: true);
 
             // Hover feedback is the LABEL brightening, never a row background: the background
@@ -1782,6 +1811,11 @@ public partial class FloatingBar : Window
         button.Click += (_, _) =>
         {
             MarkPressConsumed();
+            // The label's own Click, which is the OTHER route to the same switch. A press that
+            // lands on the label and is lost leaves this line missing while the row-up line above
+            // says consumedByChild=False -- which distinguishes "the Button never raised Click"
+            // from "the row declined it".
+            if (ClickTrace.On) ClickTrace.Write($"label-click {text}");
             Report(switchTo());
         };
         return (button, SetHover);
