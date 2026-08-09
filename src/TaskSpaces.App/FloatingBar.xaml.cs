@@ -692,6 +692,22 @@ public partial class FloatingBar : Window
         Rebuild(); // the promotion the user has been waiting for, served the moment they step off
     }
 
+    // The icon ring's half of the same trap (#67), deferred for exactly the reason above: a
+    // rebuild removes the icon from the tree and WPF raises MouseLeave on the way out, so acting
+    // on the event directly would drop the ring off an icon the pointer never left -- and the ring
+    // is at its most useful precisely while the bar is busy rebuilding under it.
+    //
+    // By the next turn the replacement icon exists and is registered, so asking whether the
+    // pointer is over ANY icon showing this window answers correctly whether it was rebuilt or
+    // not. Same shape as ReleaseRowIfPointerLeft, one line shorter because icons carry no freeze.
+    void LeaveIcon(WindowHandle handle) => Dispatcher.BeginInvoke(new Action(() =>
+    {
+        if (hoveredIcon != handle) return;                                          // another icon already owns the ring
+        if (iconRings.Any(i => i.Handle == handle && i.Button.IsMouseOver)) return;  // still on it; it was merely rebuilt
+        hoveredIcon = null;
+        ApplyCandidate();
+    }));
+
     // Which row the pointer is actually inside, by hit test rather than by remembered events.
     string? HoveredRowKey()
     {
@@ -1012,7 +1028,7 @@ public partial class FloatingBar : Window
         // The rows these pointed at have just been thrown away, so every entry is now a Border
         // that is no longer in the tree. Repopulated as the new rows are built.
         rowRings.Clear();
-        rowLandingIcon.Clear();
+        iconRings.Clear();
         currentRow = null;
         ClearInfo();
         // BEFORE the overview query, and outside its Tap, deliberately: the back button reads
@@ -1281,11 +1297,14 @@ public partial class FloatingBar : Window
                 var button = IconButton(groupLabel, groupKey, r);
                 iconButtons.Add(button);
                 stack.Children.Add(button);
-                // The window this row would restore focus to, remembered so the switch gesture
-                // can raise it to full strength while this row is the candidate (see
-                // ApplyCandidate). At most one per row: WillActivate marks a single window.
-                if (r.WillActivate && rowKey is { } landingKey && button is Button landing)
-                    rowLandingIcon[landingKey] = landing;
+                // EVERY icon is registered, not just the one the row would restore focus to (#67).
+                // Any icon can become the ringed target now -- the pointer can rest on one -- so
+                // ApplyCandidate needs to be able to repaint all of them, and it needs each one's
+                // RESTING appearance to put back when the ring moves away. Recomputing that from
+                // the row's own facts beats remembering what was last written, which is how a
+                // marker gets stuck on an icon that stopped deserving it.
+                if (button is Button icon)
+                    iconRings.Add(new IconRing(icon, rowKey, r.Window.Handle, r.IsActive, r.WillActivate));
             });
 
             AddColumn(stack, GridLength.Auto);
@@ -1721,8 +1740,23 @@ public partial class FloatingBar : Window
     // from a previous build is holding an element that is no longer in the tree.
     readonly Dictionary<Guid, Border> rowRings = [];
 
-    // ...and the icon each row would land you on, for the same reason and with the same lifetime.
-    readonly Dictionary<Guid, Button> rowLandingIcon = [];
+    // ...and every icon on the bar, for the same reason and with the same lifetime.
+    //
+    // Each entry carries the icon's RESTING appearance rather than just the button, so
+    // ApplyCandidate can repaint the whole set from facts instead of undoing whatever it wrote
+    // last time. RowKey says which workspace the icon sits in (null for the pinned row and for
+    // unbound desktops), which is how "landing here also changes workspace" is answered.
+    readonly List<IconRing> iconRings = [];
+
+    sealed record IconRing(Button Button, Guid? RowKey, WindowHandle Handle, bool IsActive, bool WillActivate);
+
+    // The icon the pointer is resting on, held by WINDOW HANDLE and not by button (#67).
+    //
+    // Same rule as the candidate below and as pressedRowKey above: a rebuild throws every icon
+    // away, and rebuilds fire on any window event, so a Button reference kept across one points at
+    // an element that has left the tree. The handle survives, so the ring lands back on the same
+    // app in the newly built row.
+    WindowHandle? hoveredIcon;
 
     // (The candidate itself is the gesture state -- see `candidate` below. It is held HERE
     // rather than on a row, because a rebuild throws every row away and builds new ones, and
@@ -1808,25 +1842,45 @@ public partial class FloatingBar : Window
 
         // Petre: "when adding a ring to the next workspace, make the active window in it visible
         // clearly, possibly with the same strength as it is in the currently active workspace."
+        // Then (#67): "ring the app that will be activated, like the workspace candidate ring."
         //
-        // The landing marker is drawn faintly everywhere else on purpose -- it is a prediction
-        // about a workspace you are not on, and at full strength on every row it would compete
-        // with the one icon that really does have focus. But the moment a row becomes the
-        // candidate the prediction stops being background information: it is the answer to
-        // "release now and where do I end up", and it should read exactly as strongly as the
-        // active window does today, because in a moment that is what it will be.
+        // So the ring answers ONE question, on both surfaces at once: what exactly happens when
+        // you commit. The row says which workspace you land in; the icon says which app comes to
+        // the front. Row plus icon when both change, icon alone when only focus does -- which
+        // falls out of the rules rather than needing a case of its own, because the row rule above
+        // already refuses to ring the workspace you are standing in.
         //
-        // Deliberately the SAME brushes as the active window rather than a third strength of
-        // their own. The two states are the same fact a keystroke apart, and giving the future
-        // one its own appearance would invent a distinction Petre did not ask about.
+        // The app that would be activated, in the order the gestures outrank each other -- the
+        // same precedence the row ring uses, for the same reason:
+        //
+        //   * the chord's candidate row lands on the icon it would restore focus to;
+        //   * failing that, the icon under the POINTER is itself the target, because clicking one
+        //     activates that window and nothing else decides it;
+        //   * failing that, a hovered row lands on its own restore-focus icon, exactly as the
+        //     chord would.
+        var target = candidate is { } landing
+            ? iconRings.FirstOrDefault(i => i.RowKey == landing && i.WillActivate)?.Handle
+            : hoveredIcon ?? iconRings.FirstOrDefault(i => i.RowKey == hoveredRow?.RowKey && i.WillActivate)?.Handle;
+
+        // Amber, and the same amber as the row, because it is the same claim in the same tense.
+        // It replaces the white the landing icon used to be promoted to, which was borrowed from
+        // the ACTIVE-window marker and therefore said "this window has focus" about a window that
+        // does not have it yet. The background stays, though: strength was the point of the
+        // original request, and only the colour was wrong.
+        //
+        // Everything else is repainted to its resting state from the row's own facts, so a ring
+        // cannot be left behind on an icon the pointer has moved off.
         //
         // Costs no layout: every icon already carries a 1px border, transparent when it has
         // nothing to say, precisely so gaining a marker cannot nudge a SizeToContent bar.
-        rowLandingIcon.ToList().ForEach(icon =>
+        iconRings.ForEach(icon =>
         {
-            var landing = icon.Key == candidate;
-            icon.Value.BorderBrush = landing ? ActiveBorder : WillActivateBorder;
-            icon.Value.Background = landing ? ActiveBackground : Brushes.Transparent;
+            var ringed = target is { } t && icon.Handle == t;
+            icon.Button.BorderBrush = ringed ? CandidateRowRing
+                : icon.IsActive ? ActiveBorder
+                : icon.WillActivate ? WillActivateBorder
+                : Brushes.Transparent;
+            icon.Button.Background = ringed || icon.IsActive ? ActiveBackground : Brushes.Transparent;
         });
     }
 
@@ -2221,6 +2275,14 @@ public partial class FloatingBar : Window
         // and lives in a separate HWND -- see the Info panel comment in FloatingBar.xaml.
         button.MouseEnter += (_, _) => ShowInfo(groupLabel, row);
         button.MouseLeave += (_, _) => ClearInfo();
+
+        // ...and hover -> ring (#67). The pointer resting on an icon makes THAT window the thing a
+        // click would activate, so it is the thing that wears the ring -- and if it lives in the
+        // workspace we are already in, the row above it stays unringed, because nothing about the
+        // workspace would change. That case needs no code: the row rule already declines to ring
+        // the current row.
+        button.MouseEnter += (_, _) => { hoveredIcon = row.Window.Handle; ApplyCandidate(); };
+        button.MouseLeave += (_, _) => LeaveIcon(row.Window.Handle);
         // The HANDLE, not just the path: IconCache asks the window itself (WM_GETICON)
         // before falling back to extracting from the exe. Petre: "i also don't see an icon
         // for whatsapp app" -- WhatsApp.Root.exe is an MSIX launcher stub carrying no icon,
