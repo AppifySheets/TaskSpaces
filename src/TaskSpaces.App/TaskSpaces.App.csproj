@@ -5,6 +5,16 @@
     <ProjectReference Include="..\TaskSpaces.Windows\TaskSpaces.Windows.csproj" />
   </ItemGroup>
 
+  <!-- The bar's press-routing helpers are internal rather than private so they can be tested
+       directly. That was bought with a real crash: pressing the info line's text handed
+       StartedOnIcon a Run, VisualTreeHelper.GetParent THREW on it (a Run is a ContentElement,
+       not a Visual) and the unhandled exception took the process down. Reproducing it through
+       the routed event proved impossible, because a tunnelling event raised on a ContentElement
+       does not route to the window at all, so the rule is pinned where it actually lives. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="TaskSpaces.Windows.Tests" />
+  </ItemGroup>
+
   <!-- Finding 7 (reviewer, promoted Minor): System.Drawing.Common removed — the
        WindowsDesktop/UseWPF framework already provides System.Drawing.Common on Windows,
        so the explicit PackageReference only produced an NU1510 "unnecessary reference"

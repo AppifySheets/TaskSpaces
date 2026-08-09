@@ -102,4 +102,151 @@ public class WorkspaceOrderTests
 
         Assert.Equal(boundBefore, manager.State.Workspaces.Single(w => w.Id == second).DesktopId);
     }
+
+    // --- move to top / move to end (#40) ----------------------------------------------------
+    //
+    // Petre: "menu options: add move to the end and to the top."
+
+    [Fact]
+    public void Moving_to_the_top_puts_it_first_and_shifts_the_rest_down()
+    {
+        var (manager, _, _, third) = Started();
+
+        Assert.True(manager.MoveWorkspaceTo(third, 0).IsSuccess);
+
+        Assert.Equal(["TaskSpace", "GEPHA", "Sparrow"], NamesOf(manager));
+    }
+
+    [Fact]
+    public void Moving_to_the_end_puts_it_last_and_closes_the_gap()
+    {
+        var (manager, first, _, _) = Started();
+
+        Assert.True(manager.MoveWorkspaceTo(first, manager.State.Workspaces.Count - 1).IsSuccess);
+
+        Assert.Equal(["Sparrow", "TaskSpace", "GEPHA"], NamesOf(manager));
+    }
+
+    // A reposition, not a run of swaps: bubbling to the top reaches the same order but persists
+    // and pulses once per step, so one gesture would rebuild every open surface three times and
+    // rewrite state.json three times.
+    [Fact]
+    public void Moving_to_the_top_persists_once_however_far_it_travels()
+    {
+        var (manager, _, _, third) = Started();
+        var savesBefore = store.SaveCount;
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        Assert.True(manager.MoveWorkspaceTo(third, 0).IsSuccess);
+
+        Assert.Equal(1, pulses);
+        Assert.Equal(savesBefore + 1, store.SaveCount);
+    }
+
+    // Already there: still a success, and still exactly one pulse rather than a special case that
+    // silently does nothing -- "move to top" on the top row is a reasonable thing to click.
+    [Fact]
+    public void Moving_to_where_it_already_is_is_harmless()
+    {
+        var (manager, first, _, _) = Started();
+
+        Assert.True(manager.MoveWorkspaceTo(first, 0).IsSuccess);
+
+        Assert.Equal(["GEPHA", "Sparrow", "TaskSpace"], NamesOf(manager));
+    }
+
+    [Theory]
+    [InlineData(-5)]
+    [InlineData(99)]
+    public void A_target_outside_the_list_lands_at_the_nearest_end(int index)
+    {
+        var (manager, _, second, _) = Started();
+
+        Assert.True(manager.MoveWorkspaceTo(second, index).IsSuccess);
+
+        Assert.Equal("Sparrow", NamesOf(manager)[index < 0 ? 0 : 2]);
+    }
+
+    [Fact]
+    public void Repositioning_an_unknown_workspace_fails() =>
+        Assert.True(Started().manager.MoveWorkspaceTo(Guid.NewGuid(), 0).IsFailure);
+
+    // --- insert before / after (#40) --------------------------------------------------------
+    //
+    // Petre: "ability to rename existing and add new workspaces from within the floating window,
+    // on top or under the current workspace, something like a insert before/after."
+    //
+    // The bar turns a right-clicked row into an index; this is the half that can be tested
+    // without one.
+
+    [Fact]
+    public void Inserting_before_a_workspace_puts_it_at_that_position()
+    {
+        var (manager, _, second, _) = Started();
+
+        Assert.True(manager.InsertWorkspace("Fresh", manager.State.Workspaces.ToList().FindIndex(w => w.Id == second)).IsSuccess);
+
+        Assert.Equal(["GEPHA", "Fresh", "Sparrow", "TaskSpace"], NamesOf(manager));
+    }
+
+    [Fact]
+    public void Inserting_after_a_workspace_puts_it_one_further_on()
+    {
+        var (manager, _, second, _) = Started();
+
+        Assert.True(manager.InsertWorkspace("Fresh", manager.State.Workspaces.ToList().FindIndex(w => w.Id == second) + 1).IsSuccess);
+
+        Assert.Equal(["GEPHA", "Sparrow", "Fresh", "TaskSpace"], NamesOf(manager));
+    }
+
+    // Adding is inserting at the end, and is now literally implemented as that -- so the oldest
+    // behaviour on this list has to keep coming out the same way.
+    [Fact]
+    public void Adding_still_appends()
+    {
+        var (manager, _, _, _) = Started();
+
+        Assert.True(manager.AddWorkspace("Fresh").IsSuccess);
+
+        Assert.Equal(["GEPHA", "Sparrow", "TaskSpace", "Fresh"], NamesOf(manager));
+    }
+
+    // Every caller derives its index from a row that was on screen when the menu opened, and the
+    // bar rebuilds constantly -- so an index describing a workspace that has since gone must land
+    // the new one somewhere sensible rather than raise at someone who asked for something
+    // reasonable. -1 is what FindIndex returns for a row that no longer exists.
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(99, 3)]
+    public void An_index_that_no_longer_makes_sense_is_clamped(int index, int lands)
+    {
+        var (manager, _, _, _) = Started();
+
+        Assert.True(manager.InsertWorkspace("Fresh", index).IsSuccess);
+
+        Assert.Equal("Fresh", NamesOf(manager)[lands]);
+    }
+
+    // The guards that AddWorkspace has always had come along, because it is the same method now.
+    [Fact]
+    public void A_duplicate_name_is_refused_wherever_it_is_inserted()
+    {
+        var (manager, _, _, _) = Started();
+
+        Assert.True(manager.InsertWorkspace("sparrow", 0).IsFailure);
+        Assert.Equal(3, manager.State.Workspaces.Count);
+    }
+
+    [Fact]
+    public void An_inserted_workspace_gets_a_desktop_of_its_own()
+    {
+        var (manager, _, second, _) = Started();
+
+        Assert.True(manager.InsertWorkspace("Fresh", 1).IsSuccess);
+
+        var fresh = manager.State.Workspaces.Single(w => w.Name == "Fresh");
+        Assert.NotNull(fresh.DesktopId);
+        Assert.NotEqual(manager.State.Workspaces.Single(w => w.Id == second).DesktopId, fresh.DesktopId);
+    }
 }

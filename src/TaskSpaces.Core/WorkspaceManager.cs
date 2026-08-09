@@ -634,11 +634,36 @@ public sealed class WorkspaceManager(
     // which is the wart that made SwitchToIndex change meaning whenever anyone reordered the
     // Workspaces tab. And MRU walking already replaces cycling: see ByRecentUse.
     public Result<Workspace> AddWorkspace(string name) =>
+        InsertWorkspace(name, State.Workspaces.Count);
+
+    // Petre: "ability to rename existing and add new workspaces from within the floating window,
+    // on top or under the current workspace, something like a insert before/after."
+    //
+    // The same creation as AddWorkspace, which is now a call to this one with the end as the
+    // index -- rather than a second copy of the validate/create/persist chain that would have to
+    // be kept in step with it.
+    //
+    // The index is OURS, not Windows'. desktops.Create always appends a virtual desktop at the end
+    // of the shell's own list, and nothing here tries to reorder that: the bar's rows come from
+    // State.Workspaces, so this list's order is the only one that has ever been visible. The two
+    // have always been free to disagree.
+    //
+    // Clamped rather than validated, because every caller derives the index from a row that was on
+    // screen when the menu opened, and a workspace removed in between should land the new one at
+    // the end instead of raising an error at somebody who asked for something reasonable.
+    public Result<Workspace> InsertWorkspace(string name, int index) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
             .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
             .Bind(() => desktops.Create(name))
             .Map(d => new Workspace(Guid.NewGuid(), name, d.Id))
-            .Tap(w => Persist(State with { Workspaces = [.. State.Workspaces, w] }));
+            .Tap(w => Persist(State with { Workspaces = Inserted(w, Math.Clamp(index, 0, State.Workspaces.Count)) }));
+
+    IReadOnlyList<Workspace> Inserted(Workspace workspace, int index)
+    {
+        var next = State.Workspaces.ToList();
+        next.Insert(index, workspace);
+        return next;
+    }
 
     // Reviewer (fix round 1, Critical): duplicate names used to be unchecked, so two
     // workspaces could share a name; ManageWindow.OnSaveRules' `ToDictionary(w => w.Name)`
@@ -672,6 +697,37 @@ public sealed class WorkspaceManager(
             var from when from + delta < 0 || from + delta >= State.Workspaces.Count => Result.Success(),
             var from => Result.Success().Tap(() => Persist(State with { Workspaces = Swapped(from, from + delta) })),
         };
+
+    // Petre: "menu options: add move to the end and to the top."
+    //
+    // A REPOSITION, not a run of swaps, and the difference is visible: bubbling a workspace to the
+    // top one swap at a time reaches the same order but persists and pulses once per step, so
+    // every open surface rebuilds N times and state.json is rewritten N times for one gesture.
+    //
+    // The workspaces it passes keep their relative order, which is what "move to the top" means --
+    // taking it out and putting it back is the whole operation, and the rest close the gap.
+    //
+    // Clamped like InsertWorkspace, and for the same reason: the caller derives the target from a
+    // list that may have changed since the menu opened, and landing at an end is a better answer
+    // than an error dialog.
+    public Result MoveWorkspaceTo(Guid id, int index) =>
+        State.Workspaces.ToList().FindIndex(w => w.Id == id) switch
+        {
+            < 0 => Result.Failure("Workspace no longer exists."),
+            var from => Result.Success().Tap(() => Persist(State with
+            {
+                Workspaces = Repositioned(from, Math.Clamp(index, 0, State.Workspaces.Count - 1)),
+            })),
+        };
+
+    IReadOnlyList<Workspace> Repositioned(int from, int to)
+    {
+        var reordered = State.Workspaces.ToList();
+        var moved = reordered[from];
+        reordered.RemoveAt(from);
+        reordered.Insert(to, moved);
+        return reordered;
+    }
 
     IReadOnlyList<Workspace> Swapped(int from, int to)
     {

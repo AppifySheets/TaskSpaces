@@ -145,6 +145,23 @@ public partial class FloatingBar : Window
     bool draggingWindow;
     ContextMenu? openMenu;
 
+    // A context menu is its own window, so a pointer standing in it has -- as far as WPF is
+    // concerned -- left the bar, which would fade the very row the menu was opened on.
+    //
+    // The menu itself is remembered rather than a flag being set, because the flag could get
+    // stuck: menus belong to elements that every rebuild throws away, and a menu destroyed with
+    // its owner is not guaranteed to raise Closed. Asking the remembered menu whether it IsOpen
+    // cannot get stuck the same way -- a menu that went away answers no.
+    //
+    // Shared by both menus on this surface (the icons' and the workspace rows'), which is the
+    // whole reason it is a method rather than two lines inside IconMenu: a second menu that forgot
+    // to call it would fade the bar out from under itself the moment it opened.
+    void HoldFadeWhileOpen(ContextMenu menu)
+    {
+        menu.Opened += (_, _) => { openMenu = menu; UpdateFade(); };
+        menu.Closed += (_, _) => { if (ReferenceEquals(openMenu, menu)) openMenu = null; UpdateFade(); };
+    }
+
     void UpdateFade()
     {
         var bright = IsMouseOver || HoldsFullStrength;
@@ -399,9 +416,9 @@ public partial class FloatingBar : Window
     // Anything whose press must reach a click handler intact: the rows (every one of them
     // switches workspace, by label or by bare area) and the back button, which sits on the info
     // line and would otherwise be the one click target on a drag surface.
-    bool StartedOnClickTarget(object source)
+    internal bool StartedOnClickTarget(object source)
     {
-        for (var node = source as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+        for (var node = source as DependencyObject; node is not null; node = ParentOf(node))
             if (ReferenceEquals(node, Rows) || ReferenceEquals(node, BackButton)) return true;
         return false;
     }
@@ -410,12 +427,36 @@ public partial class FloatingBar : Window
     // template, usually) looking for one of our tagged icon buttons. VisualTreeHelper
     // rather than the logical tree: the press lands on template-generated visuals, which
     // the logical tree does not connect to the Button.
-    static bool StartedOnIcon(object source)
+    internal static bool StartedOnIcon(object source)
     {
-        for (var node = source as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+        for (var node = source as DependencyObject; node is not null; node = ParentOf(node))
             if (node is FrameworkElement { Tag: IconTag }) return true;
         return false;
     }
+
+    // One step up from anything a press can land on, and the reason both walks above go through it
+    // rather than calling VisualTreeHelper directly.
+    //
+    // Petre: "it crashed." Pressing the info line's own hint text killed the app outright:
+    //
+    //   System.InvalidOperationException: 'System.Windows.Documents.Run' is not a Visual or Visual3D
+    //      at System.Windows.Media.VisualTreeHelper.GetParent(DependencyObject reference)
+    //      at FloatingBar.StartedOnIcon(Object source)
+    //
+    // The info line is a TextBlock built out of Run inlines, and a Run is a ContentElement, not a
+    // Visual. VisualTreeHelper.GetParent does not politely return null for one of those -- it
+    // throws -- and an exception out of a mouse handler on the dispatcher takes the process with
+    // it. It had been possible for as long as the info line has had Runs in it; nobody had reason
+    // to press that text until the rows around it started moving.
+    //
+    // Text does not live in the visual tree, so the logical parent is the only way out of it: a
+    // Run's logical parent is its TextBlock, which IS a Visual, and the walk carries on normally
+    // from there. Neither caller wants to STOP at a Run -- an icon is never made of text -- they
+    // just need to get past it.
+    static DependencyObject? ParentOf(DependencyObject node) =>
+        node is Visual or System.Windows.Media.Media3D.Visual3D
+            ? VisualTreeHelper.GetParent(node)
+            : LogicalTreeHelper.GetParent(node);
 
     // Marks an icon Button for StartedOnIcon above. A private const string compared by
     // value (pattern-matched, so a null Tag can never match).
@@ -550,9 +591,11 @@ public partial class FloatingBar : Window
     string? HoveredRowKey()
     {
         if (!IsVisible || !IsMouseOver) return null;
+        // ParentOf, not VisualTreeHelper directly, for the same reason the press walks do: a hit
+        // test can land on text, and text is not in the visual tree (see ParentOf).
         for (var node = Rows.InputHitTest(Mouse.GetPosition(Rows)) as DependencyObject;
              node is not null;
-             node = VisualTreeHelper.GetParent(node))
+             node = ParentOf(node))
             if (node is FrameworkElement { Tag: RowTag tag }) return tag.Key;
         return null;
     }
@@ -1223,6 +1266,17 @@ public partial class FloatingBar : Window
         // whole rule, with no row that quietly does not count.
         //
         // `ordered` rather than `rows`: the capture must be what is on screen, which is this list.
+        // Right-click a workspace row -> rename it, put a new one before or after it, or move it
+        // (#40). Only on real workspaces: rowKey is null for 📌 Pinned, for unbound desktops and
+        // for the Unplaced catch-all, none of which HAS a workspace to rename or reorder.
+        //
+        // On the container, so the whole row answers -- label, lane and the empty space between.
+        // The icons keep their own menu and win over this one, because ContextMenuService opens
+        // the menu of the INNERMOST element that has one, which is exactly the right split:
+        // right-clicking an icon is about that window, right-clicking anywhere else on the row is
+        // about the workspace.
+        if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel);
+
         container.Tag = new RowTag(groupKey);
         container.MouseEnter += (_, _) => EnterRow(groupKey, ordered);
         container.MouseLeave += (_, _) => LeaveRow(groupKey);
@@ -2249,21 +2303,101 @@ public partial class FloatingBar : Window
     // The bar's own background ContextMenu ("Hide floating bar", in XAML) is unaffected:
     // ContextMenuService opens the menu of the INNERMOST element that has one, so an icon
     // gets this menu and bare bar still gets Hide.
+    // Petre: "ability to rename existing and add new workspaces from within the floating window,
+    // on top or under the current workspace, something like a insert before/after, also move
+    // workspaces up or down, in the right click."
+    //
+    // All four already existed on Manage and in WorkspaceManager; what was missing was reaching
+    // them from the surface actually being looked at. Until now right-clicking a workspace name
+    // did nothing at all -- only ICONS carried a menu, and the bar's own background menu went with
+    // "Hide floating bar".
+    //
+    // Deliberately NOT here: Remove. It is the one item that cannot be undone, this menu now opens
+    // on a click that used to do nothing, and a mis-aimed right-click landing on "Remove
+    // workspace" is a bad way to find that out. Manage still has it.
+    ContextMenu WorkspaceMenu(Guid workspaceId, string name)
+    {
+        var menu = new ContextMenu();
+        HoldFadeWhileOpen(menu);
+
+        // Read at CLICK time rather than captured when the menu was built: a rebuild between the
+        // two is routine on this bar, and a stale index would insert relative to a row that has
+        // since moved. -1 when the workspace has gone entirely, which Insert clamps to the end and
+        // Move reports as "no longer exists" -- both better than acting on the wrong row.
+        int IndexOf() => manager.State.Workspaces.ToList().FindIndex(w => w.Id == workspaceId);
+
+        void Add(string glyph, string header, Action click)
+        {
+            var item = new MenuItem { Header = header, Icon = MenuGlyph(glyph) };
+            item.Click += (_, _) => click();
+            menu.Items.Add(item);
+        }
+
+        // Petre: "remove the word 'workspace', just insert before and after."
+        //
+        // Right: the menu only opens on a workspace row, so every item saying so again is the
+        // context repeating itself in six places. The glyphs carry what is left.
+        Add("✏", "Rename…", () =>
+            PromptDialog.Ask("Rename workspace", "New name:", name, owner: this)
+                .Tap(renamed => Report(manager.RenameWorkspace(workspaceId, renamed))));
+
+        menu.Items.Add(new Separator());
+
+        // "on top or under the current workspace" -- before is this row's own index, after is the
+        // one past it, and InsertWorkspace clamps both.
+        Add("✚", "Insert before…", () => InsertAt(IndexOf()));
+        Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1));
+
+        menu.Items.Add(new Separator());
+
+        // Out-of-range moves succeed as no-ops by design (see MoveWorkspace), so "Move up" on the
+        // top row does nothing rather than popping an error at someone who clicked it. That is why
+        // nothing here is disabled: a disabled item at the edge of a list is a smaller kindness
+        // than a menu whose shape never changes.
+        Add("▲", "Move up", () => Report(manager.MoveWorkspace(workspaceId, -1)));
+        Add("▼", "Move down", () => Report(manager.MoveWorkspace(workspaceId, +1)));
+        // Petre: "add move to the end and to the top". A reposition rather than a run of swaps --
+        // see MoveWorkspaceTo, which persists and pulses once for the whole gesture instead of
+        // once per row it passes.
+        Add("⤒", "Move to top", () => Report(manager.MoveWorkspaceTo(workspaceId, 0)));
+        Add("⤓", "Move to end", () => Report(manager.MoveWorkspaceTo(workspaceId, manager.State.Workspaces.Count - 1)));
+
+        return menu;
+    }
+
+    // Petre: "add nice icons."
+    //
+    // A TextBlock rather than an image, because MenuItem.Icon takes any content and these want to
+    // follow the menu's own foreground and size -- an image would have to be recoloured by hand
+    // for a theme change that this app never asks about.
+    //
+    // Glyphs chosen from blocks Segoe UI and its symbol fallback have covered for as long as
+    // Windows 10 has existed (Dingbats, Geometric Shapes, Supplemental Arrows-B), rather than from
+    // Segoe MDL2 Assets: MDL2 has prettier icons and needs its own FontFamily plus private-use
+    // codepoints, and a private-use codepoint that turns out wrong renders as a hollow box rather
+    // than as anything recognisable.
+    static UIElement MenuGlyph(string glyph) => new TextBlock
+    {
+        Text = glyph,
+        FontSize = 13,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
+    void InsertAt(int index) =>
+        PromptDialog.Ask("New workspace", "Name:", owner: this)
+            // Result<Workspace> converts implicitly to Result, which is all Report needs: it only
+            // ever shows the ERROR, and the new Workspace has no reader here -- the bar redraws
+            // off the pulse that creating it sent.
+            .Tap(fresh => Report(manager.InsertWorkspace(fresh, index)));
+
     ContextMenu IconMenu(WindowRow row)
     {
         var menu = new ContextMenu();
+        HoldFadeWhileOpen(menu);
 
-        // A context menu is its own window, so a pointer standing in it has -- as far as WPF is
-        // concerned -- left the bar, which would fade the very row the menu was opened on.
-        //
-        // The menu itself is remembered rather than a flag being set, because the flag could get
-        // stuck: menus belong to icon Buttons, every rebuild throws those Buttons away, and a menu
-        // destroyed with its owner is not guaranteed to raise Closed. Asking the remembered menu
-        // whether it IsOpen cannot get stuck the same way -- a menu that went away answers no.
-        menu.Opened += (_, _) => { openMenu = menu; UpdateFade(); };
-        menu.Closed += (_, _) => { if (ReferenceEquals(openMenu, menu)) openMenu = null; UpdateFade(); };
 
-        var rename = new MenuItem { Header = "Rename this window…" };
+        var rename = new MenuItem { Header = "Rename this window…", Icon = MenuGlyph("✏") };
         rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title, owner: this)
             .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
         menu.Items.Add(rename);
@@ -2277,7 +2411,7 @@ public partial class FloatingBar : Window
         // Named after the actual process so the difference between the two entries is visible
         // rather than something to be inferred from wording: "Rename this window…" versus
         // "Rename all RemoteDesktopManager windows…".
-        var renameApp = new MenuItem { Header = $"Rename all {row.Window.ProcessName} windows…" };
+        var renameApp = new MenuItem { Header = $"Rename all {row.Window.ProcessName} windows…", Icon = MenuGlyph("✎") };
         renameApp.Click += (_, _) => PromptDialog.Ask(
                 $"Rename every {row.Window.ProcessName} window",
                 "Short name to show on the taskbar (survives the app changing its own title):",
@@ -2285,7 +2419,7 @@ public partial class FloatingBar : Window
             .Tap(shortName => Report(manager.RenameApp(row.Window.Handle, shortName)));
         menu.Items.Add(renameApp);
 
-        var restore = new MenuItem { Header = "Restore title", IsEnabled = row.OriginalTitle.HasValue };
+        var restore = new MenuItem { Header = "Restore title", IsEnabled = row.OriginalTitle.HasValue, Icon = MenuGlyph("↺") };
         restore.Click += (_, _) => Report(manager.RestoreTitle(row.Window.Handle));
         menu.Items.Add(restore);
 
