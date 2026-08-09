@@ -407,7 +407,7 @@ public partial class FloatingBar : Window
         // A new press: nothing has claimed it yet, and no row owns it until the row's own
         // tunnelling handler (wired in GroupRow) runs a moment later, further down this route.
         pressConsumedByChild = false;
-        pressedRow = null;
+        pressedRowKey = null;
 
         // A press in either side strip resizes instead of doing anything else at all -- checked
         // FIRST, and returning, so the same press cannot also arm a bar-drag below.
@@ -465,7 +465,7 @@ public partial class FloatingBar : Window
     //
     // Two pieces of state make the row handler safe to run on every release:
     //
-    //   pressedRow           -- the row the press STARTED in. A release only switches for the
+    //   pressedRowKey        -- the row the press STARTED in. A release only switches for the
     //                           row that was pressed, so dragging across rows commits to none.
     //   pressConsumedByChild -- set when an icon or label Button actually raised Click for this
     //                           press. Click is raised while the bubbling MouseUp is still at
@@ -475,7 +475,20 @@ public partial class FloatingBar : Window
     //
     // Both are reset on every press, above.
     bool pressConsumedByChild;
-    DependencyObject? pressedRow;
+
+    // The row's KEY, not the row's container object, and that is the whole point (#48).
+    //
+    // This used to hold the container and compare it with ReferenceEquals, which is the trap this
+    // codebase has already paid for once with the amber candidate ring: state that has to outlive a
+    // rebuild cannot live on the things a rebuild destroys. A rebuild between a press and its
+    // release swaps every row container out, so the release arrives at a BRAND NEW object standing
+    // in exactly the same place, showing exactly the same workspace -- and the reference comparison
+    // called that a different row and threw the click away. The trace shows it: "row-up ...
+    // ourPress=False" with no drag anywhere near it.
+    //
+    // The identity of a row is its groupKey. It survives the rebuild, so the click does too. A real
+    // drag across rows still commits to nothing, because those are genuinely different keys.
+    string? pressedRowKey;
 
     // Called by the icon and label Buttons from their own Click handlers.
     void MarkPressConsumed() => pressConsumedByChild = true;
@@ -534,6 +547,19 @@ public partial class FloatingBar : Window
     // own dragStart (pitfall #2 in that file's comments).
     void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        // The half of the #48 trace that was missing, and the one that splits the remaining cases
+        // in two. Today a lost click leaves a "press" line with no "row-up" after it, and that is
+        // ambiguous: the release may have arrived at the bar and been declined somewhere before the
+        // row, or it may never have reached this window at all (the pointer left the bar, another
+        // window took it, a modal loop ate it).
+        //
+        // This is the window's own tunnelling handler, so it is FIRST on the route: if a release is
+        // delivered to the bar in any form, this line is written. A "press" with no "up" after it
+        // therefore means the release genuinely never got here -- which is a different bug from a
+        // release that got here and went nowhere, and needs a different fix.
+        if (ClickTrace.On)
+            ClickTrace.Write($"up source={e.OriginalSource.GetType().Name} clickTarget={StartedOnClickTarget(e.OriginalSource)} pressedRow={pressedRowKey ?? "none"}");
+
         dragStart = null;
         if (resizing is not null)
         {
@@ -1550,7 +1576,7 @@ public partial class FloatingBar : Window
             // Tunnels, so this runs after the window-level handler that clears the two flags and
             // before any child of the row sees the press: whatever happens next, the press is
             // stamped as belonging to THIS row.
-            container.PreviewMouseLeftButtonDown += (_, _) => pressedRow = container;
+            container.PreviewMouseLeftButtonDown += (_, _) => pressedRowKey = groupKey;
 
             container.AddHandler(Mouse.MouseUpEvent, new MouseButtonEventHandler((_, e) =>
             {
@@ -1560,8 +1586,8 @@ public partial class FloatingBar : Window
                 // arrived" are the two halves this bug has to be split into, and only the first
                 // one leaves a line here.
                 if (ClickTrace.On)
-                    ClickTrace.Write($"row-up group={groupLabel} consumedByChild={pressConsumedByChild} ourPress={ReferenceEquals(pressedRow, container)}");
-                if (pressConsumedByChild || !ReferenceEquals(pressedRow, container)) return;
+                    ClickTrace.Write($"row-up group={groupLabel} consumedByChild={pressConsumedByChild} ourPress={pressedRowKey == groupKey}");
+                if (pressConsumedByChild || pressedRowKey != groupKey) return;
                 // Stage 4: the switch itself, and its RESULT -- a failure here is invisible today
                 // because Report only shows a dialog, and a switch refused by a stale
                 // virtual-desktop COM object would look exactly like a click that did nothing.
