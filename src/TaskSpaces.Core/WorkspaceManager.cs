@@ -106,6 +106,16 @@ public sealed class WorkspaceManager(
 
     public AppState State { get; private set; } = AppState.Empty;
 
+    // Which WORKSPACE the user is standing in, or None (#53). None is a real, ordinary state
+    // rather than an error: most of Petre's windows live on a desktop he never named, and time
+    // spent there is attributed to nothing rather than being guessed onto a neighbour.
+    //
+    // Derived from currentDesktopId rather than asked of the OS, because those two can disagree
+    // for exactly one moment -- during a switch -- and this is read by a timer that does not care
+    // to know about that race (see the comment on currentDesktopId).
+    public Maybe<Guid> CurrentWorkspaceId =>
+        currentDesktopId.Bind(desktop => State.Workspaces.TryFirst(w => w.DesktopId == desktop).Map(w => w.Id));
+
     public IObservable<Unit> StateChanged => stateChanged.AsObservable();
     public IReadOnlyList<WindowInfo> KnownWindows => knownWindows.Values.ToList();
 

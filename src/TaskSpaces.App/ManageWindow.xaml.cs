@@ -8,6 +8,7 @@ using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
+using TaskSpaces.Core.Time;
 using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.App;
@@ -34,9 +35,16 @@ public partial class ManageWindow : Window
     readonly ObservableCollection<WorkspaceRuleRow> workspaceRules = [];
     readonly ObservableCollection<RenameRuleRow> renameRules = [];
 
-    public ManageWindow(WorkspaceManager manager, bool compatibilityMode)
+    // #53: read-only here. Manage shows what has been tracked; the tracker itself is owned by App,
+    // which is where the timer that feeds it lives. Optional so the two tests that construct this
+    // window without a tracker keep working, and so a compatibility-mode start has one less thing
+    // that must exist.
+    readonly TimeTracker? timeTracker;
+
+    public ManageWindow(WorkspaceManager manager, bool compatibilityMode, TimeTracker? timeTracker = null)
     {
         this.manager = manager;
+        this.timeTracker = timeTracker;
         InitializeComponent();
         if (compatibilityMode) CompatBanner.Visibility = Visibility.Visible;
         StartWithWindows.IsChecked = StartupRegistration.IsEnabled;
@@ -77,6 +85,7 @@ public partial class ManageWindow : Window
         // After the selection is restored, so it fills for the workspace that ends up selected
         // rather than for the one that happened to be selected before the rebind.
         ReloadRoster();
+        ReloadTime();
 
         // Reads through WorkspaceManager, not AppState, so the box shows what is actually
         // BOUND -- including the fallback to the default when state.json holds something
@@ -116,6 +125,57 @@ public partial class ManageWindow : Window
 
     void OnResetSwitcherShortcut(object s, RoutedEventArgs e) =>
         Report(manager.SetSwitcherShortcut(AppState.DefaultSwitcherShortcut).Map(() => true)).Tap(Reload);
+
+    // --- tracked time (#53) -----------------------------------------------------------------
+
+    public sealed class TimeRow
+    {
+        public required string Workspace { get; init; }
+        public required string Today { get; init; }
+        public required string ThisWeek { get; init; }
+        public required string LastMonth { get; init; }
+    }
+
+    readonly ObservableCollection<TimeRow> times = [];
+
+    void ReloadTime()
+    {
+        TimeGrid.ItemsSource ??= times;
+        times.Clear();
+
+        if (timeTracker is null)
+        {
+            TimeStatus.Text = "Time tracking is not running.";
+            return;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        // The week Petre is IN, not the last seven days: "this week" means since Monday to
+        // everyone who says it, and a rolling window would make Monday morning read as a full week
+        // of work carried over from the last one.
+        var monday = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
+
+        manager.State.Workspaces.ToList().ForEach(w => times.Add(new TimeRow
+        {
+            Workspace = w.Name,
+            Today = Format(timeTracker.Time.On(w.Id, today)),
+            ThisWeek = Format(timeTracker.Time.Between(w.Id, monday, today)),
+            LastMonth = Format(timeTracker.Time.Between(w.Id, today.AddDays(-29), today)),
+        }));
+
+        // Says what the numbers cannot: a fresh install shows zeroes everywhere, and without this
+        // line that is indistinguishable from tracking being broken.
+        TimeStatus.Text = times.All(t => t.LastMonth == Format(TimeSpan.Zero))
+            ? "Nothing tracked yet. Time accrues while you work in a workspace, in 15-second steps, and is written to time.json beside state.json."
+            : $"Counted in 15-second steps while you are active; idle after {ActivityAccrual.IdleAfter.TotalMinutes:0} minutes without input.";
+    }
+
+    // Hours and minutes, never seconds: the numbers here are answers to "where did my day go", and
+    // a seconds column would invite a precision the 15-second granularity cannot support.
+    static string Format(TimeSpan time) =>
+        time < TimeSpan.FromMinutes(1) ? "—"
+        : time < TimeSpan.FromHours(1) ? $"{time.TotalMinutes:0}m"
+        : $"{(int)time.TotalHours}h {time.Minutes:00}m";
 
     // --- roster (#55) ---------------------------------------------------------------------
     //

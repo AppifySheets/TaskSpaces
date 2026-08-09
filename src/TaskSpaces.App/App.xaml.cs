@@ -9,6 +9,7 @@ using TaskSpaces.Core;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
+using TaskSpaces.Core.Time;
 using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Monitoring;
@@ -33,6 +34,7 @@ public partial class App : Application
     WorkspaceSwitchGesture? switcher; // Alt+Tab-style workspace picker (Win+Ctrl+Tab by default)
     Chord boundSwitcher;              // the chord the picker and the hotkey are currently registered on
     FloatingBar? floatingBar; // Task 11: created lazily on first show
+    TimeTracker? timeTracker; // #53: active time per workspace, in its own file beside state.json
 
     // Held for the whole process lifetime, in a FIELD so the GC cannot collect it and quietly
     // release the lock while we are still running. See OnStartup for why it exists.
@@ -122,6 +124,11 @@ public partial class App : Application
         attentionMonitor = new ShellHookAttentionMonitor();
         manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir),
             activator: new WindowActivator(), screenLayout: new ScreenLayout(), attention: attentionMonitor);
+
+        // Time tracking (#53). Its own file beside state.json, because this is the one thing the
+        // app stores that grows without bound -- one row per workspace per day, forever -- and
+        // mixing it into state.json would mean rewriting all of that on every workspace rename.
+        timeTracker = new TimeTracker(new JsonTimeStore(stateDir), new InputActivity(), () => DateTime.Now);
 
         // Spec §Error handling: if the COM API is unrecognized (post-Windows-Update),
         // degrade to listing workspaces with a banner -- never crash, never move windows.
@@ -373,6 +380,28 @@ public partial class App : Application
             sweep.Start();
         }
 
+        // Time tracking's own clock (#53). A THIRD timer rather than a job on the 5s sweep, and
+        // the interval is the reason: accrual credits whatever the interval is, so riding the
+        // sweep would mean crediting five seconds at a time, twelve times more writes to the
+        // ledger for no more accuracy. Fifteen seconds is the granularity Petre's own proposal
+        // asked for, and it is also the error bar on a switch mid-tick -- which is not worth more
+        // precision than that.
+        //
+        // Started even in compatibility mode: there are still workspaces to attribute time to,
+        // and the only thing missing there is the ability to MOVE windows between them.
+        timeTracker.Start();
+        // Two years of history is generous for a personal tool and still trivially small; the
+        // point is only that "forever" is not a plan. Pruned once, at startup, because a
+        // background prune is machinery for a problem measured in kilobytes per year.
+        timeTracker.Forget(DateOnly.FromDateTime(DateTime.Now).AddYears(-2));
+
+        var tracking = new System.Windows.Threading.DispatcherTimer { Interval = ActivityAccrual.TickInterval };
+        tracking.Tick += (_, _) => timeTracker.Tick(manager.CurrentWorkspaceId, ActivityAccrual.TickInterval);
+        tracking.Start();
+        // Whatever is still unwritten when the app closes. Exiting is the one moment a lost five
+        // minutes is guaranteed rather than merely possible.
+        Exit += (_, _) => timeTracker.Flush();
+
         // The "Restore workspaces?" prompt USED to appear here. Petre: "this seems like an
         // overkill", then "no, bad, don't want this". Gating it to first-run-after-reboot was
         // my first answer and it was the wrong one -- he did not want a better-timed prompt, he
@@ -449,7 +478,7 @@ public partial class App : Application
             return;
         }
 
-        manageWindow = new ManageWindow(manager!, compatibilityMode);
+        manageWindow = new ManageWindow(manager!, compatibilityMode, timeTracker);
         manageWindow.Closed += (_, _) => manageWindow = null;
         manageWindow.Show();
     }

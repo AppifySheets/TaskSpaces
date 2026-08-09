@@ -98,6 +98,25 @@
                     </StackPanel>
                 </DockPanel>
             </TabItem>
+            <!-- #53. Petre's ruling on what counts: active means keyboard or mouse activity, and
+                 pure wall-clock presence does not. The wording below says so plainly, because a
+                 number labelled just "time" would be read as wall-clock and quietly disbelieved
+                 the first time it disagreed with the clock on the wall. -->
+            <TabItem Header="Time">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Active time per workspace — counted only while you are actually typing or moving the mouse, so a workspace left on screen overnight accrues nothing. Watching something without touching anything reads as idle, which is the honest consequence of counting input."/>
+                    <TextBlock x:Name="TimeStatus" DockPanel.Dock="Bottom" Opacity="0.75" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    <DataGrid x:Name="TimeGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Workspace" Binding="{Binding Workspace}" Width="*"/>
+                            <DataGridTextColumn Header="Today" Binding="{Binding Today}" Width="110"/>
+                            <DataGridTextColumn Header="This week" Binding="{Binding ThisWeek}" Width="110"/>
+                            <DataGridTextColumn Header="Last 30 days" Binding="{Binding LastMonth}" Width="110"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
             <TabItem Header="Rules">
                 <DockPanel Margin="8">
                     <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"
