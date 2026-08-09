@@ -33,4 +33,43 @@ public static class IconRowLimit
     // just its label, and an empty horizontal panel would still claim an icon's height.
     public static IReadOnlyList<IReadOnlyList<T>> Lines<T>(IEnumerable<T> icons) =>
         icons.Chunk(IconsPerLine).Select(line => (IReadOnlyList<T>)line).ToList();
+
+    // Petre: "i want no less than 3 icons per row width."
+    //
+    // The floor for the width-driven split below, and it is a FLOOR rather than a target: a line
+    // is never broken before three icons, even when three do not fit. A row whose label eats the
+    // width would otherwise degrade to one icon per line and a bar taller than the screen, which
+    // is a worse answer than icons running past the edge.
+    public const int MinimumIconsPerLine = 3;
+
+    // The same split, but against a WIDTH the user chose rather than a fixed count.
+    //
+    // The fixed rule above stays the default and this only takes over once the bar has an explicit
+    // width, which is what makes it safe: IconRowLimit's whole objection to adaptive wrapping was
+    // that a limit derived from the CONTENT is recomputed on every rebuild, so an unrelated window
+    // opening re-wraps a busy workspace and (this window being SizeToContent) repositions the bar.
+    // A width the user dragged does not move when windows come and go, so the same arithmetic that
+    // was unstable there is stable here.
+    //
+    // Widths arrive as a FUNCTION rather than one constant, because a line is not made of equal
+    // cells: the monitor markers are drawn inline between groups, and ignoring them would let a
+    // line overflow by exactly as many markers as it happens to contain.
+    public static IReadOnlyList<IReadOnlyList<T>> LinesThatFit<T>(IEnumerable<T> icons, Func<T, double> widthOf, double available) =>
+        icons
+            .Aggregate(new List<List<T>>(), (lines, icon) =>
+            {
+                var width = widthOf(icon);
+                var current = lines.LastOrDefault();
+                // Break when this icon would overflow -- unless the line has not yet earned its
+                // three, in which case it takes the overflow instead.
+                if (current is null || (current.Count >= MinimumIconsPerLine && Used(current, widthOf) + width > available))
+                    lines.Add([icon]);
+                else
+                    current.Add(icon);
+                return lines;
+            })
+            .Select(line => (IReadOnlyList<T>)line)
+            .ToList();
+
+    static double Used<T>(IEnumerable<T> line, Func<T, double> widthOf) => line.Sum(widthOf);
 }

@@ -102,4 +102,16 @@ public sealed record FloatingBarState(double Left, double Top, bool Visible)
     // PositionFromState reads as "fall back to Left". Left and Top are still written too, so
     // going back to an older build does not lose the position.
     public double? Right { get; init; }
+
+    // Petre: "make the floatingwindow resizeable in width and persist it in settings."
+    //
+    // Null means "never resized", which is every state.json written before this key and every
+    // fresh install -- and it is not merely a missing value, it selects a different LAYOUT: the
+    // bar stays SizeToContent and rows wrap at the fixed five icons, exactly as they always have.
+    // A width here switches both, to an explicit width and a wrap that fits it.
+    //
+    // Stored as the WINDOW's width, BarScale included, because that is what gets assigned back to
+    // Window.Width on the next start. Changing the scale therefore keeps the bar the same size on
+    // screen rather than rescaling a number that was chosen by eye at the old scale.
+    public double? Width { get; init; }
 }
