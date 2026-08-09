@@ -2486,7 +2486,16 @@ public partial class FloatingBar : Window
             { } s => s.Left,
             null => work.Right - ActualWidth,
         };
-        var rawTop = stored?.Top ?? work.Bottom - ActualHeight;
+        // Top follows the same rule as Left, for the same reason and now with the same weight: the
+        // bar's height follows its content too, so the BOTTOM edge is what a restore has to
+        // reproduce (see FloatingBarState.Bottom). Top is still read for files written before that
+        // key existed, and still written, so nothing is lost by going back to an older build.
+        var rawTop = stored switch
+        {
+            { Bottom: { } bottom } => bottom - ActualHeight,
+            { } s => s.Top,
+            null => work.Bottom - ActualHeight,
+        };
 
         (Left, Top) = WorkAreaClamp.Clamp(rawLeft, rawTop, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
         AnchorFromPosition(work);
@@ -2508,8 +2517,14 @@ public partial class FloatingBar : Window
     // Deriving the choice means the two cannot disagree and nothing extra is persisted: a null
     // anchor is "pin the left edge", which is WPF's own behaviour, so OnSizeChanged does
     // nothing at all.
-    void AnchorFromPosition((double Left, double Top, double Right, double Bottom) work) =>
+    void AnchorFromPosition((double Left, double Top, double Right, double Bottom) work)
+    {
         anchorRight = EdgeSnap.GrowsLeftwards(Left, work.Left) ? Left + ActualWidth : null;
+        // The vertical twin (#50). Derived on the same pass, from the same fact -- where the bar
+        // actually is -- so the two axes cannot disagree and neither is persisted as a decision
+        // that could go stale.
+        anchorBottom = EdgeSnap.GrowsUpwards(Top, work.Top) ? Top + ActualHeight : null;
+    }
 
     // The screen x the bar's right edge is pinned to. Null until the bar has been positioned,
     // which is what stops the initial layout passes -- several of them, as rows are built and
@@ -2517,18 +2532,35 @@ public partial class FloatingBar : Window
     // leftwards before it has been placed at all.
     double? anchorRight;
 
-    // Keeps the right edge still while the bar gets wider or narrower, which is the whole ask:
-    // the bar is parked against the right of the screen, so growing rightwards walks it off.
+    // ...and the screen y its bottom edge is pinned to, on exactly the same terms (#50).
+    double? anchorBottom;
+
+    // Keeps the far edges still while the bar changes size, which is the whole ask: the bar is
+    // parked in the bottom-right corner, so growing rightwards or downwards walks it off.
     //
-    // SizeChanged rather than a recalculation inside Rebuild: SizeToContent means the width is
+    // SizeChanged rather than a recalculation inside Rebuild: SizeToContent means the new size is
     // only known once WPF has measured the new content, and Rebuild returns long before that.
+    //
+    // Both axes, and each independently, because either can move on its own. Height used to be
+    // left alone -- defensible while it rarely changed, since windows arriving widen a row and
+    // only occasionally add one. Two things since then made height move as freely as width: a
+    // workspace can be inserted from the bar's own right-click menu (#40), and a row can be made
+    // to wrap by dragging an edge (#36). Both grow the bar downwards from a fixed top edge, and
+    // the bar's home is the bottom of the work area.
     void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (!e.WidthChanged || anchorRight is not { } anchor || moving) return;
+        if (moving) return;
         if (MonitorBounds(Left, Top) is not { } work) return;
-        // Clamped like every other placement here: a bar grown wider than the work area cannot
-        // keep its right edge AND stay on screen, and staying on screen wins.
-        (Left, Top) = WorkAreaClamp.Clamp(anchor - ActualWidth, Top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
+
+        // A null anchor means "pin the near edge", which is WPF's own behaviour, so that axis is
+        // simply left where it is.
+        var left = e.WidthChanged && anchorRight is { } right ? right - ActualWidth : Left;
+        var top = e.HeightChanged && anchorBottom is { } bottom ? bottom - ActualHeight : Top;
+        if (left.Equals(Left) && top.Equals(Top)) return;
+
+        // Clamped like every other placement here: a bar grown larger than the work area cannot
+        // keep its far edge AND stay on screen, and staying on screen wins.
+        (Left, Top) = WorkAreaClamp.Clamp(left, top, ActualWidth, ActualHeight, work.Left, work.Top, work.Right, work.Bottom);
     }
 
     // The work area of whichever monitor holds the given point, in DIPs. Null when Windows
@@ -2584,6 +2616,7 @@ public partial class FloatingBar : Window
     void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)
     {
         Right = anchorRight,
+        Bottom = anchorBottom,
         Width = double.IsNaN(Width) ? null : Width,
     });
 

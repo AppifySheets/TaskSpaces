@@ -112,6 +112,18 @@ public sealed record FloatingBarState(double Left, double Top, bool Visible)
     // going back to an older build does not lose the position.
     public double? Right { get; init; }
 
+    // The vertical twin of Right, and it exists for exactly the same reason on the other axis
+    // (#50): the bar's HEIGHT follows its content too -- a workspace inserted from the bar's own
+    // menu, a row wrapping onto another line -- so the bottom edge is what a restore has to
+    // reproduce. Restoring Top instead would put the top edge back where it was and let the bottom
+    // land wherever this session's rows reach, which for a bar parked at the bottom of the work
+    // area is off it.
+    //
+    // Init property with no default, so files written before this key load as null, which
+    // PositionFromState reads as "fall back to Top". Top is still written too, so going back to an
+    // older build does not lose the position.
+    public double? Bottom { get; init; }
+
     // Petre: "make the floatingwindow resizeable in width and persist it in settings."
     //
     // Null means "never resized", which is every state.json written before this key and every

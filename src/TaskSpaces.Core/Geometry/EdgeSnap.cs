@@ -48,4 +48,18 @@ public static class EdgeSnap
     // False = pin the left edge, which is WPF's own behaviour, so the caller does nothing.
     public static bool GrowsLeftwards(double left, double workAreaLeft) =>
         left > workAreaLeft + Distance;
+
+    // The exact twin, for the vertical axis (#50).
+    //
+    // Only WIDTH growth was anchored for a long time, and that was defensible while height rarely
+    // moved: windows arriving widen a row, and only occasionally add one. It stopped being
+    // defensible once a workspace could be inserted from the bar's own right-click menu and a row
+    // could be made to wrap by dragging an edge -- both change the bar's HEIGHT, and the bar lives
+    // in the bottom-right corner, so growing downwards from a fixed top edge walks it off the
+    // screen.
+    //
+    // True = pin the bottom edge (the usual case, including a bar floating in open space).
+    // False = pin the top edge, which is WPF's own behaviour, so the caller does nothing.
+    public static bool GrowsUpwards(double top, double workAreaTop) =>
+        top > workAreaTop + Distance;
 }

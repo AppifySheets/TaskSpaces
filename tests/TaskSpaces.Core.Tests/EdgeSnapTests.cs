@@ -85,4 +85,39 @@ public class EdgeSnapTests
         Assert.Equal(-1920, EdgeSnap.Snap(-1920 + 5, 5, BarW, BarH, -1920, 0, -920, H).Left);
         Assert.False(EdgeSnap.GrowsLeftwards(left: -1920, workAreaLeft: -1920));
     }
+
+    // --- the vertical twin (#50) ------------------------------------------------------------
+    //
+    // Only width growth was anchored while height rarely moved. Inserting a workspace from the
+    // bar's right-click menu and wrapping a row by dragging an edge both change the HEIGHT, and
+    // the bar's home is the bottom-right corner -- so unanchored height growth walks it off the
+    // bottom of the screen.
+
+    [Fact]
+    public void Snapped_to_the_top_edge_it_grows_downwards() =>
+        Assert.False(EdgeSnap.GrowsUpwards(top: 0, workAreaTop: 0));
+
+    [Fact]
+    public void Snapped_to_the_bottom_edge_it_grows_upwards() =>
+        Assert.True(EdgeSnap.GrowsUpwards(top: H - BarH, workAreaTop: 0));
+
+    // The ordinary case, and the same answer its horizontal twin gives: floating in open space it
+    // grows upwards, because the bottom-right corner is where the bar lives.
+    [Fact]
+    public void Floating_in_open_space_it_grows_upwards() =>
+        Assert.True(EdgeSnap.GrowsUpwards(top: 300, workAreaTop: 0));
+
+    // A taskbar along the TOP of the screen pushes the work area down, so "at the top" is a
+    // work-area fact and never a screen one -- the same reason the horizontal twin takes
+    // workAreaLeft rather than assuming zero, which is what makes it survive Petre's
+    // negative-coordinate monitor above.
+    [Fact]
+    public void The_top_of_the_work_area_is_what_counts_not_the_top_of_the_screen() =>
+        Assert.False(EdgeSnap.GrowsUpwards(top: 48, workAreaTop: 48));
+
+    // Just inside the snap distance still counts as "at the top": the threshold is shared with
+    // Snap, so a bar that snapped to an edge cannot then disagree about which way it grows.
+    [Fact]
+    public void Within_the_snap_distance_of_the_top_it_still_grows_downwards() =>
+        Assert.False(EdgeSnap.GrowsUpwards(top: EdgeSnap.Distance, workAreaTop: 0));
 }
