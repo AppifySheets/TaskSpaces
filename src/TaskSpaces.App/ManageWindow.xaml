@@ -38,6 +38,13 @@
                         <Button Content="Remove" Margin="8,0,0,0" Padding="12,2" Click="OnRemoveWorkspace"/>
                         <Button Content="↑ Up" Margin="16,0,0,0" Padding="12,2" Click="OnMoveWorkspaceUp"/>
                         <Button Content="↓ Down" Margin="4,0,0,0" Padding="12,2" Click="OnMoveWorkspaceDown"/>
+                        <!-- Nesting (#42). Beside the reorder buttons because it is the same kind
+                             of act: it changes where a workspace sits in the list, not what it
+                             contains. The parent is chosen from the list on the left, so the
+                             gesture is "select the child, pick the parent, press Nest". -->
+                        <ComboBox x:Name="NestParent" Width="140" Margin="16,0,0,0" DisplayMemberPath="Name"/>
+                        <Button Content="Nest under" Margin="4,0,0,0" Padding="12,2" Click="OnNestWorkspace"/>
+                        <Button Content="Un-nest" Margin="4,0,0,0" Padding="12,2" Click="OnUnnestWorkspace"/>
                     </StackPanel>
                     <!-- The roster beside the workspaces rather than under them: it is a
                          property OF the selected workspace, and putting it alongside makes the

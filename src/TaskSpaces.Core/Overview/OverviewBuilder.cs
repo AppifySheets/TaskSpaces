@@ -196,12 +196,23 @@ public static class OverviewBuilder
                 .ToList();
         }
 
+        // A nested workspace shows its parent's windows too (#42). Computed here, from the same
+        // OnDesktop the parent's own row is built from, so the two can never disagree about what
+        // is on that desktop -- and computed lazily per group, since the overwhelming majority of
+        // workspaces have no parent and should pay nothing for the ones that do.
+        IReadOnlyList<WindowRow> InheritedBy(Workspace ws) =>
+            ws.ParentId is { } parentId
+            && state.Workspaces.FirstOrDefault(w => w.Id == parentId) is { DesktopId: { } parentDesktop }
+                ? OnDesktop(parentDesktop)
+                : [];
+
         var workspaceGroups = state.Workspaces
             .Select(ws => new WorkspaceGroup(
                 ws,
                 ws.DesktopId == currentDesktopId,
                 ws.DesktopId is { } id ? OnDesktop(id) : [],
-                state.Inventory.GetValueOrDefault(ws.Id, []).Where(e => !RosterIdentity.IsRunning(e, windows)).ToList()))
+                state.Inventory.GetValueOrDefault(ws.Id, []).Where(e => !RosterIdentity.IsRunning(e, windows)).ToList(),
+                InheritedBy(ws)))
             .ToList();
 
         // BUG FIX (Task 10, Petre: "i don't think i see windows in the non-workspace

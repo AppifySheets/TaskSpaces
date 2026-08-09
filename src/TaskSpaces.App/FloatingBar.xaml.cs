@@ -1042,24 +1042,38 @@ public partial class FloatingBar : Window
             // amended: EVERY workspace gets a row -- an empty one is just its label,
             // which since round 5 is a click-to-switch button, so it's a legitimate
             // switch target rather than dead chrome.
-            overview.Workspaces
+            // Nested workspaces are drawn UNDER their parent (#42), which means the flat list has
+            // to be walked as a tree: each top-level workspace, then its children, in the order
+            // the list itself gives.
+            //
+            // Order is otherwise untouched -- a workspace's position still drives its lane colour
+            // (WorkspacePalette by index), so this deliberately re-SEQUENCES the rows without
+            // renumbering them. Nesting a workspace moves where it is drawn, not what colour it is.
+            var byParent = overview.Workspaces.ToLookup(g => g.Workspace.ParentId);
+            byParent[null]
+                .SelectMany(parent => new[] { parent }.Concat(byParent[parent.Workspace.Id]))
                 .ToList()
-                // Index carries the workspace's position so WorkspacePalette can colour by
-                // ORDER: renaming a workspace must not recolour it, and reordering should move
-                // its colour with it.
                 .ForEach((g) =>
                 {
                     // Recorded so ApplyCandidate can restore the white ring here when the amber
                     // one moves away, without needing another overview query to ask again.
                     if (g.IsCurrent) currentRow = g.Workspace.Id;
-                    groupRows.Add(GroupRow(g.Workspace.Name, g.Workspace.Name, g.IsCurrent,
+                    // Petre: "a nested workspace is easily identifiable as nested". Two marks
+                    // rather than one, because they answer at different distances: the indent is
+                    // what you see without reading, and the ↳ is what confirms it when the row
+                    // above happens to be short. The full name still reads plainly in the label.
+                    groupRows.Add(GroupRow(
+                    g.Workspace.ParentId is null ? g.Workspace.Name : $"↳ {g.Workspace.Name}",
+                    g.Workspace.Name, g.IsCurrent,
                     switchTo: () => manager.Switch(g.Workspace.Id),
                     groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
                     onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
                     g.Running,
                     tint: LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)),
                     rowKey: g.Workspace.Id,
-                    minimized: g.Workspace.Minimized));
+                    minimized: g.Workspace.Minimized,
+                    nested: g.Workspace.ParentId is not null,
+                    inherited: g.Inherited));
                 });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
@@ -1245,7 +1259,18 @@ public partial class FloatingBar : Window
     // draws there.
     const double MinimizedRowScale = 1.0 / 3;
 
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false)
+    // How far a nested row is pushed in (#42). One icon's width, so the indent reads as a level
+    // rather than as a wobble -- and taken out of the icons' own space rather than the row's, so
+    // a nested row still starts and ends where every other row does and the monitor alignment
+    // (#39) still lines up across the bar.
+    const double NestedIndent = 14;
+
+    // Inherited icons are dimmer than the row's own, because they are not the same KIND of thing:
+    // these windows live on the parent's desktop and clicking one leaves this workspace. Same
+    // device the bar already uses for minimised windows -- opacity means "present but not here".
+    const double InheritedIconOpacity = 0.55;
+
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, IReadOnlyList<WindowRow>? inherited = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -1301,6 +1326,10 @@ public partial class FloatingBar : Window
             Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
+            // The indent for a nested row (#42) is taken out of the ICONS' space, not the row's,
+            // so the row itself still spans the bar and the monitor alignment still lines up
+            // across every row.
+            Margin = nested ? new Thickness(NestedIndent, 0, 0, 0) : default,
         };
 
         // Built BEFORE the icons, which it did not used to be. Once the bar has a width the user
@@ -1364,6 +1393,20 @@ public partial class FloatingBar : Window
             : IconRowLimit.LinesThatFit(ordered, r => IconCellWidth + (opensGroup.Contains(r.Window.Handle) ? MonitorMarkerWidth : 0), IconRoomOn(label));
 
         lines.ToList().ForEach(line => icons.Children.Add(LineOf(line, opensGroup, groupLabel, groupKey, rowKey, iconButtons)));
+
+        // The parent's windows, on a nested workspace's row (#42). Petre: "everything from the
+        // main workspace is pinned to the nested ones."
+        //
+        // A trailing line of their own rather than mixed in with this row's icons, because they
+        // are not on this desktop: clicking one switches to the parent and focuses it there. Given
+        // its own panel, they also stay out of the wrap arithmetic and the monitor alignment, both
+        // of which are about the windows that actually live here.
+        if (inherited is { Count: > 0 })
+            icons.Children.Add(new Border
+            {
+                Opacity = InheritedIconOpacity,
+                Child = LineOf(inherited, opensGroup: new HashSet<WindowHandle>(), groupLabel, groupKey, rowKey: null, iconButtons),
+            });
         Grid.SetColumn(icons, 0);
         container.Children.Add(icons);
 

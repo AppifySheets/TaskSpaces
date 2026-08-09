@@ -741,6 +741,45 @@ public sealed class WorkspaceManager(
     // Idempotent by construction -- setting it to what it already is still persists and pulses,
     // which costs one redraw and saves a special case that could only ever fire on a menu click
     // nobody makes twice.
+    // Petre: "a workspace can be nested under a main (parent) workspace... it lives under the main
+    // one rather than sitting as a peer in the flat list" (#42).
+    //
+    // Three refusals, and each one is a shape the model would otherwise accept and the UI could
+    // never draw:
+    //
+    //   * ITSELF. A workspace parented to itself is a cycle of length one, and every walk over the
+    //     tree would run forever.
+    //   * A workspace that is ALREADY NESTED. One level only (see Workspace.ParentId): the bar is
+    //     ten rows tall and a second level of indentation is unreadable without collapsing, which
+    //     is an interaction nobody has asked for.
+    //   * A workspace that HAS CHILDREN. The mirror of the above -- nesting a parent under someone
+    //     else would create the second level from the other end.
+    //
+    // Deliberately NOT refused: nesting a workspace that has windows, or that is current. Both are
+    // ordinary, and neither means anything different afterwards.
+    public Result NestWorkspace(Guid child, Guid parent) =>
+        child == parent
+            ? Result.Failure("A workspace cannot be nested under itself.")
+            : Workspace(child).Bind(_ => Workspace(parent))
+                .Bind(target => target.ParentId is not null
+                    ? Result.Failure($"'{target.Name}' is itself nested. Workspaces nest one level deep.")
+                    : Result.Success())
+                .Bind(() => State.Workspaces.Any(w => w.ParentId == child)
+                    ? Result.Failure("That workspace has workspaces nested under it. Workspaces nest one level deep.")
+                    : Result.Success())
+                .Tap(() => Persist(State with
+                {
+                    Workspaces = State.Workspaces.Select(w => w.Id == child ? w with { ParentId = parent } : w).ToList(),
+                }));
+
+    // Back to the top level. Its own method rather than NestWorkspace(child, null), because
+    // "un-nest" is a thing a person does and a nullable parameter is a thing a compiler accepts.
+    public Result UnnestWorkspace(Guid child) =>
+        Workspace(child).Tap(_ => Persist(State with
+        {
+            Workspaces = State.Workspaces.Select(w => w.Id == child ? w with { ParentId = null } : w).ToList(),
+        }));
+
     public Result SetWorkspaceMinimized(Guid id, bool minimized) =>
         Workspace(id).Tap(_ => Persist(State with
         {
@@ -783,7 +822,14 @@ public sealed class WorkspaceManager(
                     .ForEach(h => memberships.Remove(h));
                 Persist(State with
                 {
-                    Workspaces = State.Workspaces.Where(x => x.Id != id).ToList(),
+                    // Children are PROMOTED, never removed with the parent (#42). Deleting a
+                    // workspace deletes one workspace; taking its children with it would destroy
+                    // desktops full of windows on the strength of a grouping decision, and a
+                    // dangling ParentId would leave rows that render as nested under nothing.
+                    Workspaces = State.Workspaces
+                        .Where(x => x.Id != id)
+                        .Select(x => x.ParentId == id ? x with { ParentId = null } : x)
+                        .ToList(),
                     WorkspaceRules = State.WorkspaceRules.Where(r => r.WorkspaceId != id).ToList(),
                     Inventory = State.Inventory.Where(kv => kv.Key != id).ToDictionary(kv => kv.Key, kv => kv.Value),
                 });

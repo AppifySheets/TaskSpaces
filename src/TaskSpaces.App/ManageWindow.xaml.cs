@@ -86,6 +86,7 @@ public partial class ManageWindow : Window
         // rather than for the one that happened to be selected before the rebind.
         ReloadRoster();
         ReloadTime();
+        ReloadNestParents();
 
         // Reads through WorkspaceManager, not AppState, so the box shows what is actually
         // BOUND -- including the fallback to the default when state.json holds something
@@ -219,7 +220,7 @@ public partial class ManageWindow : Window
             : $"{exe} — {entry.Title}";
     }
 
-    void OnWorkspaceSelected(object s, SelectionChangedEventArgs e) => ReloadRoster();
+    void OnWorkspaceSelected(object s, SelectionChangedEventArgs e) { ReloadRoster(); ReloadNestParents(); }
 
     // The button is disabled with nothing selected rather than reporting "nothing selected" after
     // the fact: there is no useful action to attempt, so there is nothing to explain.
@@ -241,6 +242,30 @@ public partial class ManageWindow : Window
     // the workspace as it moves and ↑ can simply be clicked repeatedly. MoveWorkspace
     // returns success for an out-of-range move, so hitting ↑ on the top row does nothing
     // rather than popping an error box.
+    // Nesting (#42). Petre: "a workspace can be nested under a main (parent) workspace."
+    //
+    // The parent list offers only workspaces that CAN be parents -- not the selected workspace
+    // itself, not one that is already nested, and not one that already has children (workspaces
+    // nest one level deep, see WorkspaceManager.NestWorkspace). Filtering here rather than letting
+    // the manager refuse afterwards means the impossible choices are never on screen; the manager
+    // still refuses them, because a UI is not a guarantee.
+    void ReloadNestParents()
+    {
+        var selected = (WorkspaceList.SelectedItem as Workspace)?.Id;
+        var hasChildren = manager.State.Workspaces.Where(w => w.ParentId is { } p).Select(w => w.ParentId!.Value).ToHashSet();
+        NestParent.ItemsSource = manager.State.Workspaces
+            .Where(w => w.Id != selected && w.ParentId is null && !hasChildren.Contains(w.Id))
+            .ToList();
+    }
+
+    void OnNestWorkspace(object s, RoutedEventArgs e)
+    {
+        if (NestParent.SelectedItem is not Workspace parent) { MessageBox.Show(this, "Pick a workspace to nest under.", "TaskSpaces"); return; }
+        WithSelectedWorkspace(w => manager.NestWorkspace(w.Id, parent.Id));
+    }
+
+    void OnUnnestWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.UnnestWorkspace(w.Id));
+
     void OnMoveWorkspaceUp(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, -1));
     void OnMoveWorkspaceDown(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, +1));
     void OnStartupToggled(object s, RoutedEventArgs e)

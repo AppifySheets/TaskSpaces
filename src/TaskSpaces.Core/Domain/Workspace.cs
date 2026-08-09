@@ -29,4 +29,19 @@ public sealed record Workspace(Guid Id, string Name, Guid? DesktopId, string? Co
     // past at every construction site. Defaults to false, so every state.json written before this
     // loads with every row full size -- no migration, same pattern as everything in AppState.
     public bool Minimized { get; init; }
+
+    // Petre: "a workspace can be nested under a main (parent) workspace" (#42).
+    //
+    // App-level metadata over flat OS desktops, which is the same move this app already makes by
+    // NAMING them: Windows has no notion of a desktop belonging to another, and inventing one here
+    // costs nothing at the OS level because nothing at the OS level is asked to understand it.
+    //
+    // ONE LEVEL ONLY, enforced in WorkspaceManager.NestWorkspace: a nested workspace cannot itself
+    // be a parent. Not a limitation of the model -- a Guid? expresses any tree -- but of what can
+    // be read at a glance on a bar ten rows tall. Deep nesting would need collapsing, and
+    // collapsing needs a whole interaction that nobody has asked for.
+    //
+    // Null means "top level", which is every workspace that existed before this and every one
+    // created since without being nested.
+    public Guid? ParentId { get; init; }
 }
