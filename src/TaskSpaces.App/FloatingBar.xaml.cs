@@ -1958,54 +1958,36 @@ public partial class FloatingBar : Window
     // new brushes per rebuild would be wasteful, and the set of workspace colours is tiny.
     static readonly Dictionary<string, Brush> LaneTints = [];
 
-    // Petre: "no contrast", then "dark was better", then "dark but not gloomy, can you do that?"
+    // 0x38, and #68 spent four rounds establishing that this is right rather than merely inherited.
     //
-    // 0x38 -> 0xC0, and THIS is the fix rather than the palette, which is why brightening the
-    // palette three times did not work. A lane is painted over the bar's near-black background, so
-    // at 0x38 what reached the eye was two thirds background and one third colour: every hue
-    // arrived as the same dark grey with a hint, which is the gloom. Making the colours lighter
-    // instead just blended pale into black and produced the washed-out middle he called "no
-    // contrast".
-    //
-    // At 0xC0 the lane is mostly its own colour, so a DEEP one stays deep and stays coloured --
-    // dark without being gloomy, which is exactly the pair that could not be had while the alpha
-    // was doing the darkening. The palette went dark and chromatic to match (WorkspacePalette).
-    //
-    // The icons still win: they are bright artwork on a dark, unlit field, and the contrast
-    // between them and the lane is HIGHER now than when the lane was a grey wash.
-    static Brush? LaneTint(Workspace workspace, int index) => Lane(workspace, index, 0xC0);
+    // Raising it to 0xC0 does make the lanes unmistakably coloured -- a lane becomes mostly its own
+    // colour instead of mostly background -- and Petre's verdict on seeing it was "still bad", then
+    // "old colors were better, they were darker and better". Which settles the trade: the lane is
+    // background for icons, and a background that wins the eye is a worse background even when it
+    // is a better colour. Anything lighter than this and the row stops being a lane and starts
+    // being a block of paint with icons on it.
+    static Brush? LaneTint(Workspace workspace, int index) => Lane(workspace, index, 0x38);
 
-    // The spine down the left of a nested row and the outline around a family (#42), derived from
-    // the same lane colour -- which is the whole point, since it has to read as "this belongs to
-    // the lane above", and two colours cannot say that.
-    //
-    // LIGHTENED rather than just laid on at a higher alpha, and that is new with the dark palette.
-    // A dark hex at any alpha is a dark line, and a dark line on this bar's dark background is an
-    // invisible one: the spine and the family outline sit against the BAR, not against the lane,
-    // so unlike the tint they have nothing bright to contrast with. Mixing toward white keeps the
-    // hue -- the relationship survives -- and buys the contrast the background will not give.
-    static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xE0, lighten: 0.45);
+    // The same lane colour at full strength, for the spine down the left of a nested row and the
+    // outline around a family (#42). Deriving it from the same hex rather than picking a second
+    // colour is the whole point: it has to read as "this belongs to the lane above", and two
+    // colours cannot say that.
+    static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xC8);
 
-    static Brush? Lane(Workspace workspace, int index, byte alpha, double lighten = 0) =>
-        Tint(WorkspacePalette.For(workspace, index < 0 ? 0 : index), alpha, lighten);
+    static Brush? Lane(Workspace workspace, int index, byte alpha) =>
+        Tint(WorkspacePalette.For(workspace, index < 0 ? 0 : index), alpha);
 
     // Split out of Lane so the colour picker can draw a swatch from a bare hex, with no workspace
     // to ask and no position to look up -- and so it shares the same cache, since the picker's
     // nine swatches are the same nine colours the lanes are already using.
-    //
-    // `lighten` mixes the colour towards white before the alpha is applied, 0 for none and 1 for
-    // white. Done to the COLOUR rather than by stacking a white brush over it, because these are
-    // painted on a translucent window: a second layer would also lighten whatever shows through
-    // from the desktop behind, which changes as windows move underneath.
-    static Brush? Tint(string hex, byte alpha, double lighten = 0)
+    static Brush? Tint(string hex, byte alpha)
     {
-        var key = $"{hex}:{alpha:X2}:{lighten:F2}";
+        var key = $"{hex}:{alpha:X2}";
         if (LaneTints.TryGetValue(key, out var cached)) return cached;
         try
         {
             var solid = (Color)ColorConverter.ConvertFromString(hex);
-            byte Mixed(byte channel) => (byte)Math.Round(channel + (255 - channel) * lighten);
-            var brush = new SolidColorBrush(Color.FromArgb(alpha, Mixed(solid.R), Mixed(solid.G), Mixed(solid.B)));
+            var brush = new SolidColorBrush(Color.FromArgb(alpha, solid.R, solid.G, solid.B));
             brush.Freeze();
             LaneTints[key] = brush;
             return brush;

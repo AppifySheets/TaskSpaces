@@ -10,55 +10,46 @@ namespace TaskSpaces.Core.Domain;
 // surface tints a workspace the same way the bar does.
 public static class WorkspacePalette
 {
-    // Petre, in order, and the order is the argument (#68): "lame and dark, i want something more
-    // cheerful and bright" -> "make them lighter still" -> "you're repeating gepha's and sparrow's
-    // colors, why? we have many colors to choose from, let's not repeat colors" -> "no contrast"
-    // -> "dark was better" -> "dark but not gloomy, can you do that?"
+    // Muted rather than saturated: these sit behind app icons on a translucent bar, so they have to
+    // separate the lanes without competing with the icons, the active-window highlight or the amber
+    // candidate ring. Ordered so adjacent lanes are far apart in hue.
     //
-    // Two separate faults, and chasing them with the palette alone is what took six rounds.
+    // #68 tried four replacements for this list -- brighter hues, lighter still, an evenly
+    // constructed wheel, deep jewel tones at high alpha -- and Petre rejected every one, at the end
+    // in as many words: "old colors were better, they were darker and better. let's just go back
+    // and avoid that green." So this IS the original set, restored, with exactly one change.
     //
-    // THE REPEATS were real and measurable. Every hand-picked set clustered: 12 degrees between
-    // indigo and periwinkle, 19 between coral and amber, when nine colours spread evenly is 40
-    // apart. Two hues that close are one colour. So the hues are no longer chosen, they are
-    // CONSTRUCTED -- nine of them, 40 degrees apart, walked in steps of 200 so consecutive
-    // positions land on opposite sides of the wheel. No future edit can reintroduce a
-    // near-duplicate by eye.
+    // Worth recording why the constructed ones lost, because the arithmetic was sound and the
+    // result still looked wrong. Even hue spacing is a property of the WHEEL, not of the colours
+    // you get from it: nine hues 40 degrees apart must put one or two in the band between yellow
+    // and green, and nothing in that band is attractive as a dark lane -- it is olive, mustard and
+    // moss, which is where "terrible colors" and "still bad colors" came from. A hand-picked set
+    // can simply decline to visit it. Measuring hue separation was the right check and the wrong
+    // objective.
     //
-    // THE GLOOM was never in the palette at all, which is why brightening it kept failing. A lane
-    // is painted OVER the bar's near-black background, so at the old ~22% alpha what reached the
-    // eye was two thirds background and one third colour: every hue arrived as the same dark grey
-    // with a hint. Making the palette lighter did not fix it -- a pale colour blended two thirds
-    // into black is exactly the washed-out "no contrast" middle Petre saw next. The alpha was the
-    // gloom, and it is turned up in FloatingBar.LaneTint where it belongs.
+    // THE ONE CHANGE: moss green is gone, replaced by orchid. Petre, twice: "i still don't like the
+    // green for sparrow", then "avoid that green". It sat at slot 6, and slot 6 is Sparrow.
     //
-    // Which is what lets these be DARK and still not gloomy: deep, properly chromatic jewel tones
-    // painted at most of their strength, rather than bright ones painted at a fraction of it. They
-    // sit at a common OKLCh lightness -- perceptual, so they read as equally dark, which equal RGB
-    // values do not -- with chroma short of the gamut edge, because at the edge these stop being
-    // lane tints and start being alarm colours.
+    // Orchid rather than another green, and its hue is not a taste call: with moss removed, the
+    // widest gap left between the remaining eight is 271-340 (violet to plum), so ~305 is the one
+    // place a ninth colour can go without crowding a neighbour. It is 34 degrees from violet and 35
+    // from plum -- the most room available, in a palette this muted.
     //
     // Names are what the picker shows, so they have to be the word someone would reach for rather
     // than the hue number.
     public sealed record Swatch(string Name, string Hex);
 
-    // Ordered by POSITION, and the order walks the wheel in steps of 200 degrees rather than 40 --
-    // so consecutive positions land on opposite sides of it and every neighbouring pair is 200
-    // degrees apart, the most nine colours allow. Neighbouring rows are the ones that have to be
-    // told apart; stepping round the wheel in sequence would have made each pair of neighbours the
-    // most similar ones on the bar.
-    //
-    // Rotated so slot 0 stays in the app icon's blue family, the one tie worth keeping.
     public static readonly IReadOnlyList<Swatch> Swatches =
     [
-        new("Blue", "#3969D8"),   // OKLCh hue 264 -- the app icon's family
-        new("Olive", "#7A7436"),  // OKLCh hue 104
-        new("Violet", "#8D45D0"), // OKLCh hue 304
-        new("Green", "#3B843D"),  // OKLCh hue 144
-        new("Rose", "#B13F89"),   // OKLCh hue 344
-        new("Teal", "#3D7F76"),   // OKLCh hue 184
-        new("Rust", "#BD4141"),   // OKLCh hue  24
-        new("Azure", "#3C7B91"),  // OKLCh hue 224
-        new("Amber", "#966636"),  // OKLCh hue  64
+        new("Indigo", "#3C48BE"), // matching the app icon
+        new("Teal", "#2E7D6B"),
+        new("Violet", "#8A4CD6"),
+        new("Amber", "#B06A2C"),
+        new("Steel", "#2F6FA8"),
+        new("Plum", "#9A3B5A"),
+        new("Orchid", "#8A3C7E"), // was moss green -- see above
+        new("Slate", "#6A5ACD"),
+        new("Rust", "#A8562C"),
     ];
 
     // Declared AFTER Swatches on purpose: static fields initialise in declaration order, so
