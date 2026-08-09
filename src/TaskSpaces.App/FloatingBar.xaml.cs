@@ -1974,8 +1974,14 @@ public partial class FloatingBar : Window
     // colours cannot say that.
     static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xC8);
 
+    // NULL for a workspace that has opted out of a lane colour (#68), which every caller already
+    // handles: the tint, the spine and the family outline are all Brush? and all already have a
+    // "this row has no colour" path, because an unreadable hex in a hand-edited state.json has
+    // always been able to produce one.
     static Brush? Lane(Workspace workspace, int index, byte alpha) =>
-        Tint(WorkspacePalette.For(workspace, index < 0 ? 0 : index), alpha);
+        WorkspacePalette.IsNone(workspace.Color)
+            ? null
+            : Tint(WorkspacePalette.For(workspace, index < 0 ? 0 : index), alpha);
 
     // Split out of Lane so the colour picker can draw a swatch from a bare hex, with no workspace
     // to ask and no position to look up -- and so it shares the same cache, since the picker's
@@ -2887,6 +2893,20 @@ public partial class FloatingBar : Window
 
         picker.Items.Add(new Separator());
 
+        // Petre: "add transparent as an option for color". A row that opts out keeps its icons and
+        // its label and simply has no lane behind them -- worth having on a bar where the tint's
+        // whole job is grouping, since a workspace can be one you never need to pick out.
+        //
+        // Not the same as "By position" below: this is a CHOICE and survives a reorder, while by
+        // position means "whatever my place in the list hands me".
+        var transparent = new MenuItem
+        {
+            Header = "Transparent",
+            Icon = EmptySwatch(WorkspacePalette.IsNone(chosen)),
+        };
+        transparent.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, WorkspacePalette.None));
+        picker.Items.Add(transparent);
+
         var byPosition = new MenuItem
         {
             Header = "By position",
@@ -2913,6 +2933,25 @@ public partial class FloatingBar : Window
         HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center,
     };
+
+    // "Transparent" has to show ABSENCE, so it is an outline with nothing inside it. A square
+    // filled with the bar's own background would read as a very dark colour, which is a different
+    // claim from having none at all.
+    static UIElement EmptySwatch(bool chosen) => new Border
+    {
+        Width = 12,
+        Height = 12,
+        CornerRadius = new CornerRadius(3),
+        Background = Brushes.Transparent,
+        BorderBrush = chosen ? ActiveBorder : EmptySwatchEdge,
+        BorderThickness = new Thickness(2),
+        HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
+    // Grey rather than the white the chosen ring uses, so the outline reads as the shape of the
+    // swatch and not as a selection.
+    static readonly Brush EmptySwatchEdge = Frozen(0x80, 0x88, 0x88, 0x88);
 
     static UIElement MenuGlyph(string glyph) => new TextBlock
     {

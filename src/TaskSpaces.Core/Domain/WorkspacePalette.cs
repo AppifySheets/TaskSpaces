@@ -39,15 +39,38 @@ public static class WorkspacePalette
     // than the hue number.
     public sealed record Swatch(string Name, string Hex);
 
+    // ORDER IS THE OTHER HALF, and it is not the order these were written in. Petre, pointing at two
+    // rows that touched: "can you avoid similar colors next to each other? eurocredit and sparrow."
+    //
+    // He was pointing at plum and orchid, and replacing moss with orchid is what put them a slot
+    // apart -- the new colour had to go somewhere, and appending it dropped it next to the one
+    // existing colour it was closest to.
+    //
+    // So the sequence is now SOLVED rather than chosen: of every arrangement of these nine, this is
+    // the one whose most-similar adjacent pair is as different as it can be. It triples the worst
+    // neighbouring pair on the bar (0.0157 -> 0.0475) with no colour changed.
+    //
+    // Two things the measurement had to get right, and hue alone gets both wrong:
+    //
+    //   * It compares the colours AS SHOWN -- each hex composited at the lane's alpha over the
+    //     bar's dark background -- not as stored. At 22% alpha two hexes that look distinct in a
+    //     file arrive nearly identical, which is exactly how plum and orchid got past a hue check.
+    //   * It measures in OKLab, where distance matches what the eye does. Two colours can be far
+    //     apart in hue and still look alike if their lightness and chroma agree.
+    //
+    // The list CYCLES: a tenth workspace wears slot 0 again, directly under the ninth, so the last
+    // and first are neighbours too and the arrangement is solved as a ring rather than a line.
+    //
+    // Indigo stays at slot 0 -- the one tie worth keeping, since it matches the app icon.
     public static readonly IReadOnlyList<Swatch> Swatches =
     [
         new("Indigo", "#3C48BE"), // matching the app icon
-        new("Teal", "#2E7D6B"),
-        new("Violet", "#8A4CD6"),
-        new("Amber", "#B06A2C"),
-        new("Steel", "#2F6FA8"),
         new("Plum", "#9A3B5A"),
+        new("Steel", "#2F6FA8"),
+        new("Violet", "#8A4CD6"),
+        new("Teal", "#2E7D6B"),
         new("Orchid", "#8A3C7E"), // was moss green -- see above
+        new("Amber", "#B06A2C"),
         new("Slate", "#6A5ACD"),
         new("Rust", "#A8562C"),
     ];
@@ -55,6 +78,21 @@ public static class WorkspacePalette
     // Declared AFTER Swatches on purpose: static fields initialise in declaration order, so
     // reading Swatches from above it would read a null.
     static readonly IReadOnlyList<string> Defaults = Swatches.Select(s => s.Hex).ToList();
+
+    // Petre: "add transparent as an option for color" (#68).
+    //
+    // A SENTINEL rather than a colour, and the distinction is the point: "no lane" is not a colour
+    // and cannot be spelled as one. #00000000 would be a transparent BLACK, which the tint path
+    // would happily strip the alpha off and paint as black; "Transparent" parses to a
+    // transparent WHITE, which would come out as a white wash for the same reason. Both are
+    // colours that happen to be invisible, and neither is the absence of one.
+    //
+    // Distinct from Color being null, which means "follow my position in the list". A workspace
+    // that has opted out has made a choice, and a reorder must not undo it.
+    public const string None = "none";
+
+    public static bool IsNone(string? color) =>
+        string.Equals(color?.Trim(), None, StringComparison.OrdinalIgnoreCase);
 
     // index is the workspace's position in the user's own ordering, so the colour follows the
     // list rather than a hash of the name: renaming a workspace should not recolour it.
