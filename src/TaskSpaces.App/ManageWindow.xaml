@@ -39,7 +39,35 @@
                         <Button Content="↑ Up" Margin="16,0,0,0" Padding="12,2" Click="OnMoveWorkspaceUp"/>
                         <Button Content="↓ Down" Margin="4,0,0,0" Padding="12,2" Click="OnMoveWorkspaceDown"/>
                     </StackPanel>
-                    <ListBox x:Name="WorkspaceList" DisplayMemberPath="Name"/>
+                    <!-- The roster beside the workspaces rather than under them: it is a
+                         property OF the selected workspace, and putting it alongside makes the
+                         selection the thing that links the two lists. -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <ListBox x:Name="WorkspaceList" DisplayMemberPath="Name" SelectionChanged="OnWorkspaceSelected"/>
+                        <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" Background="Transparent"/>
+                        <DockPanel Grid.Column="2">
+                            <!-- Petre's open thread: "No UI removes a roster entry (that lived on
+                                 the deleted Windows tab), so a wrong one needs hand-editing
+                                 %APPDATA%\TaskSpaces\state.json."
+                                 The roster is the workspace half of placement memory, so a wrong
+                                 entry keeps sending an app to the wrong workspace for as long as
+                                 it stands. WorkspaceManager.RemoveRosterEntry has existed and
+                                 been tested all along; nothing called it. -->
+                            <TextBlock DockPanel.Dock="Top" Text="Apps that belong to this workspace" FontWeight="Bold"/>
+                            <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,6"
+                                       Text="Remembered from where you last put each app, and used to send it back there when it opens again. Remove an entry if it is sending an app somewhere you no longer want it; this forgets the placement only, and never touches a running window."/>
+                            <Button x:Name="RemoveRosterButton" DockPanel.Dock="Bottom" Content="Remove from this workspace"
+                                    Margin="0,8,0,0" Padding="12,2" HorizontalAlignment="Left"
+                                    IsEnabled="False" Click="OnRemoveRosterEntry"/>
+                            <ListBox x:Name="RosterList" DisplayMemberPath="Display"
+                                     SelectionChanged="OnRosterSelected"/>
+                        </DockPanel>
+                    </Grid>
                 </DockPanel>
             </TabItem>
             <TabItem Header="Shortcuts">

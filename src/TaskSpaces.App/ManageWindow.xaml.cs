@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
@@ -17,6 +19,16 @@ public partial class ManageWindow : Window
     // DataGrid needs mutable rows; the domain records are immutable. These DTOs are the bridge.
     public sealed class WorkspaceRuleRow { public string Workspace { get; set; } = ""; public RuleMatchKind Kind { get; set; } public string Pattern { get; set; } = ""; }
     public sealed class RenameRuleRow { public RuleMatchKind Kind { get; set; } public string Pattern { get; set; } = ""; public string ShortName { get; set; } = ""; }
+
+    // One roster entry, as a row. Display is precomputed rather than templated because the part
+    // worth reading is a JOIN of two fields -- the exe you would recognise it by, and the title it
+    // last had -- and a DisplayMemberPath cannot compose those. The Entry itself rides along
+    // because RemoveRosterEntry matches on identity, not on the text shown.
+    public sealed class RosterRow
+    {
+        public required InventoryEntry Entry { get; init; }
+        public required string Display { get; init; }
+    }
 
     readonly WorkspaceManager manager;
     readonly ObservableCollection<WorkspaceRuleRow> workspaceRules = [];
@@ -62,6 +74,10 @@ public partial class ManageWindow : Window
         if (selectedWorkspaceId is { } wsId)
             WorkspaceList.SelectedItem = manager.State.Workspaces.FirstOrDefault(w => w.Id == wsId);
 
+        // After the selection is restored, so it fills for the workspace that ends up selected
+        // rather than for the one that happened to be selected before the rebind.
+        ReloadRoster();
+
         // Reads through WorkspaceManager, not AppState, so the box shows what is actually
         // BOUND -- including the fallback to the default when state.json holds something
         // unusable. Assigning Text raises TextChanged, which validates it for free.
@@ -100,6 +116,61 @@ public partial class ManageWindow : Window
 
     void OnResetSwitcherShortcut(object s, RoutedEventArgs e) =>
         Report(manager.SetSwitcherShortcut(AppState.DefaultSwitcherShortcut).Map(() => true)).Tap(Reload);
+
+    // --- roster (#55) ---------------------------------------------------------------------
+    //
+    // Petre's open thread: "No UI removes a roster entry (that lived on the deleted Windows tab),
+    // so a wrong one needs hand-editing %APPDATA%\TaskSpaces\state.json."
+    //
+    // The roster is the workspace half of placement memory -- identity (exe path + args) ->
+    // workspace, written on every placement and read to put an app back where it was last had --
+    // so a wrong entry keeps sending an app somewhere unwanted for as long as it stands.
+    // WorkspaceManager.RemoveRosterEntry has existed and been tested all along; nothing called it.
+    readonly ObservableCollection<RosterRow> roster = [];
+
+    void ReloadRoster()
+    {
+        // ItemsSource is assigned once, here, rather than on every reload: the collection is
+        // observable, so clearing and refilling it updates the ListBox without dropping its
+        // scroll position -- the same reason the rules grids are bound this way.
+        RosterList.ItemsSource ??= roster;
+        roster.Clear();
+
+        // EVERY entry, not just the ones whose app is closed. The deleted Windows tab dimmed the
+        // not-running ones, which answered a different question -- "what is open right now", which
+        // the floating bar already answers far better. What this list is for is "what will be sent
+        // here in future", and a running app's entry governs that just as much as a closed one's.
+        if (WorkspaceList.SelectedItem is Workspace workspace)
+            manager.State.Inventory.GetValueOrDefault(workspace.Id, [])
+                .ToList()
+                .ForEach(entry => roster.Add(new RosterRow { Entry = entry, Display = Describe(entry) }));
+
+        OnRosterSelected(this, null!);
+    }
+
+    // The exe you would recognise it by, plus the title it last had when the two differ. Both are
+    // needed: five Chrome profiles share an exe and are told apart only by the title, while a
+    // title like "Inbox" says nothing about which app would open.
+    static string Describe(InventoryEntry entry)
+    {
+        var exe = Path.GetFileNameWithoutExtension(entry.ProcessPath);
+        return string.IsNullOrWhiteSpace(entry.Title) || entry.Title.Equals(exe, StringComparison.OrdinalIgnoreCase)
+            ? exe
+            : $"{exe} — {entry.Title}";
+    }
+
+    void OnWorkspaceSelected(object s, SelectionChangedEventArgs e) => ReloadRoster();
+
+    // The button is disabled with nothing selected rather than reporting "nothing selected" after
+    // the fact: there is no useful action to attempt, so there is nothing to explain.
+    void OnRosterSelected(object s, SelectionChangedEventArgs e) =>
+        RemoveRosterButton.IsEnabled = RosterList.SelectedItem is RosterRow;
+
+    void OnRemoveRosterEntry(object s, RoutedEventArgs e)
+    {
+        if (WorkspaceList.SelectedItem is not Workspace workspace || RosterList.SelectedItem is not RosterRow row) return;
+        Report(manager.RemoveRosterEntry(workspace.Id, row.Entry).Map(() => true)).Tap(Reload);
+    }
 
     void OnAddWorkspace(object s, RoutedEventArgs e) => Report(manager.AddWorkspace(NewWorkspaceName.Text).Map(_ => true)).Tap(Reload);
     void OnRenameWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.RenameWorkspace(w.Id, NewWorkspaceName.Text));
