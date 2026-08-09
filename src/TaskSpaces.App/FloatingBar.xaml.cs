@@ -79,6 +79,23 @@ public partial class FloatingBar : Window
         MouseEnter += (_, _) => UpdateFade();
         MouseLeave += (_, _) => UpdateFade();
 
+        // The ten-second grace, and then the slow fade (#46). One-shot: Stop() first, so a fade
+        // that is interrupted and later restarted always gets a full ten seconds rather than
+        // whatever was left of the last countdown.
+        fadeDelay.Interval = FadeDelay;
+        fadeDelay.Tick += (_, _) =>
+        {
+            fadeDelay.Stop();
+            // Re-checked rather than assumed: ten seconds is long enough for the pointer to have
+            // come back, or for a context menu to have opened, since the countdown began.
+            if (IsMouseOver || HoldsFullStrength) return;
+            fading = true;
+            // Cleared when the fade actually lands, so `fading` means "on its way down" and never
+            // outlives the animation. Nothing breaks if it did -- the brighten path clears it too
+            // -- but a flag that says something untrue is how the next bug gets built on top.
+            Animate(idleOpacity, FadeMs, onCompleted: () => fading = false);
+        };
+
         Rebuild();
         // Live-refresh while visible, same pattern as WindowGroupsView.Bind: windows
         // opening/closing (manual script item 36) must update the bar without Petre
@@ -109,7 +126,7 @@ public partial class FloatingBar : Window
             if (IconCache.HasPendingIcons && IsVisible) Rebuild();
             else iconWatch.Stop();
         };
-        Closed += (_, _) => { iconWatch.Stop(); subscription?.Dispose(); };
+        Closed += (_, _) => { iconWatch.Stop(); fadeDelay.Stop(); subscription?.Dispose(); };
     }
 
     // --- fading while the pointer is elsewhere ---------------------------------------
@@ -128,7 +145,22 @@ public partial class FloatingBar : Window
 
     // Instant on the way in, gentle on the way out. Reaching for the bar should feel like it was
     // already there; leaving should not flicker as the pointer clips a corner on its way past.
-    const int BrightenMs = 60, FadeMs = 180;
+    // Petre: "delay 10 seconds, then dim gradually" (#46).
+    //
+    // The first version dimmed the instant the pointer left, over 180ms, and that turned out to be
+    // the wrong shape: the bar is glanceable chrome, and the moment just after you stop pointing
+    // at it is precisely when you are still reading it. So it now holds full strength for a while
+    // and then goes down slowly enough that the change is never what catches your eye.
+    //
+    // Brightening stays instant, which is the asymmetry that was right the first time: reaching
+    // for the bar should feel like it was already there.
+    const int BrightenMs = 60;
+
+    // Ten seconds of grace, then four of fading. "Gradually" was left open in the issue -- these
+    // are a starting point chosen to be lived with, not a measurement, and they are consts rather
+    // than settings until Petre has an opinion about the numbers.
+    static readonly TimeSpan FadeDelay = TimeSpan.FromSeconds(10);
+    const int FadeMs = 4000;
 
     // Three cases where the bar is in use without being touched, and dimming any of them would
     // hide the very thing being looked at:
@@ -162,18 +194,47 @@ public partial class FloatingBar : Window
         menu.Closed += (_, _) => { if (ReferenceEquals(openMenu, menu)) openMenu = null; UpdateFade(); };
     }
 
+    // Waiting out the ten seconds. A timer rather than DoubleAnimation.BeginTime, which was the
+    // obvious way and does not survive contact with this surface: a delayed animation has not
+    // moved the property yet, so "am I already on my way down?" cannot be answered by reading
+    // Opacity -- and UpdateFade is called from the 1s heartbeat, from every rebuild, and from
+    // every hold changing. Each of those would have restarted a BeginTime animation, and the bar
+    // would simply never dim. The timer makes "a fade is pending" a thing that can be ASKED.
+    readonly System.Windows.Threading.DispatcherTimer fadeDelay = new();
+
+    // ...and its other half: an animation in flight has to be distinguishable from a settled one,
+    // because a fade that is halfway down is neither bright nor idle, and treating it as "not yet
+    // dimmed" would restart the ten seconds on the next heartbeat -- leaving the bar stuck at
+    // whatever grey it had reached, forever.
+    bool fading;
+
     void UpdateFade()
     {
-        var bright = IsMouseOver || HoldsFullStrength;
-        var target = bright ? 1.0 : idleOpacity;
-        // Already there, or already on the way there: Opacity reads the ANIMATED value while an
-        // animation is running, so this also stops a rebuild mid-fade from restarting the same
-        // fade from wherever it had reached. Rebuilds are frequent; the fade should not be.
-        if (Math.Abs(Opacity - target) < 0.001) return;
-        // BeginAnimation rather than assigning Opacity: an animation that is still running owns
-        // the property, and a plain assignment underneath it would be overwritten mid-flight.
-        BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(
-            target, TimeSpan.FromMilliseconds(bright ? BrightenMs : FadeMs)));
+        if (IsMouseOver || HoldsFullStrength)
+        {
+            // Cancels both a pending fade and one already under way. Re-entering mid-fade is the
+            // common case -- the fade is four seconds long now -- and it has to feel like the bar
+            // was never going anywhere.
+            fadeDelay.Stop();
+            if (!fading && Opacity >= 1.0 - 0.001) return;
+            fading = false;
+            Animate(1.0, BrightenMs);
+            return;
+        }
+
+        // Already dim, already fading, or already counting down: all three mean "there is nothing
+        // new to start", and saying so here is what makes UpdateFade safe to call from anywhere.
+        if (fading || fadeDelay.IsEnabled || Opacity <= idleOpacity + 0.001) return;
+        fadeDelay.Start();
+    }
+
+    // BeginAnimation rather than assigning Opacity: an animation that is still running owns the
+    // property, and a plain assignment underneath it would be overwritten mid-flight.
+    void Animate(double target, int milliseconds, Action? onCompleted = null)
+    {
+        var animation = new System.Windows.Media.Animation.DoubleAnimation(target, TimeSpan.FromMilliseconds(milliseconds));
+        if (onCompleted is not null) animation.Completed += (_, _) => onCompleted();
+        BeginAnimation(OpacityProperty, animation);
     }
 
     // 1s, matching IconCache's own probe interval: ticking faster would just be throttled
