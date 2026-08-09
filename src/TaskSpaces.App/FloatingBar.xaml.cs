@@ -1050,27 +1050,35 @@ public partial class FloatingBar : Window
             // (WorkspacePalette by index), so this deliberately re-SEQUENCES the rows without
             // renumbering them. Nesting a workspace moves where it is drawn, not what colour it is.
             var byParent = overview.Workspaces.ToLookup(g => g.Workspace.ParentId);
-            byParent[null]
-                .SelectMany(parent => new[] { parent }.Concat(byParent[parent.Workspace.Id]))
-                .ToList()
-                .ForEach((g) =>
-                {
-                    // Recorded so ApplyCandidate can restore the white ring here when the amber
-                    // one moves away, without needing another overview query to ask again.
-                    if (g.IsCurrent) currentRow = g.Workspace.Id;
-                    // The parent's own position, which is what the child borrows its colour from.
-                    // -1 when there is no parent, and LaneTint reads that as "index 0" -- which
-                    // never happens here, because it is only used when ParentId is set.
-                    var parentAt = g.Workspace.ParentId is { } pid
-                        ? overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == pid)
-                        : -1;
-                    var parentWorkspace = parentAt >= 0 ? overview.Workspaces[parentAt].Workspace : null;
 
-                    // The name, plainly. The ↳ prefix that was here first is gone: Petre asked for
-                    // "a better representation that it's a child", and a glyph inside a label that
-                    // already sits in a narrow gutter is the weakest place to put it. The spine,
-                    // the shared colour and the indent all say it at the edge of the row instead.
-                    groupRows.Add(GroupRow(
+            // Petre: "make the children more apparent, maybe group them together with an outline
+            // or a ring."
+            //
+            // So a family is drawn as ONE thing: the parent and its children go inside a single
+            // outlined box, in the parent's colour. The indent and the spine say "this row is a
+            // child"; the outline says "these rows are a family", which is the question a glance
+            // actually asks -- and it is the only one of the three that cannot be answered by
+            // looking at a single row.
+            //
+            // Built per family and wrapped afterwards, rather than appended one row at a time,
+            // because an outline has to be drawn around a set that already exists.
+            UIElement WorkspaceRow(WorkspaceGroup g)
+            {
+                // Recorded so ApplyCandidate can restore the white ring here when the amber
+                // one moves away, without needing another overview query to ask again.
+                if (g.IsCurrent) currentRow = g.Workspace.Id;
+
+                // The parent's own position, which is what a child borrows its colour from.
+                var parentAt = g.Workspace.ParentId is { } pid
+                    ? overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == pid)
+                    : -1;
+                var parentWorkspace = parentAt >= 0 ? overview.Workspaces[parentAt].Workspace : null;
+
+                // The name, plainly. The ↳ prefix that was here first is gone: Petre asked for "a
+                // better representation that it's a child", and a glyph inside a label that already
+                // sits in a narrow gutter is the weakest place to put it. The spine, the shared
+                // colour, the indent and now the family outline all say it around the row instead.
+                return GroupRow(
                     g.Workspace.Name,
                     g.Workspace.Name, g.IsCurrent,
                     switchTo: () => manager.Switch(g.Workspace.Id),
@@ -1086,8 +1094,18 @@ public partial class FloatingBar : Window
                     rowKey: g.Workspace.Id,
                     minimized: g.Workspace.Minimized,
                     nested: g.Workspace.ParentId is not null,
-                    spine: parentWorkspace is not null ? LaneAccent(parentWorkspace, parentAt) : null));
-                });
+                    spine: parentWorkspace is not null ? LaneAccent(parentWorkspace, parentAt) : null);
+            }
+
+            byParent[null].ToList().ForEach(parent =>
+            {
+                var rows = new[] { parent }.Concat(byParent[parent.Workspace.Id]).Select(WorkspaceRow).ToList();
+                // A lone workspace is not a family and gets no box: an outline around a single row
+                // would be decoration that means nothing, and most rows on the bar are lone ones.
+                groupRows.Add(rows.Count == 1
+                    ? rows[0]
+                    : FamilyBox(rows, LaneAccent(parent.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == parent.Workspace.Id))));
+            });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
             // ones) get rows too, labeled with the desktop's actual name; label click
@@ -1230,6 +1248,33 @@ public partial class FloatingBar : Window
         });
 
         return grid;
+    }
+
+    // A parent and its children, drawn as one thing (#42). Petre: "make the children more
+    // apparent, maybe group them together with an outline or a ring."
+    //
+    // The other three signals -- indent, spine, shared lane colour -- all answer "is this row a
+    // child", one row at a time. This answers "which rows belong together", which is the question a
+    // glance actually asks and the only one that cannot be answered by looking at a single row.
+    //
+    // In the parent's colour, at a third of the spine's strength: it has to be findable without
+    // becoming the loudest thing on a surface whose whole job is showing icons. The current-row
+    // ring is deliberately brighter and rectangular against this one's rounder, dimmer box, so the
+    // two never read as the same claim.
+    static UIElement FamilyBox(IReadOnlyList<UIElement> rows, Brush? outline)
+    {
+        var stack = new StackPanel();
+        rows.ToList().ForEach(row => stack.Children.Add(row));
+        return new Border
+        {
+            Child = stack,
+            BorderBrush = outline ?? Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Opacity = 0.999, // forces its own layer, so the 1px border cannot be swallowed by the row backgrounds beneath it
+            Padding = new Thickness(1),
+            Margin = new Thickness(0, 1, 0, 1),
+        };
     }
 
     // Task 11 fix round 5: a 1px, ~20%-opacity hairline between rows so adjacent
