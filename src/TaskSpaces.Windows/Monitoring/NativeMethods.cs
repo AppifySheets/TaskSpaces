@@ -68,6 +68,20 @@ public static class NativeMethods
     // every animating window on the desktop; this fires once per gesture. Adjacent to
     // FOREGROUND in the SYSTEM range, so the two share one hook.
     public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
+    // A window went down or came back up. Petre: "the icon doesn't always dim when it's
+    // minimized, or doesn't always brighten up when it's un-minimized" -- nothing else tells us:
+    // minimizing fires no HIDE, changes no title, and usually changes no foreground either.
+    //
+    // Their own hook rather than a widening of the FOREGROUND..MOVESIZEEND range above: the ten
+    // events between 0x000C and 0x0015 are the capture/drag-drop/dialog/scroll family, which fire
+    // during ordinary mouse work and would reach the callback for every window on the machine.
+    //
+    // Measured, not assumed (scratchpad probe against notepad, minimized by ShowWindowAsync from
+    // another process exactly as this app does it): both arrive ~15ms after the call with IsIconic
+    // ALREADY reporting the new state, so a rebuild triggered by either reads the settled answer.
+    // Worth recording because MINIMIZESTART is documented as "about to be minimized", which reads
+    // like the opposite.
+    public const uint EVENT_SYSTEM_MINIMIZESTART = 0x0016, EVENT_SYSTEM_MINIMIZEEND = 0x0017;
 
     // The shell hook: how the taskbar itself is told what windows are doing. Used here for one
     // notification only, HSHELL_FLASH, because flashing is invisible to WinEvents -- measured

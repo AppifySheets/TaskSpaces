@@ -237,6 +237,42 @@ public class ActiveWindowTests
         Assert.Empty(activator.Minimized);
     }
 
+    // Petre: "the icon doesn't always dim when it's minimized, or doesn't always brighten up when
+    // it's un-minimized."
+    //
+    // Nothing else pulses for either half. Minimizing fires no HIDE and changes no title, and the
+    // window is usually the one you were already in, so the foreground does not change; restoring
+    // does change the foreground, but that path is guarded on CHANGE and the window is still the
+    // recorded active one after a minimize from the bar. WindowMonitor now hooks
+    // EVENT_SYSTEM_MINIMIZESTART/MINIMIZEEND and this is what the manager owes them: a redraw, and
+    // nothing else -- iconic state is read fresh from the OS on every overview build.
+    [Fact]
+    public void Minimizing_or_restoring_a_window_elsewhere_pulses_so_the_bar_can_redraw_it()
+    {
+        var (manager, _) = StartedWithTwoCodeWindows();
+        var pulses = 0;
+        using var subscription = manager.StateChanged.Subscribe(_ => pulses++);
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.MinimizeChanged, Code(0x1, "one - Visual Studio Code")));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.MinimizeChanged, Code(0x1, "one - Visual Studio Code")));
+
+        Assert.Equal(2, pulses);
+    }
+
+    // ...and nothing more than a redraw: putting a window down is not a statement about where it
+    // belongs, exactly as activating it is not.
+    [Fact]
+    public void Minimizing_elsewhere_places_nothing_and_persists_nothing()
+    {
+        var (manager, desktopId) = StartedWithTwoCodeWindows();
+        var savesBefore = store.SaveCount;
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.MinimizeChanged, Code(0x1, "one - Visual Studio Code")));
+
+        Assert.Equal(savesBefore, store.SaveCount);
+        Assert.Equal(desktopId, desktops.WindowPlacements[new WindowHandle(0x1)]);
+    }
+
     // Minimizing is presentational, exactly like activation: where a window BELONGS is not
     // changed by putting it down.
     [Fact]

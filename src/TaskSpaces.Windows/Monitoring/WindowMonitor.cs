@@ -83,6 +83,11 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
             // between them is the menu/alert/scroll family -- quiet, and cheaper to filter out
             // in the switch below than to justify a third hook for.
             hooks.Add(Hook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MOVESIZEEND));
+            // Minimize/restore, two events wide. NOT folded into the range above by widening it to
+            // 0x0017: the ten events in between are the capture/drag-drop/dialog/scroll family,
+            // which fire during ordinary mouse work for every window on the machine, and this
+            // callback runs on the UI thread.
+            hooks.Add(Hook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND));
             if (hooks.Any(h => h == 0)) throw new InvalidOperationException("SetWinEventHook failed");
             Snapshot().ToList().ForEach(w => known[w.Handle.Value] = w); // seed before events flow
         }, e => $"Window monitoring unavailable: {e.Message}");
@@ -266,6 +271,23 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                 // missing was a reason to build one. This is that reason and nothing more.
                 case EVENT_SYSTEM_MOVESIZEEND when known.TryGetValue(hwnd, out var moved):
                     events.OnNext(new WindowEvent(WindowEventKind.Moved, moved));
+                    break;
+
+                // A window went down or came back up. Petre: "the icon doesn't always dim when
+                // it's minimized, or doesn't always brighten up when it's un-minimized."
+                //
+                // Nothing else was ever going to say so. Minimizing fires no HIDE (the window is
+                // still a taskbar candidate), changes no title, and is usually done to the window
+                // you are already in, so the foreground does not change either. Restoring does
+                // normally change the foreground -- but that path is guarded on CHANGE, and after
+                // a minimize from the bar the window is still the recorded active one, so the
+                // restore pulsed nothing at all.
+                //
+                // Like MOVESIZEEND above, this re-queries nothing and decides nothing: whether a
+                // window is iconic is read fresh by ScreenLayout on every overview build. This is
+                // only the reason to build one.
+                case EVENT_SYSTEM_MINIMIZESTART or EVENT_SYSTEM_MINIMIZEEND when known.TryGetValue(hwnd, out var toggled):
+                    events.OnNext(new WindowEvent(WindowEventKind.MinimizeChanged, toggled));
                     break;
             }
         }

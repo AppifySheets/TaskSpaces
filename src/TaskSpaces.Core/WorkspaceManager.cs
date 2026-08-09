@@ -217,6 +217,11 @@ public sealed class WorkspaceManager(
             // on, and that is read fresh from the OS on every overview build, so the only thing
             // ever missing was a reason to build one.
             case WindowEventKind.Moved: stateChanged.OnNext(Unit.Default); break;
+            // Same deal, same reason: a window going down or coming back up changes nothing this
+            // class owns, and whether it is iconic is read fresh from the OS on every overview
+            // build. All that was missing was a reason to build one -- without it the icon kept
+            // whatever brightness it had when something unrelated last pulsed.
+            case WindowEventKind.MinimizeChanged: stateChanged.OnNext(Unit.Default); break;
         }
     }
 
