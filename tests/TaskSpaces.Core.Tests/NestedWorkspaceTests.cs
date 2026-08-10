@@ -33,11 +33,11 @@ public class NestedWorkspaceTests
     }
 
     static Guid? ParentOf(WorkspaceManager manager, Guid id) =>
-        manager.State.Workspaces.Single(w => w.Id == id).ParentId;
+        manager.State.LendsWindowsTo(id);
 
     [Fact]
     public void A_workspace_starts_at_the_top_level() =>
-        Assert.All(Started().manager.State.Workspaces, w => Assert.Null(w.ParentId));
+        Assert.All(Started().manager.State.Workspaces, w => Assert.Null(w.GroupId));
 
     [Fact]
     public void Nesting_records_the_parent()
@@ -47,7 +47,7 @@ public class NestedWorkspaceTests
         Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
 
         Assert.Equal(parent, ParentOf(manager, child));
-        Assert.Equal(parent, store.Stored.Workspaces.Single(w => w.Id == child).ParentId);
+        Assert.Equal(store.Stored.Workspaces.Single(w => w.Id == parent).GroupId, store.Stored.Workspaces.Single(w => w.Id == child).GroupId);
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public class NestedWorkspaceTests
         var (manager, parent, child, _) = Started();
         Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
 
-        Assert.True(manager.UnnestWorkspace(child).IsSuccess);
+        Assert.True(manager.LeaveGroup(child).IsSuccess);
 
         Assert.Null(ParentOf(manager, child));
     }
@@ -227,7 +227,7 @@ public class NestedWorkspaceTests
         Assert.True(manager.AddChildWorkspace(parent, "Project notes").IsSuccess);
 
         var created = manager.State.Workspaces.Single(w => w.Name == "Project notes");
-        Assert.Equal(parent, created.ParentId);
+        Assert.Equal(manager.State.Workspaces.Single(w => w.Id == parent).GroupId, created.GroupId);
         // Directly under the parent's existing children rather than at the end of the list, so a
         // child created from a row appears under that row.
         Assert.Equal(2, manager.State.Workspaces.ToList().FindIndex(w => w.Id == created.Id));
@@ -244,24 +244,32 @@ public class NestedWorkspaceTests
 
     // #74. Petre: "before/after is relative to the row it was invoked on, at that row's depth."
     //
-    // Insert-before/after on a NESTED row used to make a top-level workspace, which then rendered
-    // between a parent and its children -- a stranger drawn inside somebody's family box.
+    // Insert-before/after on a NESTED row used to make an ungrouped workspace, which then rendered
+    // between a parent and its children: a stranger drawn inside somebody's family box.
+    //
+    // The third argument is the GROUP to join, not the parent workspace. Under the group model
+    // "same depth as this row" is "same group as this row", and that is one answer for both kinds
+    // of group rather than a parent lookup that only anchored ones have.
     [Fact]
     public void Inserting_beside_a_nested_row_creates_a_sibling_under_the_same_parent()
     {
         var (manager, parent, child, _) = Started();
         Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
+        var group = manager.State.GroupOf(child)!.Id;
         var at = manager.State.Workspaces.ToList().FindIndex(w => w.Id == child);
 
-        var created = manager.InsertWorkspace("Project notes", at + 1, parent);
+        var created = manager.InsertWorkspace("Project notes", at + 1, group);
 
         Assert.True(created.IsSuccess);
+        // Same group, and so still borrowing from the same anchor.
+        Assert.Equal(group, created.Value.GroupId);
         Assert.Equal(parent, ParentOf(manager, created.Value.Id));
-        // Beside the row it was invoked on, not appended after every child the parent has.
+        // Beside the row it was invoked on, not appended after every member the group has.
         Assert.Equal(at + 1, manager.State.Workspaces.ToList().FindIndex(w => w.Id == created.Value.Id));
     }
 
-    // The other half of "at that row's depth": on a top-level row nothing changes.
+    // The other half of "at that row's depth": beside a row that is in no group, the new workspace
+    // is in no group either.
     [Fact]
     public void Inserting_beside_a_top_level_row_still_creates_a_top_level_workspace()
     {
@@ -271,23 +279,15 @@ public class NestedWorkspaceTests
         var created = manager.InsertWorkspace("Elsewhere", at, null);
 
         Assert.True(created.IsSuccess);
+        Assert.Null(created.Value.GroupId);
         Assert.Null(ParentOf(manager, created.Value.Id));
     }
 
-    // The UI only offers a legal parent, but a UI is not a guarantee -- the same rule
-    // NestWorkspace and AddChildWorkspace enforce is enforced here too.
+    // The UI only offers groups that exist, but a UI is not a guarantee: a rebuild between opening
+    // the menu and choosing from it can dissolve the group that was on screen.
     [Fact]
-    public void Inserting_under_a_workspace_that_is_itself_nested_is_refused()
-    {
-        var (manager, parent, child, _) = Started();
-        Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
-
-        Assert.True(manager.InsertWorkspace("Too deep", 0, child).IsFailure);
-    }
-
-    [Fact]
-    public void Inserting_under_a_workspace_that_does_not_exist_is_refused() =>
-        Assert.True(Started().manager.InsertWorkspace("Orphan", 0, Guid.NewGuid()).IsFailure);
+    public void Inserting_into_a_group_that_does_not_exist_is_refused() =>
+        Assert.True(Started().manager.InsertWorkspace("Homeless", 0, Guid.NewGuid()).IsFailure);
 
     // --- moving inside a group (#85) -----------------------------------------------------------
     //

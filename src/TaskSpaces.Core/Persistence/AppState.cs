@@ -124,6 +124,41 @@ public sealed record AppState(
     // different way.
     public IReadOnlyList<Group> Groups { get; init; } = [];
 
+    // --- asking about groups ------------------------------------------------------------------
+    //
+    // Every surface asks these rather than working membership out for itself. The bar, the
+    // switcher, the manager's borrowing and the move logic all need the same three answers, and
+    // when they each computed their own the answers drifted: that is how #85 happened, with the
+    // bar grouping rows one way and the move operations reordering another.
+
+    public Group? GroupOf(Guid workspaceId) =>
+        Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.GroupId is { } group
+            ? Groups.FirstOrDefault(g => g.Id == group)
+            : null;
+
+    // The members of a group, ANCHOR FIRST and everything else in list order.
+    //
+    // Anchor first is a rendering rule that belongs here rather than in the bar, because the same
+    // order decides which member a group's colour comes from. An anchorless group has no anchor to
+    // promote, so it is plain list order.
+    public IReadOnlyList<Workspace> MembersOf(Guid groupId)
+    {
+        var members = Workspaces.Where(w => w.GroupId == groupId).ToList();
+        return Groups.FirstOrDefault(g => g.Id == groupId)?.AnchorWorkspaceId is { } anchor
+            ? members.Where(w => w.Id == anchor).Concat(members.Where(w => w.Id != anchor)).ToList()
+            : members;
+    }
+
+    // The workspace whose windows this one borrows, or null when there is nothing to borrow.
+    //
+    // Null for an ungrouped workspace, for a member of an anchorless group (#84's whole point:
+    // there is no parent, so there are no windows to lend), and for the anchor itself, which
+    // already has its own windows.
+    public Guid? LendsWindowsTo(Guid workspaceId) =>
+        GroupOf(workspaceId)?.AnchorWorkspaceId is { } anchor && anchor != workspaceId ? anchor : null;
+
+    public bool IsAnchor(Guid workspaceId) => GroupOf(workspaceId)?.AnchorWorkspaceId == workspaceId;
+
     // Turns a pre-groups state.json into one that uses groups, and is a no-op on anything already
     // migrated or on a file that never had nesting.
     //

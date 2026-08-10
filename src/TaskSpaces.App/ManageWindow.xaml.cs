@@ -256,9 +256,13 @@ public partial class ManageWindow : Window
     void ReloadNestParents()
     {
         var selected = (WorkspaceList.SelectedItem as Workspace)?.Id;
-        var hasChildren = manager.State.Workspaces.Where(w => w.ParentId is { } p).Select(w => w.ParentId!.Value).ToHashSet();
         NestParent.ItemsSource = manager.State.Workspaces
-            .Where(w => w.Id != selected && w.ParentId is null && !hasChildren.Contains(w.Id))
+            .Where(w => w.Id != selected)
+            // A legal anchor is one that is in no group, or is already its own group's anchor.
+            // Anything else is somebody's member, and nesting under a member would make a second
+            // level. Reading GroupOf rather than working membership out here is what keeps this
+            // list in step with what the manager will actually accept.
+            .Where(w => manager.State.GroupOf(w.Id) is null || manager.State.IsAnchor(w.Id))
             .ToList();
     }
 
@@ -268,7 +272,7 @@ public partial class ManageWindow : Window
         WithSelectedWorkspace(w => manager.NestWorkspace(w.Id, parent.Id));
     }
 
-    void OnUnnestWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.UnnestWorkspace(w.Id));
+    void OnUnnestWorkspace(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.LeaveGroup(w.Id));
 
     void OnMoveWorkspaceUp(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, -1));
     void OnMoveWorkspaceDown(object s, RoutedEventArgs e) => WithSelectedWorkspace(w => manager.MoveWorkspace(w.Id, +1));

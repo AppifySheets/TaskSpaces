@@ -144,7 +144,7 @@ public class DeleteWorkspaceTests
         Assert.True(manager.DeleteWorkspaceIfEmpty(target).IsSuccess);
 
         Assert.DoesNotContain(manager.State.Workspaces, w => w.Id == target);
-        Assert.Null(manager.State.Workspaces.Single(w => w.Id == other).ParentId);
+        Assert.Null(manager.State.Workspaces.Single(w => w.Id == other).GroupId);
     }
 
     [Fact]

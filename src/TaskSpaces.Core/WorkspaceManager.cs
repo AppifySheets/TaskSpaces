@@ -638,9 +638,17 @@ public sealed class WorkspaceManager(
             InheritedPins = borrowed.Select(b => new InheritedPin(b.Key.Value, b.Value)).ToList(),
         });
 
+    // The desktop whose windows the workspace on `desktop` borrows, or null when there is nothing
+    // to borrow.
+    //
+    // Reads AppState.LendsWindowsTo, which answers null for three different situations that all
+    // mean the same thing here: the workspace is in no group, it is in an ANCHORLESS group (#84's
+    // whole point being that there is no parent, so there are no windows to lend), or it is the
+    // anchor itself and already has its own windows.
     Guid? ParentDesktopOf(Guid desktop) =>
-        State.Workspaces.FirstOrDefault(w => w.DesktopId == desktop)?.ParentId is { } parentId
-            ? State.Workspaces.FirstOrDefault(w => w.Id == parentId)?.DesktopId
+        State.Workspaces.FirstOrDefault(w => w.DesktopId == desktop) is { } workspace
+        && State.LendsWindowsTo(workspace.Id) is { } lender
+            ? State.Workspaces.FirstOrDefault(w => w.Id == lender)?.DesktopId
             : null;
 
     // Called once at startup. Anything still recorded as borrowed is the residue of a crash or a
@@ -767,16 +775,14 @@ public sealed class WorkspaceManager(
     // The parent is validated exactly as NestWorkspace and AddChildWorkspace validate it -- it must
     // exist and must not itself be nested -- rather than trusted because a caller derived it from a
     // row. A UI that only offers legal choices is not a guarantee; it is a UI.
-    public Result<Workspace> InsertWorkspace(string name, int index, Guid? parentId = null) =>
+    public Result<Workspace> InsertWorkspace(string name, int index, Guid? groupId = null) =>
         Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
             .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
-            .Bind(() => parentId is { } parent
-                ? Workspace(parent).Bind(p => p.ParentId is not null
-                    ? Result.Failure($"'{p.Name}' is itself nested. Workspaces nest one level deep.")
-                    : Result.Success())
+            .Bind(() => groupId is { } group && State.Groups.All(g => g.Id != group)
+                ? Result.Failure("That group no longer exists.")
                 : Result.Success())
             .Bind(() => desktops.Create(name))
-            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id) { ParentId = parentId })
+            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id) { GroupId = groupId })
             .Tap(w => Persist(State with { Workspaces = Inserted(w, Math.Clamp(index, 0, State.Workspaces.Count)) }));
 
     IReadOnlyList<Workspace> Inserted(Workspace workspace, int index)
@@ -917,20 +923,45 @@ public sealed class WorkspaceManager(
     //
     // Deliberately NOT refused: nesting a workspace that has windows, or that is current. Both are
     // ordinary, and neither means anything different afterwards.
+    // Now expressed as groups: nesting a child under a parent puts both into one ANCHORED group
+    // whose anchor is the parent, creating that group on the first child and reusing it after.
+    //
+    // The refusals below are the same three, restated in terms of membership rather than of a
+    // parent pointer.
     public Result NestWorkspace(Guid child, Guid parent) =>
         child == parent
             ? Result.Failure("A workspace cannot be nested under itself.")
             : Workspace(child).Bind(_ => Workspace(parent))
-                .Bind(target => target.ParentId is not null
-                    ? Result.Failure($"'{target.Name}' is itself nested. Workspaces nest one level deep.")
+                // The parent must not be somebody else's member. It may already be its own group's
+                // anchor, which is exactly the second-and-later child case.
+                .Bind(target => State.GroupOf(parent) is { } group && group.AnchorWorkspaceId != parent
+                    ? Result.Failure($"'{target.Name}' is itself in a group. Workspaces nest one level deep.")
                     : Result.Success())
-                .Bind(() => State.Workspaces.Any(w => w.ParentId == child)
+                // ...and the child must not be an anchor, which would make its own members
+                // grandchildren of the parent.
+                .Bind(() => State.IsAnchor(child)
                     ? Result.Failure("That workspace has workspaces nested under it. Workspaces nest one level deep.")
                     : Result.Success())
-                .Tap(() => Persist(State with
-                {
-                    Workspaces = State.Workspaces.Select(w => w.Id == child ? w with { ParentId = parent } : w).ToList(),
-                }));
+                .Tap(() => Persist(JoinedAnchoredGroup(child, parent)));
+
+    // The child joins the parent's group, and the group is created if the parent has none yet.
+    //
+    // One Persist for the whole thing, which is why this returns state rather than writing twice:
+    // creating the group and moving two workspaces into it is one change, and pulsing halfway
+    // through would let the bar draw a group with one member in it.
+    AppState JoinedAnchoredGroup(Guid child, Guid parent)
+    {
+        var group = State.GroupOf(parent)
+            ?? new Group(Guid.NewGuid(), State.Workspaces.Single(w => w.Id == parent).Name, parent);
+
+        return State with
+        {
+            Groups = State.Groups.Any(g => g.Id == group.Id) ? State.Groups : [.. State.Groups, group],
+            Workspaces = State.Workspaces
+                .Select(w => w.Id == child || w.Id == parent ? w with { GroupId = group.Id } : w)
+                .ToList(),
+        };
+    }
 
     // Petre: "add child as a right click menu item" (#42).
     //
@@ -943,28 +974,76 @@ public sealed class WorkspaceManager(
     // before becoming a child -- would be visible on the bar as a row that jumps.
     public Result<Workspace> AddChildWorkspace(Guid parent, string name) =>
         Workspace(parent)
-            .Bind(p => p.ParentId is not null
-                ? Result.Failure<Workspace>($"'{p.Name}' is itself nested. Workspaces nest one level deep.")
+            .Bind(p => State.GroupOf(parent) is { } group && group.AnchorWorkspaceId != parent
+                ? Result.Failure<Workspace>($"'{p.Name}' is itself in a group. Workspaces nest one level deep.")
                 : Result.Success(p))
             .Bind(_ => Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required"))
             .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
             .Bind(() => desktops.Create(name))
-            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id) { ParentId = parent })
-            .Tap(child => Persist(State with { Workspaces = Inserted(child, AfterLastChildOf(parent)) }));
+            .Map(d => new Workspace(Guid.NewGuid(), name, d.Id))
+            .Tap(child =>
+            {
+                // The parent's group is settled first, so the new workspace has somewhere to be
+                // created into and the whole thing is still ONE Persist. Two writes would pulse
+                // twice, and the state in between -- a group of one, or a workspace that exists
+                // outside it for a frame -- is a shape the bar would briefly draw.
+                var withGroup = JoinedAnchoredGroup(child.Id, parent);
+                var group = withGroup.Groups.Single(g => g.AnchorWorkspaceId == parent).Id;
 
-    // One past the parent, then one past each child it already has.
-    int AfterLastChildOf(Guid parent) =>
-        State.Workspaces.ToList().FindIndex(w => w.Id == parent) is var at && at < 0
-            ? State.Workspaces.Count
-            : at + 1 + State.Workspaces.Count(w => w.ParentId == parent);
+                var ordered = withGroup.Workspaces.ToList();
+                ordered.Insert(AfterLastMemberOf(group, ordered), child with { GroupId = group });
 
-    // Back to the top level. Its own method rather than NestWorkspace(child, null), because
-    // "un-nest" is a thing a person does and a nullable parameter is a thing a compiler accepts.
-    public Result UnnestWorkspace(Guid child) =>
-        Workspace(child).Tap(_ => Persist(State with
+                Persist(withGroup with { Workspaces = ordered });
+            });
+
+    // One past the group's last member, so a child created from a row lands under that row rather
+    // than at the bottom of the bar where the eye has to go looking for it.
+    static int AfterLastMemberOf(Guid group, IReadOnlyList<Workspace> workspaces) =>
+        workspaces.Select((w, at) => (w, at))
+            .Where(x => x.w.GroupId == group)
+            .Select(x => x.at + 1)
+            .DefaultIfEmpty(workspaces.Count)
+            .Max();
+
+    // Out of the group, back to standing on its own.
+    //
+    // Renamed from UnnestWorkspace: with #84's anchorless groups, "un-nest" describes only half the
+    // cases, and #83 asks for this by the name "move a workspace out of the group".
+    //
+    // Leaving takes the group with it when too little is left to be a group. A group of one is not
+    // a group: the bar would draw an outline round a single row, which #42 already ruled out as
+    // decoration that means nothing.
+    public Result LeaveGroup(Guid workspaceId) =>
+        Workspace(workspaceId).Tap(_ => Persist(WithoutMember(State, workspaceId)));
+
+    // Removes one workspace from whatever group it is in, and tidies up after it.
+    //
+    // Two tidy-ups, both of which have a visible failure if skipped. A group left with one member
+    // is dissolved, as above. A group that has lost its ANCHOR keeps its members and its name and
+    // becomes anchorless: nothing is borrowed any more, which is correct, because the workspace
+    // that was lending the windows has gone.
+    static AppState WithoutMember(AppState state, Guid workspaceId)
+    {
+        if (state.GroupOf(workspaceId) is not { } group) return state;
+
+        var remaining = state.Workspaces.Count(w => w.GroupId == group.Id && w.Id != workspaceId);
+
+        return state with
         {
-            Workspaces = State.Workspaces.Select(w => w.Id == child ? w with { ParentId = null } : w).ToList(),
-        }));
+            Workspaces = state.Workspaces
+                .Select(w => w.Id == workspaceId || (remaining < 2 && w.GroupId == group.Id)
+                    ? w with { GroupId = null }
+                    : w)
+                .ToList(),
+            Groups = remaining < 2
+                ? state.Groups.Where(g => g.Id != group.Id).ToList()
+                : state.Groups
+                    .Select(g => g.Id == group.Id && g.AnchorWorkspaceId == workspaceId
+                        ? g with { AnchorWorkspaceId = null }
+                        : g)
+                    .ToList(),
+        };
+    }
 
     public Result SetWorkspaceMinimized(Guid id, bool minimized) =>
         Workspace(id).Tap(_ => Persist(State with
@@ -1019,18 +1098,19 @@ public sealed class WorkspaceManager(
                 // this workspace's windows would resurrect a phantom inventory key.
                 memberships.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList()
                     .ForEach(h => memberships.Remove(h));
-                Persist(State with
+
+                // Taken out of its group FIRST, which is what keeps the rest of the group coherent:
+                // WithoutMember dissolves a group left with one member and clears the anchor of a
+                // group that has just lost it. Deleting the anchor therefore leaves the others
+                // grouped and named, with nothing borrowed any more, rather than promoting them all
+                // to the top level or leaving them pointing at a workspace that is gone.
+                var tidied = WithoutMember(State, id);
+
+                Persist(tidied with
                 {
-                    // Children are PROMOTED, never removed with the parent (#42). Deleting a
-                    // workspace deletes one workspace; taking its children with it would destroy
-                    // desktops full of windows on the strength of a grouping decision, and a
-                    // dangling ParentId would leave rows that render as nested under nothing.
-                    Workspaces = State.Workspaces
-                        .Where(x => x.Id != id)
-                        .Select(x => x.ParentId == id ? x with { ParentId = null } : x)
-                        .ToList(),
-                    WorkspaceRules = State.WorkspaceRules.Where(r => r.WorkspaceId != id).ToList(),
-                    Inventory = State.Inventory.Where(kv => kv.Key != id).ToDictionary(kv => kv.Key, kv => kv.Value),
+                    Workspaces = tidied.Workspaces.Where(x => x.Id != id).ToList(),
+                    WorkspaceRules = tidied.WorkspaceRules.Where(r => r.WorkspaceId != id).ToList(),
+                    Inventory = tidied.Inventory.Where(kv => kv.Key != id).ToDictionary(kv => kv.Key, kv => kv.Value),
                 });
             });
 

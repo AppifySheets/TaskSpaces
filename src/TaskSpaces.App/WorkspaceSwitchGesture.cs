@@ -92,13 +92,19 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     int DefinedIndexOf(Workspace workspace) =>
         Math.Max(0, manager.State.Workspaces.ToList().FindIndex(w => w.Id == workspace.Id));
 
-    // The workspace this one is nested under, or null (#42). Null is also the answer when the
-    // parent has since been deleted -- RemoveWorkspace promotes children rather than leaving them
-    // dangling, so that should never happen, and if it ever does the picker degrades to showing a
-    // plain name rather than an empty prefix.
+    // The workspace this one borrows its windows from, or null (#42).
+    //
+    // Reads AppState.LendsWindowsTo, so the answer is null in three situations that all mean the
+    // same thing to the picker: the workspace is in no group, it is in an ANCHORLESS group (#84,
+    // where there is no parent workspace at all), or it is the anchor itself. In each case the
+    // picker shows a plain name rather than a prefix.
+    //
+    // An anchorless group's NAME is deliberately not used as a prefix here. It names a set, not a
+    // place, and "Clients / EuroCredit" would read as a path to a workspace that the chord cannot
+    // land on.
     Workspace? ParentOf(Workspace workspace) =>
-        workspace.ParentId is { } parentId
-            ? manager.State.Workspaces.FirstOrDefault(w => w.Id == parentId)
+        manager.State.LendsWindowsTo(workspace.Id) is { } lender
+            ? manager.State.Workspaces.FirstOrDefault(w => w.Id == lender)
             : null;
 
     // The picker's hwnd, so the composition root can hand it to WindowMonitor.Ignore. The monitor

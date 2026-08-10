@@ -1130,14 +1130,24 @@ public partial class FloatingBar : Window
             // amended: EVERY workspace gets a row -- an empty one is just its label,
             // which since round 5 is a click-to-switch button, so it's a legitimate
             // switch target rather than dead chrome.
-            // Nested workspaces are drawn UNDER their parent (#42), which means the flat list has
-            // to be walked as a tree: each top-level workspace, then its children, in the order
-            // the list itself gives.
+            // Members of a group are drawn together (#42 anchored, #84 anchorless), which means the
+            // flat list is walked once and a whole group is emitted when its first member is
+            // reached. Everything after that member is skipped, so a group whose members are not
+            // contiguous in the list still comes out as one box.
             //
-            // Order is otherwise untouched -- a workspace's position still drives its lane colour
-            // (WorkspacePalette by index), so this deliberately re-SEQUENCES the rows without
-            // renumbering them. Nesting a workspace moves where it is drawn, not what colour it is.
-            var byParent = overview.Workspaces.ToLookup(g => g.Workspace.ParentId);
+            // Order is otherwise untouched: a workspace's position still drives its lane colour
+            // (WorkspacePalette by index), so this re-SEQUENCES rows without renumbering them.
+            // Grouping a workspace moves where it is drawn, not what colour it is.
+            var state = manager.State;
+            var byGroup = overview.Workspaces.ToLookup(g => g.Workspace.GroupId);
+
+            // The position a group takes its colour from: its ANCHOR's, or its first member's when
+            // there is no anchor. An anchorless group has no parent to inherit from, so the first
+            // member is the only stable answer, and it keeps "colour follows list position" true
+            // for groups as well as for single rows.
+            int ColourSlotOf(Core.Domain.Group group) =>
+                overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id ==
+                    (group.AnchorWorkspaceId ?? state.MembersOf(group.Id).FirstOrDefault()?.Id));
 
             // Petre: "make the children more apparent, maybe group them together with an outline
             // or a ring."
@@ -1150,22 +1160,30 @@ public partial class FloatingBar : Window
             //
             // Built per family and wrapped afterwards, rather than appended one row at a time,
             // because an outline has to be drawn around a set that already exists.
-            UIElement WorkspaceRow(WorkspaceGroup g)
+            // `group` is the group this row belongs to, or null for a row that stands on its own.
+            // Everything a row inherits from its group is decided from it, so the two kinds differ
+            // in exactly one place: whether there is an anchor to inherit a colour from.
+            UIElement WorkspaceRow(WorkspaceGroup g, Core.Domain.Group? group)
             {
                 // Recorded so ApplyCandidate can restore the white ring here when the amber
                 // one moves away, without needing another overview query to ask again.
                 if (g.IsCurrent) currentRow = g.Workspace.Id;
 
-                // The parent's own position, which is what a child borrows its colour from.
-                var parentAt = g.Workspace.ParentId is { } pid
-                    ? overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == pid)
-                    : -1;
-                var parentWorkspace = parentAt >= 0 ? overview.Workspaces[parentAt].Workspace : null;
+                var ownSlot = overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id);
+                // The slot the row's colour comes from: its group's, or its own when ungrouped.
+                var colourSlot = group is not null ? ColourSlotOf(group) : ownSlot;
+                var colourFrom = colourSlot >= 0 ? overview.Workspaces[colourSlot].Workspace : g.Workspace;
+
+                // A member is drawn as nested unless it is the anchor. In an ANCHORLESS group every
+                // member is nested, because none of them is the parent: the group's name carries
+                // what the anchor's row would otherwise have said.
+                var isAnchor = group?.AnchorWorkspaceId == g.Workspace.Id;
+                var nested = group is not null && !isAnchor;
 
                 // The name, plainly. The ↳ prefix that was here first is gone: Petre asked for "a
                 // better representation that it's a child", and a glyph inside a label that already
                 // sits in a narrow gutter is the weakest place to put it. The spine, the shared
-                // colour, the indent and now the family outline all say it around the row instead.
+                // colour, the indent and the group outline all say it around the row instead.
                 return GroupRow(
                     g.Workspace.Name,
                     g.Workspace.Name, g.IsCurrent,
@@ -1173,26 +1191,52 @@ public partial class FloatingBar : Window
                     groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
                     onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
                     g.Running,
-                    // A child wears its PARENT's lane colour rather than its own. Colour is what
-                    // groups things on this bar, so giving a nested workspace a colour of its own
-                    // would be the surface saying "unrelated" while the layout says "belongs to".
-                    tint: parentWorkspace is not null
-                        ? LaneTint(parentWorkspace, parentAt)
-                        : LaneTint(g.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id)),
+                    // Every member wears the GROUP's lane colour rather than its own. Colour is what
+                    // groups things on this bar, so giving a member a colour of its own would be the
+                    // surface saying "unrelated" while the layout says "belongs to".
+                    tint: LaneTint(colourFrom, colourSlot >= 0 ? colourSlot : ownSlot),
                     rowKey: g.Workspace.Id,
                     minimized: g.Workspace.Minimized,
-                    nested: g.Workspace.ParentId is not null,
-                    spine: parentWorkspace is not null ? LaneAccent(parentWorkspace, parentAt) : null);
+                    nested: nested,
+                    spine: nested ? LaneAccent(colourFrom, colourSlot) : null);
             }
 
-            byParent[null].ToList().ForEach(parent =>
+            // Walked in list order, emitting a whole group at its first member and skipping the
+            // rest. A group is therefore drawn where it STARTS, which is what keeps a group's
+            // position on the bar predictable while its members are reordered inside it.
+            var drawn = new HashSet<Guid>();
+            overview.Workspaces.ToList().ForEach(entry =>
             {
-                var rows = new[] { parent }.Concat(byParent[parent.Workspace.Id]).Select(WorkspaceRow).ToList();
-                // A lone workspace is not a family and gets no box: an outline around a single row
-                // would be decoration that means nothing, and most rows on the bar are lone ones.
-                groupRows.Add(rows.Count == 1
-                    ? rows[0]
-                    : FamilyBox(rows, LaneAccent(parent.Workspace, overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == parent.Workspace.Id))));
+                if (!drawn.Add(entry.Workspace.Id)) return;
+
+                if (entry.Workspace.GroupId is not { } id || state.Groups.FirstOrDefault(g => g.Id == id) is not { } group)
+                {
+                    groupRows.Add(WorkspaceRow(entry, null));
+                    return;
+                }
+
+                // MembersOf puts the anchor first, so an anchored group draws its parent at the top
+                // whatever order the members happen to sit in.
+                var members = state.MembersOf(id)
+                    .Select(w => overview.Workspaces.FirstOrDefault(x => x.Workspace.Id == w.Id))
+                    .Where(x => x is not null)
+                    .ToList();
+                members.ForEach(m => drawn.Add(m!.Workspace.Id));
+
+                var rows = members.Select(m => WorkspaceRow(m!, group)).ToList();
+
+                // An ANCHORLESS group needs a header, because nothing inside it carries the name.
+                // Deliberately not a switch target: there is no desktop behind it, and a row that
+                // looks clickable and does nothing is worse than one that plainly is not.
+                if (!group.IsAnchored) rows.Insert(0, GroupHeader(group, ColourSlotOf(group), overview));
+
+                // A group of one gets no box: an outline around a single row would be decoration
+                // that means nothing, and most rows on the bar stand alone. It cannot normally
+                // happen, since leaving a group of two dissolves it, but a hand-edited state.json
+                // can produce one.
+                groupRows.Add(rows.Count == 1 ? rows[0] : FamilyBox(rows, LaneAccent(
+                    ColourSlotOf(group) >= 0 ? overview.Workspaces[ColourSlotOf(group)].Workspace : entry.Workspace,
+                    ColourSlotOf(group))));
             });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
@@ -1373,6 +1417,48 @@ public partial class FloatingBar : Window
 
         return grid;
     }
+
+    // The name of an ANCHORLESS group (#84), which has no member to carry it: "the parent is not a
+    // workspace, it's only the group's name."
+    //
+    // NOT a switch target and not a drop target, which is the constraint the issue itself set: there
+    // is no desktop behind it. A row that looks like the others and then does nothing when clicked
+    // is worse than one that plainly is not clickable, so this is a label and a lane tint with no
+    // icons, no hover ring and no menu of its own.
+    //
+    // An anchored group needs none of this. Its anchor is a real workspace sitting at the top of
+    // the box, and its name is already on that row.
+    UIElement GroupHeader(Core.Domain.Group group, int colourSlot, Core.Overview.Overview overview)
+    {
+        var header = new Grid
+        {
+            Background = colourSlot >= 0
+                ? LaneTint(overview.Workspaces[colourSlot].Workspace, colourSlot) ?? Brushes.Transparent
+                : Brushes.Transparent,
+        };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // In the right-hand gutter with the workspace names, so the group reads as belonging to the
+        // same column of labels rather than as a banner across the bar.
+        var label = new TextBlock
+        {
+            Text = group.Name,
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = GroupHeaderForeground,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(4, 1, 4, 1),
+        };
+        Grid.SetColumn(label, 1);
+        header.Children.Add(label);
+        return header;
+    }
+
+    // Dimmer than a workspace label, because it names something you cannot go to. The rows below it
+    // are the targets, and the header should not compete with them for the eye.
+    static readonly Brush GroupHeaderForeground = Frozen(0xB0, 0xE0, 0xE0, 0xE0);
 
     // A parent and its children, drawn as one thing (#42). Petre: "make the children more
     // apparent, maybe group them together with an outline or a ring."
@@ -2857,19 +2943,21 @@ public partial class FloatingBar : Window
 
         menu.Items.Add(new Separator());
 
-        // The parent of the row this menu belongs to, read at CLICK time for the same reason
-        // IndexOf is (#74). Petre: "before/after is relative to the row it was invoked on, at that
-        // row's depth" -- so on a nested row the new workspace joins the same parent instead of
-        // landing at the top level between a parent and its children, which is what it used to do
-        // and which read as the bar putting a stranger inside somebody's family.
+        // The GROUP the row belongs to, read at CLICK time for the same reason IndexOf is (#74).
+        // Petre: "before/after is relative to the row it was invoked on, at that row's depth" -- so
+        // beside a grouped row the new workspace joins the same group, instead of landing ungrouped
+        // in the middle of somebody's box, which is what it used to do.
         //
-        // Null on a top-level row, which is the previous behaviour unchanged.
-        Guid? ParentOfRow() => manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.ParentId;
+        // "Same depth" became "same group" with the group model, and that is one answer for both
+        // kinds: an anchored group and an anchorless one are joined the same way.
+        //
+        // Null for a row that stands on its own, which is the previous behaviour unchanged.
+        Guid? GroupOfRow() => manager.State.GroupOf(workspaceId)?.Id;
 
         // "on top or under the current workspace" -- before is this row's own index, after is the
         // one past it, and InsertWorkspace clamps both.
-        Add("✚", "Insert before…", () => InsertAt(IndexOf(), ParentOfRow()));
-        Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1, ParentOfRow()));
+        Add("✚", "Insert before…", () => InsertAt(IndexOf(), GroupOfRow()));
+        Add("✚", "Insert after…", () => InsertAt(IndexOf() + 1, GroupOfRow()));
         // Petre: "add child as a right click menu item" (#42). Only offered on a row that CAN be a
         // parent -- workspaces nest one level deep, so a child row does not offer to have children
         // of its own rather than offering it and refusing afterwards.
@@ -2938,18 +3026,29 @@ public partial class FloatingBar : Window
             if (workspace is null) return; // deleted from elsewhere while the menu sat open
 
             // Asked BEFORE the emptiness check, so the answer to a mis-click is always the same
-            // dialog rather than sometimes a refusal from deeper in. The children note only appears
-            // when there are children, because a warning about something that is not happening is
-            // worse than no warning.
-            var children = manager.State.Workspaces.Count(w => w.ParentId == workspaceId);
-            var childNote = children > 0
-                ? $"\n\nIts {children} nested {(children == 1 ? "workspace" : "workspaces")} will move up to the top level, keeping their windows."
-                : "";
+            // dialog rather than sometimes a refusal from deeper in.
+            //
+            // The note only appears when something else actually happens to the group, because a
+            // warning about something that is not happening is worse than no warning. What happens
+            // depends on how much of the group is left, so the wording follows the two real cases
+            // rather than promising one of them.
+            var group = manager.State.GroupOf(workspaceId);
+            var others = group is null ? 0 : manager.State.Workspaces.Count(w => w.GroupId == group.Id) - 1;
+            var groupNote = (group, others) switch
+            {
+                (null, _) or (_, 0) => "",
+                // A group of one is not a group, so the last one left stands alone.
+                (_, 1) => $"\n\n'{group!.Name}' is left with one workspace, so the group is dissolved and that workspace stands on its own. It keeps its windows.",
+                // Losing the anchor is what stops the borrowing, and only the anchor lends windows.
+                _ when manager.State.IsAnchor(workspaceId) =>
+                    $"\n\n'{group!.Name}' keeps its other {others} workspaces and its name, but they will no longer show this workspace's windows.",
+                _ => $"\n\n'{group!.Name}' keeps its other {others} workspaces.",
+            };
 
             if (MessageBox.Show(this,
                     $"Delete '{workspace.Name}'?\n\n" +
                     $"Its virtual desktop, its name, its rules and its placement memory all go. " +
-                    $"This cannot be undone." + childNote,
+                    $"This cannot be undone." + groupNote,
                     "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
 
