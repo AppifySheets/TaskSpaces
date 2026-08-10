@@ -191,7 +191,15 @@ public partial class FloatingBar : Window
     void HoldFadeWhileOpen(ContextMenu menu)
     {
         menu.Opened += (_, _) => { openMenu = menu; UpdateFade(); };
-        menu.Closed += (_, _) => { if (ReferenceEquals(openMenu, menu)) openMenu = null; UpdateFade(); };
+        menu.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(openMenu, menu)) openMenu = null;
+            UpdateFade();
+            // Serve whatever the menu held off (#77). Rebuild defers while a menu is open, because
+            // rebuilding destroys the row the menu is positioned against and WPF then closes it --
+            // so this is the moment the postponed news is finally allowed through.
+            FlushDeferredRebuild();
+        };
     }
 
     // Waiting out the ten seconds. A timer rather than DoubleAnimation.BeginTime, which was the
@@ -618,6 +626,10 @@ public partial class FloatingBar : Window
         UpdateFade();
 
         if (Mouse.LeftButton == MouseButtonState.Pressed) return;
+        // An open menu holds the same way a held mouse button does (#77): flushing here would
+        // rebuild the rows out from under it and close it, which is precisely what the deferral in
+        // Rebuild exists to prevent. Its own Closed handler flushes instead.
+        if (openMenu?.IsOpen == true) return;
         FlushDeferredRebuild();
     }
 
@@ -747,6 +759,22 @@ public partial class FloatingBar : Window
     // 1px border on each side. Its horizontal margin is deliberately zero (Petre: "the separation
     // between icons should be much smaller"), so this is the whole cell.
     const double IconCellWidth = 24;
+
+    // ...and what one LINE of icons occupies down the row: the same 24 the cell is wide, plus
+    // IconButton's 1px top and bottom margins.
+    //
+    // Exists as the floor for a row with NO icons (#76). Petre: a newly added workspace "appears
+    // with a smaller row height", and "the bar window should grow when workspaces are added".
+    //
+    // The bar did grow -- height has been content-driven throughout -- but a new workspace has no
+    // windows, an empty icon stack is zero pixels tall, and what was left holding the row open was
+    // its 10pt label. So an empty row came out roughly half height, which read as the row being
+    // squeezed in rather than as the row simply having nothing in it.
+    //
+    // Not a regression: empty workspace rows have been drawn since they became legitimate switch
+    // and drop targets, and they have always been short. It only became obvious once workspaces
+    // were being created from the bar's own menu, where the new row is the thing you are looking at.
+    const double IconLineHeight = 26;
 
     // ...and what a monitor marker adds when an icon opens a group: MonitorMarker's fixed 3px box
     // plus its 1px margins. Constant whatever the stroke count, by the same design that keeps
@@ -983,6 +1011,24 @@ public partial class FloatingBar : Window
         // rebuildRequested flag the re-entrancy guard uses already means "there is news to serve
         // later", and the release path below serves it.
         if (Mouse.LeftButton == MouseButtonState.Pressed && IsMouseOver)
+        {
+            rebuildRequested = true;
+            return;
+        }
+
+        // ...and the same deferral while a CONTEXT MENU is open (#77). Petre: the colour submenu
+        // "sometimes disappears before the mouse can reach it".
+        //
+        // Same mechanism as the lost click, one layer up. A ContextMenu is positioned against a
+        // PLACEMENT TARGET -- the row it was opened on -- and a rebuild throws every row away. WPF
+        // closes a menu whose target has left the tree, so any window event arriving while someone
+        // reads the menu shuts it, and the bar rebuilds on every window event. "Sometimes" is
+        // exactly what that looks like from the outside: it depends on whether anything happened
+        // to open, close or retitle a window in the second you were deciding.
+        //
+        // Deferred rather than skipped, and flushed when the menu closes -- the same
+        // rebuildRequested flag the other two guards use.
+        if (openMenu?.IsOpen == true)
         {
             rebuildRequested = true;
             return;
@@ -1473,6 +1519,17 @@ public partial class FloatingBar : Window
             Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
+            // One icon line's worth, even with no icons in it (#76), so an empty workspace's row is
+            // the same height as a row holding one window instead of collapsing onto its label.
+            //
+            // A floor rather than a fixed height: a row with icons already exceeds it, and a row
+            // whose icons WRAP has to be free to grow. On the pinned row it also makes the drop
+            // target full height, which is the row's whole purpose.
+            //
+            // Applied to the icons rather than the row so the minimized transform still scales it:
+            // #52 scales the entire row by a third, and a floor placed on the row itself would
+            // fight that.
+            MinHeight = IconLineHeight,
             // The indent for a nested row (#42) is taken out of the ICONS' space, not the row's,
             // so the row itself still spans the bar and the monitor alignment still lines up
             // across every row.
@@ -2839,7 +2896,7 @@ public partial class FloatingBar : Window
         // SET it -- the only route was hand-editing state.json, which is what left "i don't like
         // the green for sparrow" with nothing to do about it but re-pick the whole palette for
         // everyone. A per-workspace choice is the answer to a per-workspace complaint.
-        menu.Items.Add(ColourPicker(workspaceId));
+        AddColourPicker(menu, workspaceId);
 
         menu.Items.Add(new Separator());
 
@@ -2880,27 +2937,66 @@ public partial class FloatingBar : Window
     // icon and swallows the tick -- and the icon here is the whole point, since the colour is what
     // is being chosen. The ring is the same white "you are here" marker the bar uses on its
     // current row, which is the same claim.
-    MenuItem ColourPicker(Guid workspaceId)
+    // INLINE, not a submenu any more (#77). Petre: it "doesn't open aligned with the Colour menu
+    // item" and "sometimes disappears before the mouse can reach it".
+    //
+    // Those two were one bug, as the issue guessed. Eleven stacked items is a tall flyout, the bar
+    // lives against a screen edge, and WPF flips a submenu that does not fit -- so it opened away
+    // from the item it belonged to, the pointer then had to cross dead space to reach it, and
+    // leaving the parent item is exactly what closes a submenu.
+    //
+    // Rather than fight the placement, there is no flyout: nine swatches in one horizontal strip,
+    // in the menu itself. It cannot be misplaced because it is not positioned, it cannot be missed
+    // on the way because there is no way, and a palette is better read as colours side by side than
+    // as a list of colour names anyway.
+    void AddColourPicker(ContextMenu menu, Guid workspaceId)
     {
         // Read now rather than captured from the row, because the row was built with a lane colour
         // that may have come from the palette by position -- what this menu needs is whether the
         // workspace has an override of its OWN, which only the state can answer.
         var chosen = manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.Color;
 
-        var picker = new MenuItem { Header = "Colour", Icon = MenuGlyph("◑") };
+        var strip = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(2, 2, 2, 2),
+        };
 
         WorkspacePalette.Swatches.ToList().ForEach(swatch =>
         {
-            var item = new MenuItem
+            var button = new Button
             {
-                Header = swatch.Name,
-                Icon = ColourSwatch(swatch.Hex, string.Equals(chosen, swatch.Hex, StringComparison.OrdinalIgnoreCase)),
+                Content = ColourSwatch(swatch.Hex, string.Equals(chosen, swatch.Hex, StringComparison.OrdinalIgnoreCase)),
+                // Chrome-less for the same reason the row icons are: the stock template's hover
+                // layer would sit on top of the colour being chosen.
+                Template = BareButton,
+                Background = Brushes.Transparent,
+                Padding = new Thickness(2),
+                // The name has to be reachable somehow now that it is not written next to the
+                // swatch. A tooltip is the right place for it: needed once, while learning.
+                ToolTip = swatch.Name,
             };
-            item.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, swatch.Hex));
-            picker.Items.Add(item);
+            button.Click += (_, _) =>
+            {
+                Report(manager.SetWorkspaceColor(workspaceId, swatch.Hex));
+                // Closed by hand. The wrapper below stays open on click so this handler runs at
+                // all, which means nothing else is going to close it.
+                menu.IsOpen = false;
+            };
+            strip.Children.Add(button);
         });
 
-        picker.Items.Add(new Separator());
+        // Wrapped in a MenuItem so it sits in the menu's own layout and takes its background,
+        // rather than as a bare panel that MenuBase would wrap anyway with less control.
+        //
+        // StaysOpenOnClick is load-bearing: without it the menu closes on the way DOWN, before the
+        // swatch button's Click is raised, and no colour is ever chosen -- the same
+        // ButtonBase-consumes-the-release trap the rows hit in #48, arriving from the other side.
+        menu.Items.Add(new MenuItem
+        {
+            Header = strip,
+            StaysOpenOnClick = true,
+        });
 
         // Petre: "add transparent as an option for color". A row that opts out keeps its icons and
         // its label and simply has no lane behind them -- worth having on a bar where the tint's
@@ -2914,7 +3010,7 @@ public partial class FloatingBar : Window
             Icon = EmptySwatch(WorkspacePalette.IsNone(chosen)),
         };
         transparent.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, WorkspacePalette.None));
-        picker.Items.Add(transparent);
+        menu.Items.Add(transparent);
 
         var byPosition = new MenuItem
         {
@@ -2924,9 +3020,7 @@ public partial class FloatingBar : Window
             Icon = MenuGlyph(string.IsNullOrWhiteSpace(chosen) ? "●" : "○"),
         };
         byPosition.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, null));
-        picker.Items.Add(byPosition);
-
-        return picker;
+        menu.Items.Add(byPosition);
     }
 
     // Drawn at FULL strength, unlike the lane it will paint: a 12px square diluted to a lane's
