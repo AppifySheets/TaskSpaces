@@ -833,11 +833,10 @@ public partial class FloatingBar : Window
     //
     // Width is divided by the scale because BarScale is a LayoutTransform on Root: the window's
     // width is the content's width times the scale, and everything on this line is content.
-    double IconRoomOn(UIElement label)
-    {
-        label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        return Width / BarScaling.Clamp(manager.State.BarScale) - RootPadding * 2 - label.DesiredSize.Width;
-    }
+    // The name no longer shares the line with the icons -- it is a caption above them -- so nothing is
+    // reserved for it here. That is what makes every row's icon area identical, and with it the hairline's
+    // position: equal halves of an equal width land on one shared middle.
+    double IconRoom() => Width / BarScaling.Clamp(manager.State.BarScale) - RootPadding * 2;
 
     enum ResizeSide { Left, Right }
 
@@ -1519,7 +1518,15 @@ public partial class FloatingBar : Window
             //
             // Counted in IconCellWidth, the same constant the wrap budget uses, so the two agree
             // about what an icon occupies rather than each having its own opinion.
-            var stackColumn = AddColumn(stack, new GridLength(1, GridUnitType.Star), run.Count * IconCellWidth);
+            // NO MinWidth any more, and that is what puts the hairline dead centre. Petre: "always in the
+            // middle, center."
+            //
+            // The floor was #58's answer to icons being clipped: a star column will shrink below its content,
+            // so a group with more icons than fit in half a row lost the overflow. Its cost was the mark
+            // moving -- a fuller half claimed the extra room and took the boundary with it, which is why
+            // rows broke at different x. He has now chosen the other side of that trade: equal halves, one
+            // shared middle, on every row.
+            var stackColumn = AddColumn(stack, new GridLength(1, GridUnitType.Star));
             if (firstColumn < 0) firstColumn = stackColumn;
             if (run[0].Monitor.HasValue)
                 zones.Add(new MonitorZone(run[0].Monitor.Value, mark, firstColumn, stackColumn - firstColumn + 1));
@@ -1936,9 +1943,25 @@ public partial class FloatingBar : Window
         // one pinned left, label in an auto-width one on the right. Because rows stretch to the
         // bar's full width, that right column lines every label up against the same right edge,
         // so the raggedness moves to where nothing is aimed at.
+        // Petre: "shall we try adding workspace captions at the top of every workspace, as it is with
+        // sparrow group, but without groups?" -- the caption treatment #91 gave an anchorless group's
+        // header, applied to every row.
+        //
+        // The name moves ABOVE the icons, so the icons get the row's FULL width. That is the thing three
+        // earlier attempts were reaching for: with no gutter and no name in the line, every row's icon area
+        // is the same width, so equal star halves put the monitor hairline on the SAME x in every row --
+        // #99's shared middle, with nothing shared and nothing to keep in step. Petre, arriving at the same
+        // place: "then, middle separation would make more sense, with a hairline separator."
+        //
+        // It also ends the collision that killed the centred name (#103): a caption on its own line cannot
+        // be reached by icons, however many a workspace has.
+        //
+        // The cost is vertical, which is why it is a CAPTION: about a third of a row each, the height #91
+        // measured for the group header, rather than a full row per name.
         var container = new Grid { Background = idle };
         container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // Petre: "if any one workspace grows too wide, then it's inefficient... there's an icon
         // limit, and if that's exceeded, then it's the next row that needs to be added."
@@ -1984,7 +2007,7 @@ public partial class FloatingBar : Window
         // label's own width depends on nothing, so measuring it first is safe and settles the
         // question with no layout circularity. setHover is null exactly when this row has no
         // destination (see RowLabel), which keeps the Pinned and Unplaced rows inert below.
-        var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo);
+        var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo, caption: true);
 
         // Collected as they are built, because the hover wiring below needs the BUTTONS and
         // icons.Children now holds line panels. Reading icons.Children there instead would
@@ -2032,18 +2055,53 @@ public partial class FloatingBar : Window
             .Select(r => r.Window.Handle)
             .ToHashSet();
 
-        // Two wrap rules, and which one applies is decided by whether the bar has a width of its
-        // own. NaN is what Width reads as while SizeToContent still owns it -- no width chosen,
-        // so the fixed five-per-line rule stands exactly as it always has.
-        var lines = double.IsNaN(Width)
-            ? IconRowLimit.Lines(ordered)
-            : IconRowLimit.LinesThatFit(ordered, r => IconCellWidth + (opensGroup.Contains(r.Window.Handle) ? MonitorMarkerWidth : 0), IconRoomOn(label));
+        // WRAPPED PER SCREEN, against that screen's own share of the row. Petre: "newline if icons can't
+        // fit."
+        //
+        // This is the other half of putting the hairline dead centre. Removing the width floor made the
+        // halves exactly equal, which also removed what used to protect an overfull half from being clipped
+        // (#58: "icons in sparrow are not fully shown"). Wrapping against the whole row could not help,
+        // because a half measuring itself against space the other half owns never reaches the limit -- the
+        // same mistake #103's flanks made. Each screen's group gets its equal share of the row, minus the
+        // marks, and runs onto another line when it fills.
+        var groups = ordered.GroupBy(r => r.MonitorRank.GetValueOrDefault(0)).OrderBy(g => g.Key).ToList();
+        var share = groups.Count <= 1
+            ? IconRoom()
+            : (IconRoom() - (groups.Count - 1) * MonitorMarkerWidth) / groups.Count;
+
+        var perGroup = groups
+            .Select(g => (double.IsNaN(Width)
+                    // No width of its own yet: the fixed five-per-line rule, now applied per screen rather
+                    // than per row, which is the same rule doing the same job in a narrower space.
+                    ? IconRowLimit.Lines(g.ToList())
+                    : IconRowLimit.LinesThatFit(g.ToList(), _ => IconCellWidth, share))
+                .Select(line => line.ToList()).ToList())
+            .ToList();
+
+        // One row line per deepest group, with each group contributing its own line at that depth. A group
+        // that has run out simply adds nothing, so its half of that line is empty -- which is exactly what
+        // the empty half already means everywhere else on this bar.
+        var lineCount = perGroup.Count == 0 ? 1 : perGroup.Max(g => g.Count);
+        var drawnLines = Enumerable.Range(0, lineCount)
+            .Select(i => perGroup.SelectMany(g => i < g.Count ? g[i] : []).ToList())
+            .ToList();
+
+        // Recomputed from the LINES, and it has to be: `opensGroup` above marks the first icon of each group
+        // across the whole row, which was right when a continuation line deliberately inherited its
+        // neighbour's grouping. Now every line needs the same column structure or the middle would only hold
+        // on the first one -- so on each line, the first icon of every group after the leftmost opens a
+        // group, and gets the mark that divides the halves.
+        var opensLine = drawnLines
+            .SelectMany(line => line
+                .Select((r, at) => (r, at))
+                .Where(x => x.at > 0 && x.r.MonitorRank.GetValueOrDefault(0) != line[x.at - 1].MonitorRank.GetValueOrDefault(0))
+                .Select(x => x.r.Window.Handle))
+            .ToHashSet();
 
         // isLastLine carries #102's empty tail halves, which belong to the row rather than to each of its
         // wrapped lines.
-        var drawnLines = lines.ToList();
         drawnLines.Select((line, at) => (line, last: at == drawnLines.Count - 1)).ToList()
-            .ForEach(x => icons.Children.Add(LineOf(x.line, opensGroup, groupLabel, groupKey, rowKey, iconButtons, x.last)));
+            .ForEach(x => icons.Children.Add(LineOf(x.line, showMonitorMarkers ? opensLine : [], groupLabel, groupKey, rowKey, iconButtons, x.last)));
 
         // The parent's windows USED to be drawn here, dimmed, on every nested row -- the issue
         // asked for "everything from the main workspace pinned to the nested ones". Petre, seeing
@@ -2054,7 +2112,7 @@ public partial class FloatingBar : Window
         // what you aim at, so doubling them halves the value of every one. Belonging is a
         // relationship, and a relationship is better drawn once at the edge of the row than
         // restated by copying its contents.
-        Grid.SetColumn(icons, 0);
+        Grid.SetRow(icons, 1);
         container.Children.Add(icons);
 
         // Petre: "only children but with a better representation that it's a child", then "maybe a
@@ -2087,7 +2145,9 @@ public partial class FloatingBar : Window
             container.Children.Add(mark);
         }
 
-        Grid.SetColumn(label, 1);
+        // Above the icons and at the right, which is where the group caption sits and where the name has
+        // always been -- so the column of names is unchanged and only its height moved.
+        Grid.SetRow(label, 0);
         container.Children.Add(label);
 
         // Hover freeze: hold this row's icon order while the pointer is inside it. Wired for
@@ -2335,6 +2395,11 @@ public partial class FloatingBar : Window
             // pixel the difference is barely there; it just stops the corners looking sharper
             // than the window they sit in.
             CornerRadius = new CornerRadius(3),
+            // Petre: "make spacing a little less between different workspaces." The caption adds a line to
+            // every row, so the gaps between rows have to give some of it back or the bar grows by a third.
+            // The negative vertical margin overlaps the neighbouring rows' 2px rings, which are transparent
+            // on every row but the current one and so have nothing to lose.
+            Margin = new Thickness(0, -1, 0, -1),
         };
 
         // Registered so the switch gesture can repaint this row's ring WITHOUT a rebuild. A tap
@@ -2700,7 +2765,11 @@ public partial class FloatingBar : Window
     // raise the text to its hovered look and drop it back (see GroupRow). The setter is null
     // for the rows that cannot be clicked, which is what makes them inert end to end: no
     // highlight, no click, one null check.
-    (UIElement Element, Action<bool>? SetHover) RowLabel(string text, bool isCurrent, Func<Result>? switchTo)
+    // `caption` is the per-row name sitting ABOVE the icons rather than beside them: smaller, and with its
+    // line box clamped to the glyphs, which is what #91 established for the group header and is where most
+    // of the height of small text otherwise goes. Same colours, so "this is the row you are on" still reads
+    // the same way, and the same click target.
+    (UIElement Element, Action<bool>? SetHover) RowLabel(string text, bool isCurrent, Func<Result>? switchTo, bool caption = false)
     {
         // Petre: "when switching workspaces, because the caption of the workspace gets bolded,
         // it increases the width of the floating window a little if that workspace is full,
@@ -2719,11 +2788,19 @@ public partial class FloatingBar : Window
         var textBlock = new TextBlock
         {
             Text = text,
-            FontSize = 10,
+            FontSize = caption ? GroupHeaderFontSize : 10,
             Foreground = resting,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Center,
         };
+
+        if (caption)
+        {
+            // The font's line box is taller than its letters, and on text this small that difference is
+            // most of the height -- the same clamp the group header uses (#91).
+            textBlock.LineHeight = GroupHeaderFontSize + 1;
+            textBlock.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        }
 
         // What used to be a pill around the current row's label ("maybe even circle that
         // workspace so i know it's active") is now a box around the whole ROW, drawn in
@@ -2750,9 +2827,16 @@ public partial class FloatingBar : Window
             // and a fraction rather than a round 2 because on a 150% display it lands on a whole
             // device pixel anyway. Not zero: the artwork runs to the edge of its 20px cell, so a
             // name flush against it would touch the icon it sits beside.
-            Padding = new Thickness(2.5, 1, 5, 1),
+            Padding = caption ? new Thickness(2.5, 0, 5, 0) : new Thickness(2.5, 1, 5, 1),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 2, 0),
+            // CENTRED. Petre: "title in the middle."
+            //
+            // Free of the objection that sank #103: there the name was centred ON the icon line and the
+            // icons grew into it, while a caption has a line of its own and nothing to collide with. And it
+            // lands directly above the hairline, since both are the row's middle -- so the name and the
+            // monitor boundary are one vertical line rather than two competing marks.
+            HorizontalAlignment = caption ? HorizontalAlignment.Center : HorizontalAlignment.Stretch,
         };
 
         if (switchTo is null)
@@ -2780,6 +2864,9 @@ public partial class FloatingBar : Window
         var button = new Button
         {
             Content = pill,
+            // The caption's centring has to be set HERE, not on the pill: the Button is what the row's grid
+            // places, so a pill centred inside a stretched button is still a button filling the row.
+            HorizontalAlignment = caption ? HorizontalAlignment.Center : HorizontalAlignment.Stretch,
             // Chrome-less: WPF's stock template would paint a square hover highlight around the
             // rounded pill (see BareButton). Background stays Transparent rather than null so
             // the whole label area is still hit-testable -- a null Background is invisible to
