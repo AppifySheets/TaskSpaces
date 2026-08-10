@@ -1045,6 +1045,101 @@ public sealed class WorkspaceManager(
         };
     }
 
+    // --- group membership (#83, #84) -----------------------------------------------------------
+    //
+    // Petre's ruling on where these live: "all three live on the workspace row's right-click context
+    // menu", not in Manage.
+
+    // Petre (#84): "workspaces are grouped together under a name... the parent is not a workspace,
+    // it's only the group's name."
+    //
+    // Starts ANCHORLESS with one member, because a group has to be created from somewhere and the
+    // row you right-clicked is the only member the gesture knows about. It draws immediately: an
+    // anchorless group has a header row carrying its name, so a group of one is a header plus a row
+    // rather than a row that looks unchanged.
+    //
+    // A workspace that is already grouped has to leave first. Silently moving it would make "new
+    // group" quietly dissolve the group it came from, which is a second consequence the user did
+    // not ask for.
+    public Result<Group> CreateGroup(string name, Guid firstMember) =>
+        Result.FailureIf(string.IsNullOrWhiteSpace(name), "Group name required")
+            .Bind(() => Workspace(firstMember))
+            .Bind(w => State.GroupOf(firstMember) is { } existing
+                ? Result.Failure<Workspace>($"'{w.Name}' is already in '{existing.Name}'. Move it out first.")
+                : Result.Success(w))
+            .Bind(_ => GroupNameTaken(name, excluding: null)
+                ? Result.Failure<Group>($"A group named '{name.Trim()}' already exists.")
+                : Result.Success(new Group(Guid.NewGuid(), name.Trim())))
+            .Tap(group => Persist(State with
+            {
+                Groups = [.. State.Groups, group],
+                Workspaces = State.Workspaces.Select(w => w.Id == firstMember ? w with { GroupId = group.Id } : w).ToList(),
+            }));
+
+    // Petre (#83): "move a workspace into the group."
+    //
+    // Works the same for both kinds, which is the payoff of one model: joining an ANCHORED group
+    // makes the workspace a child that borrows the anchor's windows, joining an ANCHORLESS one is
+    // pure membership. Neither needs a branch here.
+    //
+    // Refused for a workspace that is itself an anchor, because its own members would become
+    // grandchildren of the group it joined. One level only, the same rule NestWorkspace enforces.
+    public Result MoveIntoGroup(Guid workspaceId, Guid groupId) =>
+        Workspace(workspaceId)
+            .Bind(w => State.Groups.FirstOrDefault(g => g.Id == groupId) is { } group
+                ? Result.Success((w, group))
+                : Result.Failure<(Workspace, Group)>("That group no longer exists."))
+            .Bind(x => State.IsAnchor(workspaceId)
+                ? Result.Failure($"'{x.Item1.Name}' has workspaces grouped under it. Workspaces nest one level deep.")
+                : Result.Success())
+            .Tap(() =>
+            {
+                // Out of the old group first, so leaving a group of two dissolves it exactly as a
+                // plain "move out" would. Doing it in one Persist keeps the bar from drawing the
+                // half-finished state.
+                var left = WithoutMember(State, workspaceId);
+                Persist(left with
+                {
+                    Workspaces = left.Workspaces.Select(w => w.Id == workspaceId ? w with { GroupId = groupId } : w).ToList(),
+                });
+            });
+
+    // Petre (#83): "ungroup -- dissolve a group: the parent's nested workspaces stop being nested."
+    //
+    // Every member is freed and the group record goes. Members keep their desktops, their windows,
+    // their names and their positions in the list, so the only thing that changes is that they stop
+    // being drawn together. For an anchored group that also means the borrowing stops.
+    public Result Ungroup(Guid groupId) =>
+        State.Groups.FirstOrDefault(g => g.Id == groupId) is null
+            ? Result.Failure("That group no longer exists.")
+            : Result.Success().Tap(() => Persist(State with
+            {
+                Groups = State.Groups.Where(g => g.Id != groupId).ToList(),
+                Workspaces = State.Workspaces.Select(w => w.GroupId == groupId ? w with { GroupId = null } : w).ToList(),
+            }));
+
+    // An anchorless group's name is the only thing naming it, so it needs to be editable. An
+    // anchored group shows its anchor's row at the top instead, but it still keeps its own name (see
+    // Group), so renaming works for both.
+    public Result RenameGroup(Guid groupId, string name) =>
+        Result.FailureIf(string.IsNullOrWhiteSpace(name), "Group name required")
+            .Bind(() => State.Groups.Any(g => g.Id == groupId)
+                ? Result.Success()
+                : Result.Failure("That group no longer exists."))
+            .Bind(() => GroupNameTaken(name, excluding: groupId)
+                ? Result.Failure($"A group named '{name.Trim()}' already exists.")
+                : Result.Success())
+            .Tap(() => Persist(State with
+            {
+                Groups = State.Groups.Select(g => g.Id == groupId ? g with { Name = name.Trim() } : g).ToList(),
+            }));
+
+    // Case-insensitive and trim-tolerant, matching NameTaken for workspaces. Groups and workspaces
+    // are allowed to share a name: an anchored group is NAMED after its anchor, so forbidding it
+    // would forbid the commonest case.
+    bool GroupNameTaken(string name, Guid? excluding) =>
+        State.Groups.Any(g => g.Id != excluding && g.Name.Trim().Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public Result SetWorkspaceMinimized(Guid id, bool minimized) =>
         Workspace(id).Tap(_ => Persist(State with
         {

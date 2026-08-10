@@ -1418,6 +1418,49 @@ public partial class FloatingBar : Window
         return grid;
     }
 
+    // Group membership on the row's own menu (#83, #84). Petre: "all three live on the workspace
+    // row's right-click context menu", and then "i want the bar to drive it".
+    //
+    // Which items appear depends on the row, so the menu never offers something that would be
+    // refused. That is the same rule the rest of this menu follows: "Add child" is hidden on a row
+    // that cannot have children rather than shown and then rejected.
+    //
+    //   in a group        -> Move out of group, and Ungroup
+    //   not in a group    -> New group…, and Move into group for each group that exists
+    //   an anchor         -> Move into group is withheld: its own members would become
+    //                        grandchildren, which is the one level rule
+    void AddGroupItems(ContextMenu menu, Guid workspaceId, Action<string, string, Action> add)
+    {
+        var state = manager.State;
+        var group = state.GroupOf(workspaceId);
+
+        if (group is not null)
+        {
+            add("⇤", "Move out of group", () => Report(manager.LeaveGroup(workspaceId)));
+            // Named in the item, because "Ungroup" alone does not say what is about to dissolve and
+            // this affects rows other than the one clicked.
+            add("⊟", $"Ungroup '{group.Name}'", () => Report(manager.Ungroup(group.Id)));
+            return;
+        }
+
+        add("⊞", "New group…", () =>
+            PromptDialog.Ask("New group", "Name:", owner: this)
+                .Tap(name => Report(manager.CreateGroup(name, workspaceId))));
+
+        // Nothing to join yet, and an empty submenu reads as a broken one.
+        var joinable = state.Groups.Where(g => g.Id != group?.Id).ToList();
+        if (joinable.Count == 0 || state.IsAnchor(workspaceId)) return;
+
+        var into = new MenuItem { Header = "Move into group", Icon = MenuGlyph("⇥") };
+        joinable.ForEach(target =>
+        {
+            var item = new MenuItem { Header = target.Name };
+            item.Click += (_, _) => Report(manager.MoveIntoGroup(workspaceId, target.Id));
+            into.Items.Add(item);
+        });
+        menu.Items.Add(into);
+    }
+
     // The name of an ANCHORLESS group (#84), which has no member to carry it: "the parent is not a
     // workspace, it's only the group's name."
     //
@@ -1453,6 +1496,26 @@ public partial class FloatingBar : Window
         };
         Grid.SetColumn(label, 1);
         header.Children.Add(label);
+
+        // #84: "where Ungroup lives when the group has no workspace row of its own -- presumably the
+        // group's header gets its own small context menu." It does, and it holds only the two things
+        // that are about the GROUP rather than about a workspace.
+        //
+        // Rename matters more here than it looks: for an anchorless group this name is the only
+        // thing naming it, and there is no anchor row to rename instead.
+        var menu = new ContextMenu();
+        HoldFadeWhileOpen(menu);
+
+        var rename = new MenuItem { Header = "Rename group…", Icon = MenuGlyph("✏") };
+        rename.Click += (_, _) => PromptDialog.Ask("Rename group", "New name:", group.Name, owner: this)
+            .Tap(name => Report(manager.RenameGroup(group.Id, name)));
+        menu.Items.Add(rename);
+
+        var ungroup = new MenuItem { Header = "Ungroup", Icon = MenuGlyph("⊟") };
+        ungroup.Click += (_, _) => Report(manager.Ungroup(group.Id));
+        menu.Items.Add(ungroup);
+
+        header.ContextMenu = menu;
         return header;
     }
 
@@ -2965,6 +3028,8 @@ public partial class FloatingBar : Window
             Add("↳", "Add child…", () =>
                 PromptDialog.Ask("New nested workspace", "Name:", owner: this)
                     .Tap(child => Report(manager.AddChildWorkspace(workspaceId, child))));
+
+        AddGroupItems(menu, workspaceId, Add);
 
         menu.Items.Add(new Separator());
 
