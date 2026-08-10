@@ -1161,7 +1161,12 @@ public partial class FloatingBar : Window
             // `group` is the group this row belongs to, or null for a row that stands on its own.
             // Everything a row inherits from its group is decided from it, so the two kinds differ
             // in exactly one place: whether there is an anchor to inherit a colour from.
-            UIElement WorkspaceRow(WorkspaceGroup g, Core.Domain.Group? group)
+            // `boxed` says the group around this row is drawn as a box, which is where the lane tint
+            // then lives: the box paints it once behind the whole group instead of every member
+            // painting the same colour separately (#91). Two coats of a translucent tint make a
+            // member's row darker than the box it sits in, which is the surface saying "different"
+            // about rows that are the same.
+            UIElement WorkspaceRow(WorkspaceGroup g, Core.Domain.Group? group, bool boxed = false)
             {
                 // Recorded so ApplyCandidate can restore the white ring here when the amber
                 // one moves away, without needing another overview query to ask again.
@@ -1181,6 +1186,12 @@ public partial class FloatingBar : Window
                 var isAnchor = group?.AnchorWorkspaceId == g.Workspace.Id;
                 var nested = group is not null && !isAnchor;
 
+                // The spine answers "this row is under the row above it", which is only a question an
+                // ANCHORED group raises. In an anchorless one there is no parent row to be under, and
+                // the box's bracket already says the rows belong together (#91), so a spine on every
+                // member would be the same claim twice down the same edge.
+                var spine = nested && group!.IsAnchored ? LaneAccent(colour, colourSlot) : null;
+
                 // The name, plainly. The ↳ prefix that was here first is gone: Petre asked for "a
                 // better representation that it's a child", and a glyph inside a label that already
                 // sits in a narrow gutter is the weakest place to put it. The spine, the shared
@@ -1194,12 +1205,13 @@ public partial class FloatingBar : Window
                     g.Running,
                     // Every member wears the GROUP's lane colour rather than its own. Colour is what
                     // groups things on this bar, so giving a member a colour of its own would be the
-                    // surface saying "unrelated" while the layout says "belongs to".
-                    tint: LaneTint(colour, colourSlot >= 0 ? colourSlot : ownSlot),
+                    // surface saying "unrelated" while the layout says "belongs to". Inside a box the
+                    // box wears it for all of them.
+                    tint: boxed ? null : LaneTint(colour, colourSlot >= 0 ? colourSlot : ownSlot),
                     rowKey: g.Workspace.Id,
                     minimized: g.Workspace.Minimized,
                     nested: nested,
-                    spine: nested ? LaneAccent(colour, colourSlot) : null);
+                    spine: spine);
             }
 
             // Walked in list order, emitting a whole group at its first member and skipping the
@@ -1224,18 +1236,22 @@ public partial class FloatingBar : Window
                     .ToList();
                 members.ForEach(m => drawn.Add(m!.Workspace.Id));
 
-                var rows = members.Select(m => WorkspaceRow(m!, group)).ToList();
+                // A group of one gets no box: an outline around a single row would be decoration
+                // that means nothing, and most rows on the bar stand alone. It cannot normally
+                // happen, since leaving a group of two dissolves it, but a hand-edited state.json
+                // can produce one. Decided BEFORE the rows are built, because it is what decides
+                // whether a row paints its own lane or the box paints it for the whole group.
+                var boxed = members.Count + (group.IsAnchored ? 0 : 1) > 1;
+                var rows = members.Select(m => WorkspaceRow(m!, group, boxed)).ToList();
 
                 // An ANCHORLESS group needs a header, because nothing inside it carries the name.
                 // Deliberately not a switch target: there is no desktop behind it, and a row that
                 // looks clickable and does nothing is worse than one that plainly is not.
                 if (!group.IsAnchored) rows.Insert(0, GroupHeader(group, ColourSlotOf(group)));
 
-                // A group of one gets no box: an outline around a single row would be decoration
-                // that means nothing, and most rows on the bar stand alone. It cannot normally
-                // happen, since leaving a group of two dissolves it, but a hand-edited state.json
-                // can produce one.
-                groupRows.Add(rows.Count == 1 ? rows[0] : FamilyBox(rows, LaneAccent(group.Color, ColourSlotOf(group))));
+                groupRows.Add(boxed
+                    ? FamilyBox(rows, LaneAccent(group.Color, ColourSlotOf(group)), LaneTint(group.Color, ColourSlotOf(group)))
+                    : rows[0]);
             });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
@@ -1470,9 +1486,20 @@ public partial class FloatingBar : Window
     //
     // An anchored group needs none of this. Its anchor is a real workspace sitting at the top of
     // the box, and its name is already on that row.
+    //
+    // #91: "the group header is too big -- a name-only line doesn't need anywhere near a full row's
+    // height. It should cost the bar almost nothing." So it is a caption, not a row: no lane of its
+    // own (the box paints one behind the whole group now), no minimum height, a smaller face than a
+    // workspace label, and its line box clamped so the font's own ascent and descent cannot pad it
+    // out. What is left is roughly a third of a row.
+    //
+    // It cannot shrink to nothing, though, and that is not a compromise: this is where the group's
+    // menu lives (#84, #90), so it has to stay big enough to right-click.
     UIElement GroupHeader(Core.Domain.Group group, int colourSlot)
     {
-        var header = new Grid { Background = LaneTint(group.Color, colourSlot) ?? Brushes.Transparent };
+        // Transparent rather than untinted: a null Background would not take part in hit testing, and
+        // then the right-click that reaches the group's menu would fall through to the bar.
+        var header = new Grid { Background = Brushes.Transparent };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -1481,12 +1508,17 @@ public partial class FloatingBar : Window
         var label = new TextBlock
         {
             Text = group.Name,
-            FontSize = 10,
+            FontSize = GroupHeaderFontSize,
             FontWeight = FontWeights.SemiBold,
             Foreground = GroupHeaderForeground,
+            // The font's line box is taller than its letters, and on a caption this small that
+            // difference is most of the height. Clamped to the glyphs, which is why the caption ends
+            // up costing about four pixels more than the text itself.
+            LineHeight = GroupHeaderFontSize + 1,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(4, 1, 4, 1),
+            Margin = new Thickness(4, 1, 4, 0),
         };
         Grid.SetColumn(label, 1);
         header.Children.Add(label);
@@ -1522,6 +1554,10 @@ public partial class FloatingBar : Window
     // are the targets, and the header should not compete with them for the eye.
     static readonly Brush GroupHeaderForeground = Frozen(0xB0, 0xE0, 0xE0, 0xE0);
 
+    // Smaller than a workspace label for the same reason it is dimmer, and small enough to answer
+    // #91's "should cost the bar almost nothing" while still being a right-click target.
+    const double GroupHeaderFontSize = 9;
+
     // A parent and its children, drawn as one thing (#42). Petre: "make the children more
     // apparent, maybe group them together with an outline or a ring."
     //
@@ -1533,21 +1569,37 @@ public partial class FloatingBar : Window
     // becoming the loudest thing on a surface whose whole job is showing icons. The current-row
     // ring is deliberately brighter and rectangular against this one's rounder, dimmer box, so the
     // two never read as the same claim.
-    static UIElement FamilyBox(IReadOnlyList<UIElement> rows, Brush? outline)
+    //
+    // #91 added the two things that make membership readable at a glance rather than merely stated.
+    // The LANE now belongs to the box: it is painted once behind every member, so a group is one
+    // continuous band of colour instead of a stack of separately tinted rows that happen to share a
+    // hue. And the left edge is drawn thicker than the other three, which turns the outline into a
+    // bracket down the side of the group: the eye reads a bracket as containment without having to
+    // trace a whole rectangle.
+    //
+    // Petre: the members "don't read as its children... they look like ordinary neighbouring rows
+    // that happen to sit under a label."
+    static UIElement FamilyBox(IReadOnlyList<UIElement> rows, Brush? outline, Brush? lane)
     {
         var stack = new StackPanel();
         rows.ToList().ForEach(row => stack.Children.Add(row));
         return new Border
         {
             Child = stack,
+            Background = lane ?? Brushes.Transparent,
             BorderBrush = outline ?? Brushes.Transparent,
-            BorderThickness = new Thickness(1),
+            BorderThickness = new Thickness(GroupBracketWidth, 1, 1, 1),
             CornerRadius = new CornerRadius(6),
             Opacity = 0.999, // forces its own layer, so the 1px border cannot be swallowed by the row backgrounds beneath it
             Padding = new Thickness(1),
             Margin = new Thickness(0, 1, 0, 1),
         };
     }
+
+    // The bracket down the left of a group. Wide enough to read as a deliberate edge rather than as
+    // the same hairline the other three sides are, narrow enough that it costs the icons almost
+    // nothing: it eats into the row's width exactly like the nested spine does.
+    const double GroupBracketWidth = 3;
 
     // Task 11 fix round 5: a 1px, ~20%-opacity hairline between rows so adjacent
     // workspace groups read as visually distinct at a glance, without adding real
