@@ -13,6 +13,7 @@ using TaskSpaces.Core.Geometry;
 using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Windows.Activation;
+using TaskSpaces.Windows.Dialogs;
 using TaskSpaces.Windows.Monitoring;
 
 namespace TaskSpaces.App;
@@ -3500,6 +3501,13 @@ public partial class FloatingBar : Window
             manager.State.Groups.FirstOrDefault(g => g.Id == groupId)?.Color,
             colour => manager.SetGroupColor(groupId, colour));
 
+    // A colour in force that the palette does not offer, which is what makes the Custom… swatch worth
+    // drawing: null means by-position and the sentinel means transparent, and neither is a colour.
+    static bool IsCustom(string? colour) =>
+        !string.IsNullOrWhiteSpace(colour)
+        && !WorkspacePalette.IsNone(colour)
+        && !WorkspacePalette.Swatches.Any(s => string.Equals(s.Hex, colour, StringComparison.OrdinalIgnoreCase));
+
     void AddColourPicker(ContextMenu menu, string? chosen, Func<string?, Result> choose)
     {
         var strip = new StackPanel
@@ -3543,6 +3551,30 @@ public partial class FloatingBar : Window
             Header = strip,
             StaysOpenOnClick = true,
         });
+
+        // #97: the whole colour space, because the palette has no room left in it.
+        //
+        // Petre asked for more colours; measuring said there were none to add. At the lane's 22% alpha
+        // over the bar's dark background, twenty dark candidates all landed closer to one of the shipped
+        // nine than that palette's own closest pair (Denim 0.0045 from Steel, Crimson 0.0097 from Plum),
+        // and the only additions that separate properly are bright ones -- the register he rejected four
+        // times in #68. So rather than nine more colours picked by guesswork, he picks.
+        //
+        // The swatch shows the CURRENT colour when it is not one of the nine, so a custom colour is
+        // visible as the choice in force rather than looking like nothing is selected.
+        var custom = new MenuItem
+        {
+            Header = "Custom…",
+            Icon = IsCustom(chosen) ? ColourSwatch(chosen!, chosen: true) : MenuGlyph("🎨"),
+        };
+        custom.Click += (_, _) =>
+        {
+            // Null is cancel, which must not be confused with the null that means "by position": one
+            // leaves the colour alone, the other clears it.
+            if (ColourDialog.Pick(new WindowInteropHelper(this).Handle, chosen) is { } picked)
+                Report(choose(picked));
+        };
+        menu.Items.Add(custom);
 
         // Petre: "add transparent as an option for color". A row that opts out keeps its icons and
         // its label and simply has no lane behind them -- worth having on a bar where the tint's
