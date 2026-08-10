@@ -27,6 +27,19 @@ public static class UpdateCheck
     public static bool IsNewer(string? running, string? latest) =>
         Parse(running) is { } current && Parse(latest) is { } candidate && candidate > current;
 
+    // A version as it should be shown to a person (#82: the app's version in the Manage window).
+    //
+    // Only the BUILD METADATA is dropped, the "+commit" the SDK appends to InformationalVersion when
+    // building from source. A prerelease suffix stays: "1.8.0-beta" is a different thing to be running
+    // than "1.8.0" and hiding that in the one place the question gets asked would be a lie of
+    // omission. Comparison drops both (see Parse), for a different reason: there it is about ordering,
+    // and there is no ordering of "-beta" against "-rc2" worth inventing.
+    //
+    // Empty rather than null when there is nothing to show, so a caller can bind it straight to a
+    // label and get a blank rather than the word "null" in a corner of the window.
+    public static string ForDisplay(string? version) =>
+        string.IsNullOrWhiteSpace(version) ? "" : version.Trim().Split('+')[0];
+
     // Tolerant on purpose, because the two sides come from different worlds and neither is under
     // this method's control: the running version is an assembly attribute ("1.6.0", sometimes
     // four-part "1.6.0.0"), and the latest is whatever text someone typed into a git tag

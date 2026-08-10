@@ -38,6 +38,20 @@ public class UpdateCheckTests
     public void The_version_we_are_running_is_not_newer(string running, string latest) =>
         Assert.False(UpdateCheck.IsNewer(running, latest));
 
+    // #82, the version shown in the Manage window. Build metadata goes, because "+3f21ac9" answers a
+    // question nobody in that corner of the window is asking.
+    [Theory]
+    [InlineData("1.7.0", "1.7.0")]
+    [InlineData("1.7.0+3f21ac9d", "1.7.0")]
+    [InlineData("  1.7.0.0  ", "1.7.0.0")]
+    // A prerelease suffix STAYS: running 1.8.0-beta is a different thing to be running than 1.8.0,
+    // and this is the one place that question gets asked.
+    [InlineData("1.8.0-beta+3f21ac9d", "1.8.0-beta")]
+    [InlineData(null, "")]
+    [InlineData("   ", "")]
+    public void The_version_shown_to_a_person_drops_only_the_build_metadata(string? version, string shown) =>
+        Assert.Equal(shown, UpdateCheck.ForDisplay(version));
+
     // Someone republishing an older release, or a tag that sorts oddly. Never offered.
     [Theory]
     [InlineData("1.7.0", "1.6.0")]

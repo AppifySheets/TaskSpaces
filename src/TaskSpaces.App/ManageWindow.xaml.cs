@@ -52,6 +52,11 @@ public partial class ManageWindow : Window
         // SetCheckForUpdates ignores a value that has not changed rather than writing state.json
         // every time this window opens.
         CheckForUpdates.IsChecked = manager.State.CheckForUpdates;
+        // #82. Read from the assembly at runtime, never written as a literal here: the whole reason
+        // the question needs answering in the UI is that #71 leaves several versioned exes side by
+        // side, and a number typed into the source would report the build it was written in rather
+        // than the one running.
+        AppVersion.Text = $"Version {UpdateService.DisplayVersion}";
         WorkspaceRulesGrid.ItemsSource = workspaceRules;
         RenameRulesGrid.ItemsSource = renameRules;
         // Task 10: the Windows tab is now the shared WindowGroupsView (same control the

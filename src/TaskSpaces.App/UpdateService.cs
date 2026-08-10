@@ -51,6 +51,11 @@ public static class UpdateService
         ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString()
         ?? "0.0.0";
 
+    // The same answer, fit to show someone (#82). Reading it from the assembly rather than from a
+    // constant is the point of the issue: with portable versioned exes sitting side by side, the
+    // window has to report the build it is actually running in, not the one the source last named.
+    public static string DisplayVersion => UpdateCheck.ForDisplay(RunningVersion);
+
     // The newer release, or nothing at all.
     //
     // Result<Maybe<T>> rather than Result<T?> or an exception: "the check failed" and "the check

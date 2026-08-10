@@ -22,9 +22,18 @@
              machine-level setting already does rather than somewhere it would have to be hunted
              for. Wording says what actually happens: it checks and tells you, and that is all.
              Nothing is downloaded and the running exe is never replaced. -->
-        <CheckBox x:Name="CheckForUpdates" DockPanel.Dock="Bottom" Margin="8,0,8,8"
-                  Content="Check GitHub for new versions (tells you; never installs anything)"
-                  Checked="OnCheckForUpdatesToggled" Unchecked="OnCheckForUpdatesToggled"/>
+        <DockPanel DockPanel.Dock="Bottom" Margin="8,0,8,8">
+            <!-- #82: the running version, small and out of the way. It shares the row with the
+                 update checkbox on purpose, because that is the only other thing in this window
+                 that is about the app rather than about workspaces, and the two questions come up
+                 together: "what am I running" and "is there anything newer". Dim, because it is an
+                 answer to a question asked rarely, not a control. -->
+            <TextBlock x:Name="AppVersion" DockPanel.Dock="Right" Opacity="0.55"
+                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+            <CheckBox x:Name="CheckForUpdates"
+                      Content="Check GitHub for new versions (tells you; never installs anything)"
+                      Checked="OnCheckForUpdatesToggled" Unchecked="OnCheckForUpdatesToggled"/>
+        </DockPanel>
         <CheckBox x:Name="StartWithWindows" DockPanel.Dock="Bottom" Margin="8"
                   Content="Start TaskSpaces with Windows"
                   Checked="OnStartupToggled" Unchecked="OnStartupToggled"/>
