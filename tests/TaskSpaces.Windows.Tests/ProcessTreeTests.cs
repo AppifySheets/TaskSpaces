@@ -52,37 +52,44 @@ public class ProcessTreeTests
         }
     }
 
-    // A parent that has exited must not be reported, and this is the case that catches PID REUSE: the
-    // parent pid recorded in the child outlives the parent, and Windows hands the number out again.
+    // A parent that has exited must not be reported, which is the check that catches PID REUSE: the
+    // parent pid recorded in a child outlives the parent, and Windows hands the number out again.
     //
-    // Built with a real orphan: cmd starts a grandchild and exits, so the grandchild's recorded parent
-    // pid names a process that is gone.
+    // Built from a pair this test OWNS, and that is the point rather than convenience. The first version
+    // swept every process on the machine and asserted that each reported parent could still be read, which
+    // failed exactly as it deserved to: "conhost reported parent 101228, which cannot be read". Nothing was
+    // wrong except the test. It read the child, then read the parent a moment later, and a process is free
+    // to exit in between -- so the assertion was about a window of time the implementation cannot control,
+    // and no amount of care inside ProcessTree could have made it pass reliably.
     [Fact]
-    public void A_parent_that_has_gone_is_not_reported()
+    public void A_parent_is_only_reported_while_it_is_readable_and_older()
     {
-        // start /b runs the grandchild without waiting, then cmd exits immediately.
-        using var launcher = Process.Start(new ProcessStartInfo("cmd.exe", "/c start /b cmd.exe /c ping -n 20 127.0.0.1")
+        using var child = Process.Start(new ProcessStartInfo("cmd.exe", "/c pause")
         {
             CreateNoWindow = true,
+            RedirectStandardInput = true,
         })!;
-        launcher.WaitForExit();
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => tree.Of(child.Id).HasValue, TimeSpan.FromSeconds(5)),
+                "the child never became readable");
 
-        // The orphan is whichever ping-runner cmd still has the dead launcher as its parent pid.
-        var orphan = Process.GetProcessesByName("cmd")
-            .Select(p => (p, facts: tree.Of(p.Id)))
-            .FirstOrDefault(x => x.facts.HasValue && x.facts.Value.ParentProcessId == 0 || false);
+            // Us, and we are alive: the parent is reported.
+            Assert.Equal(Environment.ProcessId, tree.Of(child.Id).Value.ParentProcessId);
 
-        // Whatever we found, the invariant is the one that matters: no process is ever reported with a
-        // parent that cannot be read. Asserted over EVERY process this test can see, which is a
-        // stronger statement than one orphan would make and does not depend on winning a race.
-        Process.GetProcesses()
-            .Select(p => tree.Of(p.Id))
-            .Where(facts => facts.HasValue && facts.Value.ParentProcessId != 0)
-            .ToList()
-            .ForEach(facts => Assert.True(tree.Of(facts.Value.ParentProcessId).HasValue,
-                $"{facts.Value.Name} reported parent {facts.Value.ParentProcessId}, which cannot be read"));
+            // And the guard: our own start time is not later than the child's, because we started it. A
+            // recycled pid would fail this, which is the case the guard exists for and cannot be staged
+            // here -- pids cannot be made to recycle on demand.
+            Assert.True(Process.GetCurrentProcess().StartTime <= child.StartTime);
+        }
+        finally
+        {
+            child.Kill(entireProcessTree: true);
+        }
 
-        orphan.p?.Kill(entireProcessTree: true);
+        // Once it has gone it is not reported at all, parent included.
+        child.WaitForExit();
+        Assert.False(tree.Of(child.Id).HasValue);
     }
 
     // MEASURED, and not what was expected when this was written: a process that has EXITED can still be

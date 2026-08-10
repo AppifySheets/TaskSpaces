@@ -1395,7 +1395,7 @@ public partial class FloatingBar : Window
     //
     // On a bar with no width of its own (SizeToContent still owns it) the stars have no slack to
     // share and everything simply packs, which is the same thing this drew before any of it.
-    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons, bool isLastLine)
+    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons, bool isLastLine, IReadOnlyCollection<int> ownMonitors, bool drawMarks)
     {
         // Runs of consecutive icons that share a monitor. `opensGroup` already knows where each
         // one starts -- it is the same set the wrap arithmetic budgets a marker for -- so this
@@ -1541,15 +1541,28 @@ public partial class FloatingBar : Window
         {
             var shown = zones.Select(z => z.Monitor).ToHashSet();
             monitorByRank
-                .Where(x => !shown.Contains(x.Value))
+                // ownMonitors is the whole set for the classic row and one FLANK's share of it for a
+                // centred one (#103), which is what keeps the right screen's empty half on the right of
+                // the name rather than tacked onto the end of the left flank.
+                .Where(x => ownMonitors.Contains(x.Value) && !shown.Contains(x.Value))
                 .OrderBy(x => x.Key)
                 .ToList()
                 .ForEach(missing =>
                 {
-                    var mark = MonitorMarker(missing.Key);
-                    var markColumn = AddColumn(mark, GridLength.Auto);
-                    var emptyColumn = AddColumn(new Border(), new GridLength(1, GridUnitType.Star));
-                    zones.Add(new MonitorZone(missing.Value, mark, markColumn, emptyColumn - markColumn + 1));
+                    // No hairline on a centred row, even here. Ruling on #103: "no need for the hairline
+                    // separator... don't reintroduce hairlines inside a flank." An empty flank was still
+                    // drawing one for the screen it has nothing on, which put the line straight back.
+                    //
+                    // The empty Border itself becomes the zone's boundary element instead. It is invisible
+                    // and occupies the whole half, so the drop still knows where that region starts without
+                    // anything being drawn to say so.
+                    var mark = drawMarks ? MonitorMarker(missing.Key) : null;
+                    var markColumn = mark is null ? -1 : AddColumn(mark, GridLength.Auto);
+                    var empty = new Border();
+                    var emptyColumn = AddColumn(empty, new GridLength(1, GridUnitType.Star));
+
+                    var from = markColumn < 0 ? emptyColumn : markColumn;
+                    zones.Add(new MonitorZone(missing.Value, mark ?? empty, from, emptyColumn - from + 1));
                 });
         }
 
@@ -1583,6 +1596,48 @@ public partial class FloatingBar : Window
     // Rank -> display number for the screens the bar knows about. See where it is filled in.
     IReadOnlyDictionary<int, int> monitorByRank = new Dictionary<int, int>();
 
+    // The shared-size group every row's label column belongs to (#70). One string in one place, because a
+    // typo would not fail loudly: WPF would put that row in a group of its own and it would quietly go
+    // back to sizing itself, which is the whole thing this prevents.
+    //
+    // It matters more for #103 than it did for #99. A name in the MIDDLE only reads as a boundary if it
+    // is the same width on every row: ragged widths would wobble the centre line, and then the thing
+    // meant to replace the hairline needs finding just as much as the hairline did.
+    const string RowLabelColumn = "RowLabel";
+
+    // One row's icon strip: a vertical stack of horizontal lines. Two of these for a centred row (#103),
+    // one for a classic one, and every property here was settled by an earlier issue -- see the call site
+    // for what each is for.
+    StackPanel IconStack(bool nested) => new()
+    {
+        Orientation = Orientation.Vertical,
+        VerticalAlignment = VerticalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        MinHeight = IconLineHeight,
+        Margin = nested ? new Thickness(NestedIndent, 0, 0, 0) : default,
+    };
+
+    // Chunks one side's windows into lines and adds them to its stack.
+    //
+    // An EMPTY side still gets one line, which is not a special case but the point: that line carries the
+    // empty droppable half for the screens this side owns (#102), so a workspace with nothing on your
+    // right screen still has a right-hand region to drop a window onto.
+    void FillFlank(StackPanel stack, IReadOnlyList<WindowRow> rows, ISet<WindowHandle> opensGroup,
+        string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons, UIElement label,
+        IReadOnlyCollection<int> ownMonitors, bool drawMarks, double room)
+    {
+        var lines = rows.Count == 0
+            ? [rows]
+            : double.IsNaN(Width)
+                ? IconRowLimit.Lines(rows)
+                : IconRowLimit.LinesThatFit(rows, r => IconCellWidth + (opensGroup.Contains(r.Window.Handle) ? MonitorMarkerWidth : 0), room);
+
+        var drawn = lines.ToList();
+        drawn.Select((line, at) => (line, last: at == drawn.Count - 1)).ToList()
+            .ForEach(x => stack.Children.Add(
+                LineOf(x.line, opensGroup, groupLabel, groupKey, rowKey, iconButtons, x.last, ownMonitors, drawMarks)));
+    }
+
     // The half of the row a drop at this point is aiming at, or null for "no screen, just the
     // workspace".
     //
@@ -1597,12 +1652,20 @@ public partial class FloatingBar : Window
         // would remain the meaning of a drop when the target row has no split to aim at."
         if (lines.SelectMany(l => l.Zones).Select(z => z.Monitor).Distinct().Count() < 2) return null;
 
-        // The line under the pointer, or the nearest one: a row is a few pixels of padding taller
-        // than its lines, and a drop in that padding still means the line beside it.
+        // The line under the pointer, or the nearest one, measured on BOTH axes.
+        //
+        // Vertical distance alone was enough while a row had one strip of icons: its lines were stacked, so
+        // y told them apart. A centred row (#103) has two flanks side by side, and every line of the left
+        // flank shares its y with a line of the right one -- so y ties and the first one listed won, which
+        // is always the left flank. Petre: "dragging from left screen to right doesn't work now."
+        //
+        // Horizontal distance FIRST, because that is the axis the flanks differ on, and vertical as the
+        // tie-break for the wrapped lines within one flank.
         var line = lines
             .Select(l => (Line: l, Bounds: BoundsIn(l.Line, container)))
             .Where(x => x.Bounds is not null)
-            .OrderBy(x => VerticalDistance(x.Bounds!.Value, at.Y))
+            .OrderBy(x => HorizontalDistance(x.Bounds!.Value, at.X))
+            .ThenBy(x => VerticalDistance(x.Bounds!.Value, at.Y))
             .Select(x => x.Line)
             .FirstOrDefault();
 
@@ -1651,6 +1714,11 @@ public partial class FloatingBar : Window
 
     static double VerticalDistance(Rect bounds, double y) =>
         y < bounds.Top ? bounds.Top - y : y > bounds.Bottom ? y - bounds.Bottom : 0;
+
+    // Zero when the pointer is inside the bounds horizontally, which is what makes "the flank you are
+    // over" beat "the flank listed first" on a centred row.
+    static double HorizontalDistance(Rect bounds, double x) =>
+        x < bounds.Left ? bounds.Left - x : x > bounds.Right ? x - bounds.Right : 0;
 
     // Paints the half being aimed at and clears every other one on the row, so exactly one half is
     // ever lit. Called on every DragOver, which is why it repaints from the answer rather than
@@ -1744,6 +1812,8 @@ public partial class FloatingBar : Window
         // then the right-click that reaches the group's menu would fall through to the bar.
         var header = new Grid { Background = Brushes.Transparent };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // Shares the gutter with the workspace rows (#70), so a group's name lines up with the names
+        // below it rather than sitting a few pixels off and reading as a different column.
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         // In the right-hand gutter with the workspace names, so the group reads as belonging to the
@@ -1938,6 +2008,11 @@ public partial class FloatingBar : Window
         // so the raggedness moves to where nothing is aimed at.
         var container = new Grid { Background = idle };
         container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // A shared width was tried here and Petre's verdict was "quite bad": every row paid for the longest
+        // name, and the hairline it was meant to align still moved whenever a fuller half claimed more room
+        // (#58). #103 replaces the whole idea, and his ruling on the caption is explicit -- "no reserved
+        // space for the captions... let them be in the middle and that's it" -- so this column sizes itself
+        // again, and a centred row carves out nothing for the name at all.
         container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         // Petre: "if any one workspace grows too wide, then it's inefficient... there's an icon
@@ -1957,93 +2032,115 @@ public partial class FloatingBar : Window
         //
         // Costs nothing on a bar that has no width of its own: SizeToContent makes the star column
         // exactly as wide as the widest row, so stretching to it changes nothing anyone can see.
-        var icons = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            // One icon line's worth, even with no icons in it (#76), so an empty workspace's row is
-            // the same height as a row holding one window instead of collapsing onto its label.
-            //
-            // A floor rather than a fixed height: a row with icons already exceeds it, and a row
-            // whose icons WRAP has to be free to grow. On the pinned row it also makes the drop
-            // target full height, which is the row's whole purpose.
-            //
-            // Applied to the icons rather than the row so the minimized transform still scales it:
-            // #52 scales the entire row by a third, and a floor placed on the row itself would
-            // fight that.
-            MinHeight = IconLineHeight,
-            // The indent for a nested row (#42) is taken out of the ICONS' space, not the row's,
-            // so the row itself still spans the bar and the monitor alignment still lines up
-            // across every row.
-            Margin = nested ? new Thickness(NestedIndent, 0, 0, 0) : default,
-        };
+        // One stack for a classic row, two for a centred one (#103). Every property of it was settled by
+        // an earlier issue: a vertical stack of lines because icons wrap by COUNT rather than against a
+        // width this SizeToContent window is still computing; centred vertically so a wrapped workspace
+        // keeps one name beside the whole lane; a one-line minimum height so an empty workspace's row is
+        // not shorter than its neighbours (#76); and the nested indent taken out of the icons' space
+        // rather than the row's, so the row still spans the bar (#42).
+        var icons = IconStack(nested);
 
-        // Built BEFORE the icons, which it did not used to be. Once the bar has a width the user
-        // dragged, how many icons fit on a line depends on what the label leaves them -- and the
-        // label's own width depends on nothing, so measuring it first is safe and settles the
-        // question with no layout circularity. setHover is null exactly when this row has no
-        // destination (see RowLabel), which keeps the Pinned and Unplaced rows inert below.
+        // Built BEFORE the icons, which it did not used to be. Once the bar has a width the user dragged,
+        // how many icons fit on a line depends on what the label leaves them -- and the label's own width
+        // depends on nothing, so measuring it first settles the question with no layout circularity.
+        // setHover is null exactly when this row has no destination (see RowLabel), which keeps the Pinned
+        // and Unplaced rows inert.
         var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo);
 
-        // Collected as they are built, because the hover wiring below needs the BUTTONS and
-        // icons.Children now holds line panels. Reading icons.Children there instead would
-        // still compile, match nothing, and silently stop suppressing the label highlight over
-        // an icon -- a failure with no error and no crash.
+        // Collected as they are built, because the hover wiring below needs the BUTTONS while the stacks
+        // hold line panels. Reading the stacks' children instead would still compile, match nothing, and
+        // silently stop suppressing the label highlight over an icon -- a failure with no error.
         var iconButtons = new List<UIElement>();
 
-        // Petre: "sort icons in workspaces by monitors", then -- after the numbered badges that
-        // first carried it were rejected -- "let's go with the hairline separator", and "let that
-        // separator be not in the middle, each workspace has its own place for it".
+        // Which icons OPEN a monitor group, decided in one pass over the whole row rather than while
+        // rendering it: the width-driven wrap has to know what every icon costs before any line exists,
+        // and an icon carrying a marker costs 5 DIP more than one that does not.
         //
-        // The mark is drawn LEADING each monitor's group ("show a hairline at the beginning or
-        // end"), which is what lets a row whose windows all sit on one screen still say WHICH
-        // screen -- the case a divider-between-groups structurally could not answer. Rows are
-        // already sorted by monitor, so a group begins wherever the number changes.
-        //
-        // Nothing at all for the first monitor: "there should be no padding in the beginning of
-        // the icons if it's on the first monitor". Absence is the mark, and monitor 1 can only
-        // ever be the first group, since the sort is ascending.
-        //
-        // `previous` deliberately spans ALL the lines of this row rather than resetting per line.
-        // Petre: "gepha workspace, second line has a line in front." A marker was forced at the
-        // start of every line, so a group split by the five-icon wrap re-announced itself
-        // underneath even though nothing had changed -- a mark that looked like a boundary and
-        // was really just a line break. A continuation line now inherits from the line above it,
-        // which is how wrapped text reads anyway, and a marker appears only where the monitor
-        // genuinely changes -- including at a line start, when the change happens to fall there.
-        // Which icons OPEN a monitor group, decided in one pass over the whole row instead of
-        // while rendering it. The width-driven wrap below has to know what every icon costs before
-        // any line exists, and an icon that carries a marker costs 5 DIP more than one that does
-        // not -- a line that ignored that would overflow by exactly as many markers as it holds.
-        //
-        // Keyed on RANK, not on the display number: rank 0 is the primary display and draws
-        // nothing. Grouping and ordering still follow the display number, which is what Petre
-        // asked for originally ("first icons from monitor1, then monitor2"); only how loudly each
-        // group announces itself has changed.
-        //
-        // The comparison spans the whole row rather than resetting per line, which is the same
-        // rule the `previous` variable this replaces carried, and for the same reason: a group
-        // split by a wrap must not re-announce itself on the continuation line (Petre: "gepha
-        // workspace, second line has a line in front").
+        // Keyed on RANK, so rank 0 draws nothing -- absence is the mark for the first screen. The
+        // comparison spans the whole row rather than resetting per line, or a group split by a wrap would
+        // re-announce itself on the continuation line (Petre: "gepha workspace, second line has a line in
+        // front"). A centred row draws no markers between the flanks at all, since the name is the
+        // boundary, but a flank holding two screens still needs them within itself.
         var opensGroup = ordered
             .Where((r, i) => showMonitorMarkers && r.MonitorRank.GetValueOrDefault(0) > 0 && r.Monitor.HasValue
                              && r.Monitor.Value != (i == 0 ? -1 : ordered[i - 1].Monitor.GetValueOrDefault(-1)))
             .Select(r => r.Window.Handle)
             .ToHashSet();
 
-        // Two wrap rules, and which one applies is decided by whether the bar has a width of its
-        // own. NaN is what Width reads as while SizeToContent still owns it -- no width chosen,
-        // so the fixed five-per-line rule stands exactly as it always has.
-        var lines = double.IsNaN(Width)
-            ? IconRowLimit.Lines(ordered)
-            : IconRowLimit.LinesThatFit(ordered, r => IconCellWidth + (opensGroup.Contains(r.Window.Handle) ? MonitorMarkerWidth : 0), IconRoomOn(label));
+        // #103, and it replaces the hairline rather than joining it: "the workspace name sits in the
+        // middle of the row, icons flank it on either side... the name itself becomes the monitor
+        // boundary; no hairline needed."
+        //
+        // Petre asked for this after seeing #99's shared middle and calling it "quite bad". The reason it
+        // was bad is the reason this is better: a hairline centred in a shared width is still a line the
+        // eye has to find, and it moves whenever a fuller half claims more room (#58). A NAME cannot be
+        // pushed around -- it is the same object on every row, at the same x -- so it is a boundary you
+        // read once instead of a divider you keep locating.
+        //
+        // EVEN monitor counts only, which is the issue's own constraint: with three screens there is no
+        // "either side" for the middle one, so odd setups keep the classic layout.
+        var flankSize = monitorByRank.Count / 2;
+        var centred = showMonitorMarkers && monitorByRank.Count >= 2 && monitorByRank.Count % 2 == 0;
 
-        // isLastLine carries #102's empty tail halves, which belong to the row rather than to each of its
-        // wrapped lines.
-        var drawnLines = lines.ToList();
-        drawnLines.Select((line, at) => (line, last: at == drawnLines.Count - 1)).ToList()
-            .ForEach(x => icons.Children.Add(LineOf(x.line, opensGroup, groupLabel, groupKey, rowKey, iconButtons, x.last)));
+        if (!centred)
+        {
+            FillFlank(icons, ordered, opensGroup, groupLabel, groupKey, rowKey, iconButtons, label, monitorByRank.Values.ToHashSet(), drawMarks: true, room: IconRoomOn(label));
+            Grid.SetColumn(icons, 0);
+            container.Children.Add(icons);
+        }
+        else
+        {
+            // Which screens each side owns, by RANK: reading order, so the left flank really is the left
+            // screens. The numbers themselves are not consecutive on every machine (Petre's DISPLAY1 is
+            // his left screen and DISPLAY2 is primary on the right), which is exactly why this splits
+            // ranks and then maps to numbers rather than splitting the numbers.
+            var leftMonitors = monitorByRank.Where(x => x.Key < flankSize).Select(x => x.Value).ToHashSet();
+            var rightMonitors = monitorByRank.Where(x => x.Key >= flankSize).Select(x => x.Value).ToHashSet();
+
+            var left = ordered.Where(r => r.MonitorRank.GetValueOrDefault(0) < flankSize).ToList();
+
+            // MIRRORED WHOLE, not just the active icon. Petre: "the right flank is sorted symmetrically
+            // from the left -- the whole order mirrors the left flank, not just the active icon moved to
+            // the outer edge." So the sequence is reversed: read from each flank's OUTER edge inwards and
+            // both sides read the same order, which is what makes the row symmetrical rather than merely
+            // balanced at its ends.
+            var right = ordered.Where(r => r.MonitorRank.GetValueOrDefault(0) >= flankSize).Reverse().ToList();
+
+            var rightIcons = IconStack(nested: false);
+            // Pushed OUTWARD to the row's own edges, not packed against the name. Petre: "right monitor
+            // icons align to the right." Which is the same rule the classic layout already follows on the
+            // left -- icons start at the row's edge -- applied to both ends, so each screen's group sits
+            // where that screen is and the space collects in the middle where the name is.
+            icons.HorizontalAlignment = HorizontalAlignment.Left;
+            rightIcons.HorizontalAlignment = HorizontalAlignment.Right;
+
+            // NO MARKERS anywhere on a centred row. Petre: "no need for the hairline separator", and
+            // explicitly not inside a flank either. The name is the boundary between the flanks, and a
+            // flank that owns two screens (a four-monitor machine) shows them as one group rather than
+            // reintroducing the line this layout exists to remove.
+            var noMarkers = new HashSet<WindowHandle>();
+
+            // HALF the row's icon room each, which is what makes a full flank WRAP. Petre: "when the left
+            // or right side is full, it should move to newline."
+            //
+            // The budget was the whole row's, so a flank measured itself against space the other flank
+            // owns: it never reached the limit, never wrapped, and simply ran on past the middle. Halving
+            // it is the honest reading of a layout with two flanks, and IconRoomOn has already taken the
+            // caption's width off the top, so the two halves divide what is genuinely left for icons.
+            var flankRoom = IconRoomOn(label) / 2;
+            FillFlank(icons, left, noMarkers, groupLabel, groupKey, rowKey, iconButtons, label, leftMonitors, drawMarks: false, room: flankRoom);
+            FillFlank(rightIcons, right, noMarkers, groupLabel, groupKey, rowKey, iconButtons, label, rightMonitors, drawMarks: false, room: flankRoom);
+
+            // TWO equal halves and nothing else. The label's Auto column becomes the right half rather
+            // than a third column between them, because a column for the caption is exactly the reserved
+            // space Petre ruled out: the name is laid over the middle further down instead, and the
+            // flanks own the whole row.
+            container.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetColumn(icons, 0);
+            Grid.SetColumn(rightIcons, 1);
+            container.Children.Add(icons);
+            container.Children.Add(rightIcons);
+        }
 
         // The parent's windows USED to be drawn here, dimmed, on every nested row -- the issue
         // asked for "everything from the main workspace pinned to the nested ones". Petre, seeing
@@ -2054,8 +2151,8 @@ public partial class FloatingBar : Window
         // what you aim at, so doubling them halves the value of every one. Belonging is a
         // relationship, and a relationship is better drawn once at the edge of the row than
         // restated by copying its contents.
-        Grid.SetColumn(icons, 0);
-        container.Children.Add(icons);
+        //
+        // (The stacks are placed above, by whichever of the two layouts is in force.)
 
         // Petre: "only children but with a better representation that it's a child", then "maybe a
         // little indented".
@@ -2087,7 +2184,21 @@ public partial class FloatingBar : Window
             container.Children.Add(mark);
         }
 
-        Grid.SetColumn(label, 1);
+        // The classic layout keeps the name in its own right-hand gutter. A centred row LAYS IT OVER the
+        // middle instead: spanning both halves, centre-aligned, and added after the flanks so it draws on
+        // top of them. Petre: "no reserved space for the captions... let them be in the middle and that's
+        // it." So the centre is simply the row's own middle, and nothing is carved out to hold it.
+        if (centred)
+        {
+            Grid.SetColumn(label, 0);
+            Grid.SetColumnSpan(label, 2);
+            if (label is FrameworkElement centredLabel) centredLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        }
+        else
+        {
+            Grid.SetColumn(label, 1);
+        }
+
         container.Children.Add(label);
 
         // Hover freeze: hold this row's icon order while the pointer is inside it. Wired for
