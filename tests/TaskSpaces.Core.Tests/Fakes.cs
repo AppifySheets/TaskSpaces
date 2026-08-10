@@ -123,6 +123,20 @@ public sealed class FakeAttention : IAttentionMonitor
     public IObservable<WindowHandle> Flashed => Subject.AsObservable();
 }
 
+// Who started whom (#94). Tests build the chain child-first with Chain(); anything not in it reads as
+// a process that has gone, which is what the real ProcessTree reports for one it cannot open.
+public sealed class FakeProcessTree : IProcessTree
+{
+    public Dictionary<int, ProcessFacts> Processes { get; } = [];
+
+    public void Chain(params (string Name, int Pid)[] chain) =>
+        chain.Select((p, i) => (p, parent: i + 1 < chain.Length ? chain[i + 1].Pid : 0)).ToList()
+            .ForEach(x => Processes[x.p.Pid] = new ProcessFacts(x.p.Pid, x.p.Name, x.parent));
+
+    public Maybe<ProcessFacts> Of(int processId) =>
+        Processes.TryGetValue(processId, out var facts) ? facts : Maybe<ProcessFacts>.None;
+}
+
 // Monitor numbers, minimised state and z-order, as the OS would report them. Tests set Facts
 // directly; the default is Empty, which reads as "no screen information available" and leaves
 // ordering and the restore fallback inert.

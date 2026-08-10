@@ -48,7 +48,10 @@ public sealed class WorkspaceManager(
     // Flashing taskbar buttons -- "somebody messaged me". Optional and last, as ever; null means
     // no window ever asks for attention, which is what compatibility mode and the existing tests
     // want.
-    IAttentionMonitor? attention = null)
+    IAttentionMonitor? attention = null,
+    // Who started whom (#94). Optional and last, as ever; null means no window is ever recognised as
+    // having been started by another app, which leaves placement exactly as it was.
+    IProcessTree? processes = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
     readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
@@ -256,21 +259,31 @@ public sealed class WorkspaceManager(
         // nowhere to surface here -- it's silently skipped, unlike the UI-facing
         // AssignWindow, which must propagate the same failure to the caller.
         // Precedence (Petre: "last placement beats rules, last placement IS the rule"):
-        //   1. last placement  -- an explicit act by Petre, keyed by identity. Beats rules:
+        //   1. launched by     -- another app started this one and its window lives in a workspace
+        //                        (#94). Above memory, and the issue guessed why: it is the fresher
+        //                        intent, and it is about THIS window rather than about the app in
+        //                        general. It is also the case memory gets wrong in the way Petre
+        //                        already complained about once -- "i'm starting the edge browser and
+        //                        it immediately goes to personal, i'm starting it in messaging, why?"
+        //                        Deliberately does not write the roster, so it never rewrites what he
+        //                        taught the app: see LaunchedByWorkspace.
+        //   2. last placement  -- an explicit act by Petre, keyed by identity. Beats rules:
         //                        a standing guess must never yank back a window he moved
         //                        by hand. This is also what re-pins an app whose window
         //                        was destroyed and recreated (Electron closing to tray),
         //                        which the OS pin cannot survive since it is HWND-keyed.
-        //   2. rule            -- first sight only: the one case memory cannot cover, since
+        //   3. rule            -- first sight only: the one case memory cannot cover, since
         //                        a never-seen window has no placement to remember.
         //
-        // There used to be a tier above both: a pending LAUNCH ("we started this app for
+        // There used to be a tier above all three: a pending LAUNCH ("we started this app for
         // workspace W, expect its window"). It went with the restore prompt, the only thing
-        // that ever launched anything.
+        // that ever launched anything. Note the difference from #94's tier, which is the opposite
+        // direction: nothing here launches anything, it recognises that something else did.
         if (AutoPlaceable(window.Handle))
-            Remembered(window)
-                .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
-                .Tap(remembered => ApplyPlacement(window, remembered));
+            LaunchedByWorkspace(window)
+                .Or(() => Remembered(window).Map(placement => new Decision(placement, Roster: true)))
+                .Or(() => RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(id => new Decision(Placement.In(id), Roster: true)))
+                .Tap(decided => ApplyPlacement(window, decided.Placement, decided.Roster));
 
         // Fire-and-forget for the same reason as above.
         RulesEngine.MatchRename(window, State.RenameRules)
@@ -474,7 +487,11 @@ public sealed class WorkspaceManager(
     // Returns Result: workspace-lookup and desktop-move failures must reach the caller
     // (Task 8's UI shows these). OnAppeared discards this deliberately (see comment
     // there); AssignWindow propagates it.
-    Result Place(WindowInfo window, Guid workspaceId) =>
+    // `roster` false moves the window and records the membership without adding the app to the
+    // workspace's roster (#94). Only the launched-by tier passes false, and the reason is that
+    // RosterAdd strips an identity from every OTHER workspace so exactly one can claim it: an
+    // inference about one window must not rewrite where Petre says the app lives.
+    Result Place(WindowInfo window, Guid workspaceId, bool roster = true) =>
         Workspace(workspaceId)
             .Bind(w => w.DesktopId is { } desktopId
                 ? desktops.MoveWindow(window.Handle, desktopId)
@@ -483,7 +500,7 @@ public sealed class WorkspaceManager(
             {
                 memberships[window.Handle] = workspaceId;
                 detached.Remove(window.Handle); // a workspace claims it again
-                RosterAdd(window, workspaceId);
+                if (roster) RosterAdd(window, workspaceId);
             });
 
     // Returns Result: a failed WM_SETTEXT (hung/closed window) must not leave a ledger
@@ -1448,6 +1465,62 @@ public sealed class WorkspaceManager(
     Maybe<Placement> Remembered(WindowInfo window) =>
         SharesIdentityWithAnotherLiveWindow(window) ? Maybe<Placement>.None : PlacementMemory.For(window, State);
 
+    // #94. Petre: "if an app starts another app -- VS Code opening the browser via a clicked link --
+    // the started app's window should be moved to the same workspace as the app that started it."
+    //
+    // The walk up the process chain, and the rule about what counts as a launcher, are in
+    // LaunchedBy, which is pure and where the measured shape of the problem is written down. What is
+    // decided here is what to do with the answer, and there are three parts to that:
+    //
+    //   * The launcher must live in exactly ONE workspace. An app with windows in two of them gives no
+    //     single answer, and the same reasoning already governs placement memory: "put it back" needs
+    //     somewhere to put it. Nothing happens rather than a coin toss.
+    //   * A launcher on the CURRENT desktop is skipped entirely, because Windows already opens new
+    //     windows there. Skipping costs nothing and avoids recording anything at all for the ordinary
+    //     case, which is the overwhelming majority: you are usually looking at the app you clicked in.
+    //   * NO ROSTER ENTRY, which is the `roster: false` this returns. The roster is what an app
+    //     BELONGS to, and joining it strips the identity from every other workspace so exactly one can
+    //     claim it -- which is precisely the mechanism behind "i'm starting the edge browser and it
+    //     immediately goes to personal". An inference about one window must not overwrite what Petre
+    //     taught the app by hand. So this moves the window and remembers the membership, and leaves
+    //     memory to say where the app lives.
+    Maybe<Decision> LaunchedByWorkspace(WindowInfo window)
+    {
+        if (processes is null) return Maybe<Decision>.None;
+
+        // The current desktop, asked once. A COM hiccup leaves it as no answer, and then every
+        // workspace looks different from it -- the safe direction, since the placement is a move to
+        // where the launcher already is and at worst it moves the window to the desktop it is on.
+        var current = desktops.CurrentDesktop().GetValueOrDefault();
+
+        return LaunchedBy.Launcher(window.ProcessId, processes.Of, OwnsTrackedWindow)
+            .Bind(SoleWorkspaceOf)
+            .Where(workspace => Workspace(workspace).GetValueOrDefault()?.DesktopId != current)
+            .Map(workspace => new Decision(Placement.In(workspace), Roster: false));
+    }
+
+    // What OnAppeared decided to do with a new window: where it goes, and whether that also says the
+    // APP belongs there. Only the launched-by tier answers false. See above.
+    sealed record Decision(Placement Placement, bool Roster);
+
+    // Windows OURS are not launchers: the bar starts nothing, and counting the Manage window as the app
+    // that started something would place windows by whichever workspace our own window happens to be
+    // drawn in.
+    bool OwnsTrackedWindow(int processId) =>
+        knownWindows.Values.Any(w => w.ProcessId == processId && !IsOurs(w.Handle));
+
+    Maybe<Guid> SoleWorkspaceOf(int processId)
+    {
+        var workspaces = knownWindows.Values
+            .Where(w => w.ProcessId == processId)
+            .Select(w => memberships.TryGetValue(w.Handle, out var workspace) ? workspace : Guid.Empty)
+            .Where(workspace => workspace != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        return workspaces.Count == 1 ? workspaces[0] : Maybe<Guid>.None;
+    }
+
     bool SharesIdentityWithAnotherLiveWindow(WindowInfo window) =>
         RosterIdentity.Of(window).Match(
             identity => knownWindows.Values.Any(other =>
@@ -1840,9 +1913,11 @@ public sealed class WorkspaceManager(
     static IReadOnlyList<InventoryEntry> Forget(IReadOnlyList<InventoryEntry> apps, string identity) =>
         apps.Where(entry => RosterIdentity.Of(entry) != identity).ToList();
 
-    Result ApplyPlacement(WindowInfo window, Placement placement) => placement.Kind switch
+    // `roster` is false for a launched-by placement (#94): it moves the window without claiming the
+    // app belongs to that workspace. See LaunchedByWorkspace.
+    Result ApplyPlacement(WindowInfo window, Placement placement, bool roster = true) => placement.Kind switch
     {
-        PlacementKind.Workspace => Place(window, placement.WorkspaceId),
+        PlacementKind.Workspace => Place(window, placement.WorkspaceId, roster),
         // Pin the OS window only: memory ALREADY says pinned, so re-persisting would be a
         // pointless write on every tray-restore of an Electron app.
         PlacementKind.Pinned => desktops.Pin(window.Handle),

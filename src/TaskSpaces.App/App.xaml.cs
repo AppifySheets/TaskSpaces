@@ -356,7 +356,10 @@ public partial class App : Application
         // hook instead, which is a different subscription with a different lifetime.
         attentionMonitor = new ShellHookAttentionMonitor();
         manager = new WorkspaceManager(desktops, monitor, new Win32WindowTitles(), new JsonPersistenceStore(stateDir),
-            activator: new WindowActivator(), screenLayout: new ScreenLayout(), attention: attentionMonitor);
+            activator: new WindowActivator(), screenLayout: new ScreenLayout(), attention: attentionMonitor,
+            // #94: which app started this one, so a window opened by another app joins it. Stateless
+            // and cheap, asked only when a new window appears.
+            processes: new ProcessTree());
 
         // Time tracking (#53). Its own file beside state.json, because this is the one thing the
         // app stores that grows without bound -- one row per workspace per day, forever -- and
