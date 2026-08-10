@@ -189,7 +189,14 @@ public sealed class WorkspaceManager(
     public Result LoadState() =>
         store.Load().Bind(s =>
         {
-            State = s;
+            // Migrated on the way in, before anything reads it. A state.json written while #42
+            // shipped records nesting as ParentId on the child, and everything since groups reads
+            // GroupId, so a file that skipped this would come up with every group dissolved.
+            //
+            // NOT persisted here. The next thing that changes anything writes the migrated shape,
+            // and until then the file on disk stays readable by the build the user just upgraded
+            // from. Migrated() is idempotent, so loading twice cannot double the groups.
+            State = s.Migrated();
             stateChanged.OnNext(Unit.Default);
             return Result.Success();
         });

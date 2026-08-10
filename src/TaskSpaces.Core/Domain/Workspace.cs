@@ -30,18 +30,28 @@ public sealed record Workspace(Guid Id, string Name, Guid? DesktopId, string? Co
     // loads with every row full size -- no migration, same pattern as everything in AppState.
     public bool Minimized { get; init; }
 
-    // Petre: "a workspace can be nested under a main (parent) workspace" (#42).
+    // The group this workspace belongs to, or null for one that stands on its own.
     //
     // App-level metadata over flat OS desktops, which is the same move this app already makes by
-    // NAMING them: Windows has no notion of a desktop belonging to another, and inventing one here
+    // NAMING them: Windows has no notion of a desktop belonging to a set, and inventing one here
     // costs nothing at the OS level because nothing at the OS level is asked to understand it.
     //
-    // ONE LEVEL ONLY, enforced in WorkspaceManager.NestWorkspace: a nested workspace cannot itself
-    // be a parent. Not a limitation of the model -- a Guid? expresses any tree -- but of what can
-    // be read at a glance on a bar ten rows tall. Deep nesting would need collapsing, and
-    // collapsing needs a whole interaction that nobody has asked for.
+    // ONE LEVEL ONLY: a group holds workspaces, never other groups. Not a limitation of the model
+    // but of what can be read at a glance on a bar ten rows tall. Deep nesting would need
+    // collapsing, and collapsing needs a whole interaction nobody has asked for.
     //
-    // Null means "top level", which is every workspace that existed before this and every one
-    // created since without being nested.
+    // This replaced ParentId (#42's original shape), where a nested workspace pointed straight at
+    // its parent workspace. That could not express #84's groups, which have a name and no parent
+    // workspace at all, so the parent moved into WorkspaceGroup.AnchorWorkspaceId and membership
+    // became a group id. AppState.Migrated converts older files, so nothing has to be re-nested by
+    // hand.
+    public Guid? GroupId { get; init; }
+
+    // Read by the migration only, and never written since. A state.json from before groups records
+    // nesting as ParentId on the child, and this is what lets that file still be understood.
+    //
+    // Deliberately not used anywhere else: everything reads GroupId. Deleting this property would
+    // silently un-nest every workspace on the first load after an upgrade, which is data loss that
+    // looks like a rendering bug.
     public Guid? ParentId { get; init; }
 }

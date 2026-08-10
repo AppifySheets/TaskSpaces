@@ -116,6 +116,65 @@ public sealed record AppState(
     // without it: no request leaves the machine, and nothing is announced.
     public bool CheckForUpdates { get; init; } = true;
 
+    // The groups workspaces belong to (#42 anchored, #84 anchorless). Membership lives on the
+    // workspace as GroupId; this holds the group's own name and its anchor, if it has one.
+    //
+    // Empty by default, so a state.json written before groups loads without migration in the
+    // deserializer's sense. It still needs Migrated below, because older files record nesting a
+    // different way.
+    public IReadOnlyList<Group> Groups { get; init; } = [];
+
+    // Turns a pre-groups state.json into one that uses groups, and is a no-op on anything already
+    // migrated or on a file that never had nesting.
+    //
+    // Before groups, a nested workspace carried ParentId pointing at its parent workspace. That
+    // shape cannot express a group with a name and no parent workspace, so each distinct parent
+    // becomes an ANCHORED group: the anchor is the parent, the name starts as the parent's name,
+    // and the members are the parent together with its children.
+    //
+    // The parent joins its own group, which is the part worth stating. Under ParentId the parent
+    // was outside the relationship and merely pointed at from below; a group is a set, and the
+    // parent is in it. That is what lets one render path draw both kinds, and what lets an anchored
+    // group survive losing its anchor.
+    //
+    // ParentId is left on the records rather than cleared. Nothing reads it after this, and leaving
+    // it means a downgrade to an older build still finds its nesting where it expects it.
+    public AppState Migrated()
+    {
+        // Already migrated, or nothing to migrate. Checked on Groups rather than on ParentId so
+        // running it twice cannot produce a second set of groups for the same parents.
+        if (Groups.Count > 0) return this;
+
+        var parents = Workspaces
+            .Where(w => w.ParentId is not null)
+            .Select(w => w.ParentId!.Value)
+            .Distinct()
+            // A ParentId naming a workspace that no longer exists is dropped rather than turned
+            // into a group with a missing anchor: the children simply come out ungrouped, which is
+            // what the bar already drew for them.
+            .Where(parent => Workspaces.Any(w => w.Id == parent))
+            .ToList();
+
+        if (parents.Count == 0) return this;
+
+        var groups = parents
+            .Select(parent => new Group(Guid.NewGuid(), Workspaces.Single(w => w.Id == parent).Name, parent))
+            .ToList();
+
+        // parent id -> group id, for both the anchor itself and its children.
+        var groupOf = groups.ToDictionary(g => g.AnchorWorkspaceId!.Value, g => g.Id);
+
+        return this with
+        {
+            Groups = groups,
+            Workspaces = Workspaces
+                .Select(w => (w.ParentId ?? w.Id) is var key && groupOf.TryGetValue(key, out var group)
+                    ? w with { GroupId = group }
+                    : w)
+                .ToList(),
+        };
+    }
+
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }
 
