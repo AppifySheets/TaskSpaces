@@ -619,6 +619,28 @@ public sealed class WorkspaceManager(
                       $"foreground={monitor.Foreground().GetValueOrDefault().Value:X}");
 
         currentDesktopId = arriving;
+
+        // Petre: "still that rapid changing workspaces... i want you to add protection so that rapid
+        // moving from one to the other is caught by the app."
+        //
+        // Everything this method does can MOVE A WINDOW or take the foreground, and both of those can make
+        // Windows change desktop: borrowing pins the anchor's windows and releasing moves them home, and
+        // restoring focus activates a window, which follows that window to its desktop if it has gone. So
+        // while the desktop is ping-ponging, the app's own reactions are the most likely thing feeding it,
+        // and the honest response is to stop reacting until it settles rather than to keep participating.
+        //
+        // Skipping is SAFE rather than merely cautious. ApplyInheritance decides what to hold from what is
+        // held right now, so the next settled arrival releases and re-borrows correctly; a skipped focus
+        // restore leaves focus wherever Windows put it, which is what happens on any switch this app did
+        // not initiate anyway.
+        if (Bouncing(arriving))
+        {
+            // Still pulsed, so the bar redraws for the desktop actually arrived at: standing somewhere
+            // while the bar shows another row is worse than a missed focus restore.
+            stateChanged.OnNext(Unit.Default);
+            return;
+        }
+
         // Before the focus restore, because this is what puts the parent's windows ON this desktop
         // -- and restoring focus to one of them only makes sense once it is here.
         ApplyInheritance(arriving);
@@ -630,6 +652,51 @@ public sealed class WorkspaceManager(
         // immediately hand focus back to whatever was last active. A window you have just sent to this
         // screen is the more useful answer to "what were you about to use".
         if (!ApplyPendingMonitorMoves()) RestoreLastActive(arriving);
+    }
+
+    // The last few desktop arrivals, and a cool-down once they start alternating.
+    //
+    // A -> B -> A inside one window is the shape being caught: not "switching quickly", which is a thing
+    // Petre does deliberately with Win+Ctrl+Tab, but the same two desktops trading places, which no
+    // deliberate gesture produces and a feedback loop always does.
+    readonly List<(Guid Desktop, DateTimeOffset At)> arrivals = [];
+    DateTimeOffset settledAt = DateTimeOffset.MinValue;
+
+    // 900ms holds three arrivals of a genuine loop, whose hops are milliseconds apart, while being far
+    // shorter than three deliberate switches: a person alternating two workspaces by hand takes half a
+    // second per hop at best, and the trace of him doing exactly that showed 400-600ms.
+    static readonly TimeSpan BounceWindow = TimeSpan.FromMilliseconds(900);
+
+    // Long enough to outlast the loop and short enough that a false positive costs one dulled switch.
+    static readonly TimeSpan BounceCooldown = TimeSpan.FromSeconds(2);
+
+    // True while the desktop is ping-ponging, or during the cool-down after it was.
+    bool Bouncing(Guid arriving)
+    {
+        var at = now();
+
+        arrivals.Add((arriving, at));
+        // Three is all the test below reads; a few more costs nothing and keeps the list honest if the rule
+        // is ever widened.
+        if (arrivals.Count > 6) arrivals.RemoveAt(0);
+
+        if (at < settledAt)
+        {
+            trace?.Invoke($"  bounce: still cooling down, {NameOfDesktop(arriving)} left alone");
+            return true;
+        }
+
+        var recent = arrivals.Where(a => at - a.At <= BounceWindow).ToList();
+        var alternating = recent.Count >= 3
+                          && recent[^1].Desktop == recent[^3].Desktop
+                          && recent[^2].Desktop != recent[^1].Desktop;
+        if (!alternating) return false;
+
+        settledAt = at + BounceCooldown;
+        trace?.Invoke($"  BOUNCE DETECTED at {NameOfDesktop(arriving)}: " +
+                      $"{string.Join(" -> ", recent.Select(a => NameOfDesktop(a.Desktop)))}. " +
+                      $"Borrowing and focus restore suspended for {BounceCooldown.TotalSeconds:F0}s.");
+        return true;
     }
 
     // --- a nested workspace borrows its parent's windows (#42) ---------------------------------
