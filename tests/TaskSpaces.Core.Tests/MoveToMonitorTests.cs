@@ -117,35 +117,61 @@ public class MoveToMonitorTests
 
     // --- the combined drop ----------------------------------------------------------------------
 
-    // A drop on another workspace's half does both halves of the job.
+    // A drop on ANOTHER workspace's half changes the desktop now and the screen later.
+    //
+    // Petre found the version that tried to do both at once: "i tried dragging an icon from EC to the
+    // left monitor... and it didn't work", with his desktop switching underneath him at the same time.
+    // A window on another virtual desktop is CLOAKED, and both halves of a screen move fail on one --
+    // the geometry write is ignored, and un-maximizing a maximized window to move it brings that window
+    // forward, which takes Windows to its desktop. Beeper moved correctly for him throughout, because
+    // Beeper was on the desktop he was standing on.
     [Fact]
-    public void Assigning_with_a_screen_moves_the_window_and_the_desktop()
+    public void Assigning_to_another_workspace_holds_the_screen_move_until_you_get_there()
     {
         var manager = Started();
 
         Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsSuccess);
 
-        Assert.Single(screen.Moved);
+        // The desktop move happened; the window was not touched on screen.
         Assert.Equal(personal, desktops.WindowPlacements[code.Handle]);
+        Assert.Empty(screen.Moved);
+
+        // ...and it lands the moment that desktop is the one you are standing on.
+        desktops.CurrentDesktopId = personal;
+        desktops.CurrentChangedSubject.OnNext(personal);
+
+        var (window, rect) = Assert.Single(screen.Moved);
+        Assert.Equal(code.Handle, window);
+        Assert.Equal(new WindowRect(-2880, 540, -960, 1620), rect);
     }
 
-    // The screen move has to happen BEFORE the desktop move: moving a window to another virtual
-    // desktop cloaks it, and a cloaked window's rectangle is not reliably writable. The order is
-    // observable here because FakeDesktops records when the desktop move happened.
+    // The same drop onto the workspace you are ALREADY in does both immediately, since the window is
+    // reachable: nothing is held, and this is the case that always worked.
     [Fact]
-    public void The_screen_move_happens_while_the_window_is_still_visible()
+    public void Assigning_within_the_workspace_you_are_in_moves_the_screen_at_once()
     {
         var manager = Started();
-        var desktopMovedFirst = false;
-        screen.Moved.Clear();
+        var here = manager.State.Workspaces.Single(w => w.DesktopId == work).Id;
 
-        // FakeDesktops writes the placement synchronously, so reading it inside the screen move's own
-        // recording is enough to establish the order.
-        desktops.OnMoveWindow = (_, _) => desktopMovedFirst = screen.Moved.Count == 0;
+        Assert.True(manager.AssignWindow(code.Handle, here, monitor: 1).IsSuccess);
 
+        Assert.Single(screen.Moved);
+    }
+
+    // A held move must not be applied to a window that is only VISITING: an anchored group pins its
+    // parent's windows onto the child's desktop while you stand there, so "is it on this desktop" is
+    // briefly true for windows that live elsewhere. Applied after the borrowing settles, so a window
+    // whose real home is elsewhere is not moved on someone else's arrival.
+    [Fact]
+    public void A_held_move_waits_for_the_windows_own_desktop()
+    {
+        var manager = Started();
         Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsSuccess);
 
-        Assert.False(desktopMovedFirst);
+        // Arriving somewhere else entirely changes nothing.
+        desktops.CurrentChangedSubject.OnNext(work);
+
+        Assert.Empty(screen.Moved);
     }
 
     // No screen named: the workspace-only drop the bar has always done, on a row with no split to aim

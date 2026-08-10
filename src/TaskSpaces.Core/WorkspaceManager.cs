@@ -604,10 +604,21 @@ public sealed class WorkspaceManager(
     // tracked, for the marker suppression on the desktop you are standing on.
     void OnDesktopChanged(Guid arriving)
     {
+        // Every arrival, whoever caused it. A desktop that jumps back and forth with no input shows up
+        // here as a burst of arrivals milliseconds apart, and the lines in between say what moved a
+        // window: which is the only way to tell a switch Petre asked for from one Windows made because
+        // something dragged the foreground window to another desktop.
+        trace?.Invoke($"arrived {NameOfDesktop(arriving)} (was {NameOfDesktop(currentDesktopId.GetValueOrDefault())}), " +
+                      $"foreground={monitor.Foreground().GetValueOrDefault().Value:X}");
+
         currentDesktopId = arriving;
         // Before the focus restore, because this is what puts the parent's windows ON this desktop
         // -- and restoring focus to one of them only makes sense once it is here.
         ApplyInheritance(arriving);
+        // After the borrowing, so a window pinned in from a parent workspace is not moved while it is
+        // only visiting, and before the focus restore, so the window it lands on is already where the
+        // drop asked for it (#89).
+        ApplyPendingMonitorMoves(arriving);
         RestoreLastActive(arriving);
     }
 
@@ -640,6 +651,8 @@ public sealed class WorkspaceManager(
     void ApplyInheritance(Guid arriving)
     {
         var parentDesktop = ParentDesktopOf(arriving);
+        trace?.Invoke($"  inherit: arriving={NameOfDesktop(arriving)}, borrowsFrom=" +
+                      $"{(parentDesktop is { } from ? NameOfDesktop(from) : "nothing")}, holding={borrowed.Count}");
 
         // Standing somewhere that borrows nothing, or somewhere that borrows from a DIFFERENT
         // parent: either way, give back what is held before taking anything new.
@@ -658,6 +671,11 @@ public sealed class WorkspaceManager(
 
     void ReleaseBorrowed()
     {
+        // The riskiest moment in the app for an unasked-for switch: moving a window that currently has
+        // FOCUS to another desktop makes Windows follow it there.
+        trace?.Invoke($"  release {borrowed.Count} home, foreground={monitor.Foreground().GetValueOrDefault().Value:X}, " +
+                      $"[{string.Join(", ", borrowed.Select(b => $"{b.Key.Value:X}->{NameOfDesktop(b.Value)}"))}]");
+
         borrowed.ToList().ForEach(b =>
         {
             // Order matters and is the whole trick: unpin first, then put it back. Unpinning alone
@@ -715,8 +733,20 @@ public sealed class WorkspaceManager(
     void RestoreLastActive(Guid arriving)
     {
         if (activator is null) return;
-        Remembered(arriving).Or(() => FrontmostOnMainMonitor(arriving)).Tap(window => activator.Activate(window));
+
+        var remembered = Remembered(arriving);
+        var chosen = remembered.Or(() => FrontmostOnMainMonitor(arriving));
+        trace?.Invoke($"  focus: {(remembered.HasValue ? "ledger" : chosen.HasValue ? "frontmost" : "nothing")} " +
+                      $"window={chosen.GetValueOrDefault().Value:X}");
+
+        chosen.Tap(window => activator.Activate(window));
     }
+
+    // A desktop's workspace name for the trace, or a short id for one that is not a workspace. Only
+    // called from tracing, so it does no COM work.
+    string NameOfDesktop(Guid desktop) =>
+        State.Workspaces.FirstOrDefault(w => w.DesktopId == desktop)?.Name
+        ?? (desktop == Guid.Empty ? "none" : $"unnamed:{desktop.ToString()[..4]}");
 
     Maybe<WindowHandle> Remembered(Guid arriving)
     {
@@ -1368,18 +1398,25 @@ public sealed class WorkspaceManager(
     // aim at, or the drop was nowhere near one, and then this is the workspace-only move it always
     // was.
     //
-    // Monitor FIRST, workspace second, and the order is load-bearing. Moving a window to another
-    // virtual desktop cloaks it, and a cloaked window's rectangle is not reliably writable -- the
-    // move is accepted and lands somewhere else, or nowhere. So the screen move happens while the
-    // window is still on a desktop you can see.
+    // Workspace FIRST, screen second, which is the opposite of what this did when #89 shipped and the
+    // reason is worth keeping. The original argument was that moving a window to another desktop
+    // CLOAKS it and a cloaked window's rectangle is not reliably writable, so the screen move should
+    // happen first, while the window is still visible. That is true and it was the wrong conclusion:
+    // a window dragged FROM another row was already on another desktop and already cloaked, so the
+    // screen move ran against a cloaked window anyway -- silently doing nothing, and dragging Petre's
+    // desktop with it when the window happened to be maximized.
+    //
+    // Doing the workspace move first means the screen move always sees the window on its FINAL
+    // desktop, and MoveWindowToMonitor can then either do it now or hold it until that desktop is the
+    // one you are standing on.
     public Result AssignWindow(WindowHandle window, Guid workspaceId, int? monitor = null) =>
         knownWindows.TryGetValue(window, out var info)
             // Explicitly moving a pinned window to ONE workspace is a statement that it
             // should no longer be on ALL of them -- unpin first, then place (spec).
             ? desktops.IsPinned(window)
                 .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
-                .Bind(() => monitor is { } screen ? MoveWindowToMonitor(window, screen) : Result.Success())
                 .Bind(() => Place(info, workspaceId))
+                .Bind(() => monitor is { } screen ? MoveWindowToMonitor(window, screen) : Result.Success())
             : Result.Failure("Window no longer exists.");
 
     // #89. Petre: "dropping the icon onto another monitor within the current workspace -- same drag,
@@ -1391,11 +1428,36 @@ public sealed class WorkspaceManager(
     //
     // A no-op when the window is already there, so dropping onto its own half of its own row costs
     // nothing rather than nudging the window by a rounding error.
+    //
+    // A window on ANOTHER virtual desktop is HELD rather than moved, and that is the fix for what Petre
+    // hit the first time this shipped: "i tried dragging an icon from EC to the left monitor... and it
+    // didn't work", along with his desktop switching underneath him. A window on another desktop is
+    // cloaked, and neither half of this works on one. The geometry write is silently ignored, so
+    // nothing moves. And if the window is maximized, un-maximizing it to move it brings the window
+    // forward, which takes Windows to ITS desktop -- the app yanking him somewhere he did not ask to
+    // go. Beeper moved correctly throughout, because Beeper was on the desktop he was standing on.
+    //
+    // So the move waits for the window to be reachable, and is applied the moment its desktop is the
+    // one you are standing on. Which is not a compromise: the window ends up where the drop asked, and
+    // it gets there without anything jumping.
     public Result MoveWindowToMonitor(WindowHandle window, int monitorNumber)
     {
         // Null in compatibility mode, where there is no screen layout to ask. Nothing offers this
         // gesture there, since the row has no monitor marks to aim at either.
         if (screenLayout is null) return Result.Failure("Monitors are unavailable on this Windows build.");
+
+        // Held for later, untouched. A desktop that cannot be resolved is treated as reachable: that is
+        // the "Unplaced" case, where the window is not known to be anywhere else and trying can only
+        // help.
+        if (desktops.DesktopOf(window).GetValueOrDefault() is var where
+            && where != Guid.Empty
+            && where != desktops.CurrentDesktop().GetValueOrDefault())
+        {
+            pendingMonitor[window] = monitorNumber;
+            trace?.Invoke($"monitor move held: {window.Value:X} -> screen {monitorNumber} " +
+                          $"(on {NameOfDesktop(where)}, standing on {NameOfDesktop(currentDesktopId.GetValueOrDefault())})");
+            return Result.Success();
+        }
 
         if (screenLayout.Snapshot().MonitorPlacement is not { } placement || !placement.TryGetValue(monitorNumber, out var target))
             return Result.Failure("That monitor is no longer there.");
@@ -1413,6 +1475,33 @@ public sealed class WorkspaceManager(
             return Result.Failure("Cannot tell which monitor that window is on.");
 
         return screenLayout.MoveTo(window, MonitorMove.Fit(rect, origin, target));
+    }
+
+    // Windows the launched-by tier has already had its one look at (#94). Never cleared while a window
+    // lives: see LaunchedByWorkspace for why one look is the whole point.
+    readonly HashSet<WindowHandle> launchedBy = [];
+
+    // Screen moves waiting for their window to be reachable (#89). Live-only: a drop is a statement
+    // about now, and one that never got applied because the app was closed is not worth re-applying
+    // days later on a machine whose monitors may have changed.
+    readonly Dictionary<WindowHandle, int> pendingMonitor = [];
+
+    // Applied on arrival at a desktop, for the windows that live on it. Called from OnDesktopChanged
+    // AFTER the borrowing has been settled, so a window pinned in from a parent workspace is not moved
+    // while it is only visiting.
+    void ApplyPendingMonitorMoves(Guid arriving)
+    {
+        if (pendingMonitor.Count == 0) return;
+
+        pendingMonitor
+            .Where(pending => desktops.DesktopOf(pending.Key).GetValueOrDefault() == arriving)
+            .ToList()
+            .ForEach(pending =>
+            {
+                pendingMonitor.Remove(pending.Key);
+                trace?.Invoke($"monitor move applied: {pending.Key.Value:X} -> screen {pending.Value}");
+                MoveWindowToMonitor(pending.Key, pending.Value);
+            });
     }
 
     // Drag-and-drop onto a plain OS desktop row (e.g. Petre's unbound "Main"): the
@@ -1507,6 +1596,15 @@ public sealed class WorkspaceManager(
     Maybe<Decision> LaunchedByWorkspace(WindowInfo window)
     {
         if (processes is null) return Maybe<Decision>.None;
+
+        // ONCE per window, ever. AutoPlaceable already refuses a window with a membership, so this is
+        // belt and braces -- and it is warranted, because the failure it guards against is the worst
+        // one this app can have: Appeared is re-raised for the same window routinely (the 5s Resync
+        // sweep, and one tray app on Petre's machine raised it 23 times in a session), a placement
+        // MOVES a window between desktops, and moving a window that has focus takes Windows to that
+        // desktop. A tier that could fire twice for one window could therefore bounce the desktop
+        // back and forth with no input at all, which is exactly what Petre reported.
+        if (!launchedBy.Add(window.Handle)) return Maybe<Decision>.None;
 
         // The current desktop, asked once. A COM hiccup leaves it as no answer, and then every
         // workspace looks different from it -- the safe direction, since the placement is a move to
