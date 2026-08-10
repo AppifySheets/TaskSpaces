@@ -66,6 +66,11 @@ public class LaunchedByPlacementTests
         return window;
     }
 
+    // Recorded the way the OS reports focus moving, which is what the launched-by rule reads to tell one
+    // window of an app from another.
+    void Activate(WindowInfo window) =>
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Activated, window));
+
     Guid? WorkspaceOf(WorkspaceManager manager, WindowInfo window) =>
         manager.WindowsByWorkspace().Value.Workspaces
             .Where(g => g.Running.Any(r => r.Window.Handle == window.Handle))
@@ -123,10 +128,58 @@ public class LaunchedByPlacementTests
         Assert.Equal(0, moves);
     }
 
-    // Two windows of the launcher in two different workspaces gives no single answer, and the codebase
-    // already answers that situation the same way for placement memory: do nothing rather than guess.
+    // MEASURED, and it rewrote this rule. The first version asked for the launcher's SOLE workspace and
+    // declined when there was more than one, which made the whole feature inert on the real machine:
+    //
+    //   launcher 11400 windows=[TaskSpace, slip39, dice, EC, Personal, Extra, Info]
+    //
+    // One VS Code process, seven windows, one on nearly every workspace. So when the launcher has
+    // windows in several workspaces, the one you were LAST IN wins, which is as close to "which window
+    // did the launching" as anything available and is right for the reported gesture: you click a link
+    // in the window you are working in.
     [Fact]
-    public void A_launcher_living_in_two_workspaces_places_nothing()
+    public void The_launcher_window_you_were_last_in_decides()
+    {
+        var manager = Started();
+        var second = Window(0x9, 700, "Code");
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, second));
+        Assert.True(manager.AssignWindow(second.Handle, personal).IsSuccess);
+
+        // Working in the Gepha window, then the Personal one, then Gepha again.
+        Activate(editor);
+        Activate(second);
+        Activate(editor);
+        EditorOpenedIt(0x2, 900);
+
+        var browser = Appears(manager, 0x2, 900);
+
+        Assert.Equal(gepha, WorkspaceOf(manager, browser));
+    }
+
+    // The mirror of it, so the test above is not passing on the order the windows happen to be stored in.
+    [Fact]
+    public void The_other_launcher_window_decides_when_that_is_the_one_you_were_last_in()
+    {
+        var manager = Started();
+        var second = Window(0x9, 700, "Code");
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, second));
+        Assert.True(manager.AssignWindow(second.Handle, personal).IsSuccess);
+
+        Activate(editor);
+        Activate(second);
+        EditorOpenedIt(0x2, 900);
+
+        var browser = Appears(manager, 0x2, 900);
+
+        // Personal is also the desktop we are standing on, so the placement is skipped as a no-op --
+        // which is the same observable outcome and the point of the test is the workspace it chose.
+        Assert.Equal(personal, WorkspaceOf(manager, browser));
+    }
+
+    // Never activated at all: nothing to prefer, and a guess would be a coin toss between however many
+    // windows the app has.
+    [Fact]
+    public void A_launcher_whose_windows_were_never_active_places_nothing()
     {
         var manager = Started();
         var second = Window(0x9, 700, "Code");

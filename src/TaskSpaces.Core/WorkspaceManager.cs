@@ -51,13 +51,24 @@ public sealed class WorkspaceManager(
     IAttentionMonitor? attention = null,
     // Who started whom (#94). Optional and last, as ever; null means no window is ever recognised as
     // having been started by another app, which leaves placement exactly as it was.
-    IProcessTree? processes = null)
+    IProcessTree? processes = null,
+    // A line of diagnostics, or nothing. The launched-by decision (#94) is the first thing in this
+    // class with no visible output when it declines: a window that stays put looks identical whether
+    // the walk found no launcher, found two workspaces, or was never asked. The app passes
+    // ClickTrace.Write, which is off unless the marker file exists.
+    Action<string>? trace = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
     readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
     readonly Subject<Unit> stateChanged = new();
     readonly Dictionary<WindowHandle, WindowInfo> knownWindows = [];
     readonly Dictionary<WindowHandle, Guid> memberships = []; // window -> workspace
+
+    // When each window was last activated, as an order rather than a time (#94). Live-only and
+    // deliberately not persisted: it answers "which window of this app were you last in", which is a
+    // question about the session you are in, not about the machine's history.
+    readonly Dictionary<WindowHandle, long> activations = [];
+    long activation;
 
     // Windows Petre deliberately dragged OUT of every workspace onto a plain OS desktop
     // (MoveToDesktop). Without this, removing the membership alone would make the window
@@ -344,6 +355,15 @@ public sealed class WorkspaceManager(
     // never disagree about what "became active" means.
     void MarkActive(WindowHandle window)
     {
+        // #94 needs to know WHICH window of an app you were last in, not just which app: a single VS
+        // Code process holds a window on nearly every workspace (measured on Petre's machine: seven of
+        // them), so "the app that started this" only becomes an answer once you can say which of its
+        // windows did. Recorded before the change guard below, so the window that is already active
+        // when the app starts is recorded too.
+        //
+        // A counter rather than a clock: ordering is the only thing ever asked of it, and a counter
+        // cannot be disturbed by the machine's clock moving.
+        activations[window] = ++activation;
         // Looking at a window is what answers it, so this is also where attention ends. Done
         // before the change guard below, and that ordering matters: re-activating the window you
         // are already in is a no-op for the highlight but must still clear a flash that arrived
@@ -1493,10 +1513,20 @@ public sealed class WorkspaceManager(
         // where the launcher already is and at worst it moves the window to the desktop it is on.
         var current = desktops.CurrentDesktop().GetValueOrDefault();
 
-        return LaunchedBy.Launcher(window.ProcessId, processes.Of, OwnsTrackedWindow)
-            .Bind(SoleWorkspaceOf)
-            .Where(workspace => Workspace(workspace).GetValueOrDefault()?.DesktopId != current)
-            .Map(workspace => new Decision(Placement.In(workspace), Roster: false));
+        var launcher = LaunchedBy.Launcher(window.ProcessId, processes.Of, OwnsTrackedWindow);
+        var workspace = launcher.Bind(WorkspaceOfLauncher);
+        var decision = workspace
+            .Where(id => Workspace(id).GetValueOrDefault()?.DesktopId != current)
+            .Map(id => new Decision(Placement.In(id), Roster: false));
+
+        // Every step, because each of the three can decline and a window that stays put looks the same
+        // whichever one did.
+        trace?.Invoke($"launched-by {window.ProcessName}({window.ProcessId}) " +
+                      $"launcher={launcher.Map(id => id.ToString()).GetValueOrDefault("none")} " +
+                      $"workspace={workspace.Map(id => Workspace(id).GetValueOrDefault()?.Name ?? id.ToString()).GetValueOrDefault("none")} " +
+                      $"moved={decision.HasValue}");
+
+        return decision;
     }
 
     // What OnAppeared decided to do with a new window: where it goes, and whether that also says the
@@ -1509,16 +1539,71 @@ public sealed class WorkspaceManager(
     bool OwnsTrackedWindow(int processId) =>
         knownWindows.Values.Any(w => w.ProcessId == processId && !IsOurs(w.Handle));
 
-    Maybe<Guid> SoleWorkspaceOf(int processId)
+    // Which workspace the launcher was in, which is a question about one of its WINDOWS rather than
+    // about the process.
+    //
+    // The first version of this asked for the process's sole workspace and declined when there was more
+    // than one, and measuring killed it: Petre's single VS Code process holds seven windows, one on
+    // nearly every workspace, so the rule was never satisfied for the very app #94 was written about.
+    //
+    //   launcher 11400 windows=[TaskSpace, slip39, dice, EC, Personal, Extra, Info]
+    //
+    // So when the launcher has windows in several workspaces, the one you were LAST IN wins. That is as
+    // close to "which window did the launching" as anything available, and it is right for the reported
+    // gesture: you click a link in the editor window you are working in, and that is by definition the
+    // editor window most recently active.
+    //
+    // Declined only when none of the launcher's windows has ever been active in this session, since
+    // then there is nothing to prefer and a guess would be a coin toss between seven.
+    Maybe<Guid> WorkspaceOfLauncher(int processId)
     {
-        var workspaces = knownWindows.Values
+        var windows = knownWindows.Values
             .Where(w => w.ProcessId == processId)
-            .Select(w => memberships.TryGetValue(w.Handle, out var workspace) ? workspace : Guid.Empty)
-            .Where(workspace => workspace != Guid.Empty)
-            .Distinct()
+            .Select(w => (Window: w, Workspace: WorkspaceHolding(w)))
+            .Where(x => x.Workspace is not null)
             .ToList();
 
-        return workspaces.Count == 1 ? workspaces[0] : Maybe<Guid>.None;
+        // Per window, because these fail in ways that look identical from outside: no windows at all, a
+        // window on a desktop that is not a workspace, or several windows and none ever activated.
+        trace?.Invoke($"  launcher {processId} windows=["
+                      + string.Join(", ", knownWindows.Values.Where(w => w.ProcessId == processId).Select(Describe))
+                      + "]");
+
+        if (windows.Count == 0) return Maybe<Guid>.None;
+        if (windows.Select(x => x.Workspace).Distinct().Count() == 1) return windows[0].Workspace!.Value;
+
+        return windows
+            .Where(x => activations.ContainsKey(x.Window.Handle))
+            .OrderByDescending(x => activations[x.Window.Handle])
+            .Select(x => Maybe<Guid>.From(x.Workspace!.Value))
+            .FirstOrDefault();
+    }
+
+    string Describe(WindowInfo window) =>
+        $"{window.Handle.Value:X}:" +
+        (WorkspaceHolding(window) is { } id
+            ? Workspace(id).GetValueOrDefault()?.Name ?? id.ToString()
+            : $"no-workspace(desktop={desktops.DesktopOf(window.Handle).GetValueOrDefault()})") +
+        $"@{activations.GetValueOrDefault(window.Handle, 0)}";
+
+    // Which workspace a window lives in: its membership if this app has ever placed it, and otherwise
+    // the workspace that owns the DESKTOP it is sitting on.
+    //
+    // The desktop half is not a fallback, it is the usual answer, and leaving it out made the whole of
+    // #94 inert on a real machine. `memberships` only records windows this app has MOVED -- a drag, a
+    // rule, placement memory -- so an editor that has simply always been on its workspace's desktop has
+    // no entry at all, and asking memberships alone would find no launcher anywhere.
+    //
+    // Reading the desktop is also what the bar does when it draws that window inside a workspace's row,
+    // so this agrees with what is on screen rather than with an internal ledger.
+    Guid? WorkspaceHolding(WindowInfo window)
+    {
+        if (memberships.TryGetValue(window.Handle, out var membership)) return membership;
+
+        var desktop = desktops.DesktopOf(window.Handle);
+        return desktop.IsSuccess
+            ? State.Workspaces.FirstOrDefault(w => w.DesktopId == desktop.Value)?.Id
+            : null;
     }
 
     bool SharesIdentityWithAnotherLiveWindow(WindowInfo window) =>

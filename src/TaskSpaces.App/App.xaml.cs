@@ -359,7 +359,10 @@ public partial class App : Application
             activator: new WindowActivator(), screenLayout: new ScreenLayout(), attention: attentionMonitor,
             // #94: which app started this one, so a window opened by another app joins it. Stateless
             // and cheap, asked only when a new window appears.
-            processes: new ProcessTree());
+            processes: new ProcessTree(),
+            // ...and a line per decision when tracing is on, because a window that stays put looks the
+            // same whether no launcher was found, two workspaces were, or the walk never ran.
+            trace: ClickTrace.On ? ClickTrace.Write : null);
 
         // Time tracking (#53). Its own file beside state.json, because this is the one thing the
         // app stores that grows without bound -- one row per workspace per day, forever -- and
