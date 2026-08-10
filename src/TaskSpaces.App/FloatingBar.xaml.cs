@@ -1355,7 +1355,7 @@ public partial class FloatingBar : Window
     //
     // On a bar with no width of its own (SizeToContent still owns it) the stars have no slack to
     // share and everything simply packs, which is the same thing this drew before any of it.
-    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons)
+    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons, bool isLastLine)
     {
         // Runs of consecutive icons that share a monitor. `opensGroup` already knows where each
         // one starts -- it is the same set the wrap arithmetic budgets a marker for -- so this
@@ -1485,6 +1485,34 @@ public partial class FloatingBar : Window
                 zones.Add(new MonitorZone(run[0].Monitor.Value, mark, firstColumn, stackColumn - firstColumn + 1));
         });
 
+        // #102: the screens this row shows NOTHING for, on the end, as empty but droppable halves.
+        //
+        // Petre: with every window on the left monitor there was no separator at all, "so icons can't be
+        // dragged to the second monitor" -- the row drew a hairline only where the monitor CHANGES, and a
+        // row that never changes monitor has no boundary and therefore no far side to aim at. As a
+        // divider that was right; as a drop target it is a dead end.
+        //
+        // The mirror of the empty half in FRONT (#69, added when a row starts on a later screen), and it
+        // completes the same idea: on a multi-monitor machine every row offers a region per screen,
+        // whether or not it has anything on that screen yet.
+        //
+        // Only on the LAST line of a wrapped row, or every line would grow its own tail of empty halves.
+        if (isLastLine && showMonitorMarkers)
+        {
+            var shown = zones.Select(z => z.Monitor).ToHashSet();
+            monitorByRank
+                .Where(x => !shown.Contains(x.Value))
+                .OrderBy(x => x.Key)
+                .ToList()
+                .ForEach(missing =>
+                {
+                    var mark = MonitorMarker(missing.Key);
+                    var markColumn = AddColumn(mark, GridLength.Auto);
+                    var emptyColumn = AddColumn(new Border(), new GridLength(1, GridUnitType.Star));
+                    zones.Add(new MonitorZone(missing.Value, mark, markColumn, emptyColumn - markColumn + 1));
+                });
+        }
+
         // Registered per LINE rather than per row, because a wrapped row can hold one screen's icons
         // above and another's below, and then "which half" is a question about the line the pointer is
         // over. A row's own drop handler picks the line first and the half second.
@@ -1542,6 +1570,16 @@ public partial class FloatingBar : Window
     }
 
     int? AimedMonitor(Guid rowKey, UIElement container, Point at) => Aimed(rowKey, container, at)?.Zone.Monitor;
+
+    // Every line's halves and where each one starts, in the container's own coordinates: the same numbers
+    // AimedZone compares the pointer against. For the trace only (#101).
+    string DescribeZones(Guid? rowKey, UIElement container) =>
+        rowKey is { } key && monitorLines.TryGetValue(key, out var lines)
+            ? "[" + string.Join(" | ", lines.Select(line =>
+                $"line@{BoundsIn(line.Line, container)?.Top:F0}-{BoundsIn(line.Line, container)?.Bottom:F0}: " +
+                string.Join(", ", line.Zones.Select(z =>
+                    $"screen{z.Monitor}from{(z.Mark is null ? "start" : BoundsIn(z.Mark, container)?.Left.ToString("F0") ?? "?")}")))) + "]"
+            : "none";
 
     // The last half whose left edge the pointer has passed. A zone with no mark starts at the line's
     // own left edge, which is why its start is negative infinity rather than zero: the row is padded,
@@ -1961,7 +1999,11 @@ public partial class FloatingBar : Window
             ? IconRowLimit.Lines(ordered)
             : IconRowLimit.LinesThatFit(ordered, r => IconCellWidth + (opensGroup.Contains(r.Window.Handle) ? MonitorMarkerWidth : 0), IconRoomOn(label));
 
-        lines.ToList().ForEach(line => icons.Children.Add(LineOf(line, opensGroup, groupLabel, groupKey, rowKey, iconButtons)));
+        // isLastLine carries #102's empty tail halves, which belong to the row rather than to each of its
+        // wrapped lines.
+        var drawnLines = lines.ToList();
+        drawnLines.Select((line, at) => (line, last: at == drawnLines.Count - 1)).ToList()
+            .ForEach(x => icons.Children.Add(LineOf(x.line, opensGroup, groupLabel, groupKey, rowKey, iconButtons, x.last)));
 
         // The parent's windows USED to be drawn here, dimmed, on every nested row -- the issue
         // asked for "everything from the main workspace pinned to the nested ones". Petre, seeing
@@ -2149,7 +2191,15 @@ public partial class FloatingBar : Window
                 ClearInfo();
                 if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) return;
 
-                var screen = rowKey is { } key ? AimedMonitor(key, container, e.GetPosition(container)) : null;
+                var at = e.GetPosition(container);
+                var screen = rowKey is { } key ? AimedMonitor(key, container, at) : null;
+
+                // #101: the highlight said one screen and the window went to another. Both sides compute
+                // from AimedMonitor, so what they disagree about is not the code but the INPUT -- and the
+                // only way to tell which is to record the geometry at the moment of release.
+                if (ClickTrace.On)
+                    ClickTrace.Write($"drop row={groupLabel} x={at.X:F0} y={at.Y:F0} aimed={screen?.ToString() ?? "none"} " +
+                                     $"ownRow={dragged.SourceGroupKey == groupKey} zones={DescribeZones(rowKey, container)}");
 
                 // Asked BEFORE the drop is carried out, because carrying it out is what changes the
                 // answer. A window on a desktop you are not standing on cannot be moved on screen at
