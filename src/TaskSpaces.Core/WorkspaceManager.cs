@@ -832,7 +832,7 @@ public sealed class WorkspaceManager(
     // Clamped like InsertWorkspace, and for the same reason: the caller derives the target from a
     // list that may have changed since the menu opened, and landing at an end is a better answer
     // than an error dialog.
-    // `index` is a position AMONG PEERS, not in the whole list, so "move to top" on a nested
+    // `index` is a position AMONG PEERS, not in the whole list, so "move to top" on a grouped
     // workspace means the top of its group. Callers that mean "the end" may pass any number past
     // the last peer, including the full list's length, and it is clamped.
     public Result MoveWorkspaceTo(Guid id, int index) =>
@@ -841,60 +841,97 @@ public sealed class WorkspaceManager(
     // Both moves reorder a workspace among its PEERS, which is the fix for #85: Petre reported that
     // "move up / move down on a workspace inside a group doesn't work".
     //
-    // They used to move it one place in the flat list, which predates nesting. The bar re-groups
-    // rows by parent when it draws them, so moving a child one place up swapped it with its parent
-    // in the list and changed nothing at all on screen: the child was still the first child. Moving
-    // a top-level workspace had the mirror problem, swapping it with somebody else's child and
-    // leaving the top-level order alone.
+    // They used to move it one place in the flat list, which predates grouping. The bar draws a
+    // whole group as one box, so moving the first member up swapped it with the anchor in the list
+    // and changed nothing at all on screen: it was still the first member below the anchor. A row
+    // outside any group had the mirror problem, swapping with somebody else's group member and
+    // leaving the order of the bar's top-level rows alone.
     //
-    // Peers means "same ParentId", so a top-level workspace moves among top-level workspaces and a
-    // nested one moves among its siblings. Both cases go through here rather than being special
-    // cases of each other.
-    //
-    // Every non-peer keeps its exact slot in the list (see PeersReordered), which matters for two
-    // reasons: moving a child cannot disturb another group, and lane colours follow list position,
-    // so nothing outside the group changes colour. Within a group nothing changes colour either,
-    // because a nested row wears its parent's colour rather than its own.
+    // So peers are the rows a row is actually drawn beside, which is one of two things (see Blocks):
+    // the other members of its box, or the bar's other top-level rows.
     Result MoveAmongPeers(Guid id, Func<int, int> targetOf, bool clampIntoRange)
     {
-        if (State.Workspaces.FirstOrDefault(w => w.Id == id) is not { } workspace)
-            return Result.Failure("Workspace no longer exists.");
+        if (!State.Workspaces.Any(w => w.Id == id)) return Result.Failure("Workspace no longer exists.");
 
-        var slots = PeerSlots(workspace.ParentId);
-        var from = slots.FindIndex(slot => State.Workspaces[slot].Id == id);
+        var blocks = Blocks(State).Select(b => b.ToList()).ToList();
+        var at = blocks.FindIndex(b => b.Exists(w => w.Id == id));
+        var block = blocks[at];
+
+        // A row that HEADS its block moves the whole block, because there is nowhere for it to go
+        // inside one. An ungrouped workspace is a block of one, and an anchor is held at the top of
+        // its box by MembersOf, so for both of them "up" can only mean "up past the row above the
+        // box". The group travels with its anchor rather than being torn open.
+        if (block.Count == 1 || State.IsAnchor(id))
+            return MovedTo(Reordered(blocks, at, targetOf, clampIntoRange)?.SelectMany(b => b).ToList());
+
+        // Otherwise it moves inside its own box. An anchored group's first row belongs to the anchor
+        // and nothing may take it, so the members below reorder among themselves; an anchorless
+        // group (#84) has no such row, so every member is movable and the top of the box is a place
+        // a member can reach.
+        var pinned = State.GroupOf(id)!.IsAnchored ? 1 : 0;
+        var movable = block.Skip(pinned).ToList();
+        var moved = Reordered(movable, movable.FindIndex(w => w.Id == id), targetOf, clampIntoRange);
+
+        return MovedTo(moved is null
+            ? null
+            : blocks.Select((b, i) => i == at ? block.Take(pinned).Concat(moved).ToList() : b).SelectMany(b => b).ToList());
+    }
+
+    // The bar's top-level rows, in the order it draws them: a lone ungrouped workspace, or a whole
+    // group as one box with its members inside.
+    //
+    // Deliberately the same walk FloatingBar does, down to treating a GroupId that names no group as
+    // ungrouped, because a move that disagreed with the drawing about what sits beside what is
+    // exactly the bug #85 reported. It is the reason this lives here rather than in the bar: the
+    // order is a fact about the state, and two surfaces computing it separately is how they drifted.
+    static IReadOnlyList<IReadOnlyList<Workspace>> Blocks(AppState state)
+    {
+        var drawn = new HashSet<Guid>();
+        var blocks = new List<IReadOnlyList<Workspace>>();
+
+        state.Workspaces.ToList().ForEach(w =>
+        {
+            if (!drawn.Add(w.Id)) return;
+            if (w.GroupId is not { } id || state.Groups.All(g => g.Id != id)) { blocks.Add([w]); return; }
+
+            var members = state.MembersOf(id);
+            members.ToList().ForEach(m => drawn.Add(m.Id));
+            blocks.Add(members);
+        });
+
+        return blocks;
+    }
+
+    // Takes one item out and puts it back at the target, or returns null when there is nothing to
+    // do. Null rather than an unchanged copy so the caller can tell a no-op from a real move and
+    // skip the persist: writing state.json and pulsing every surface for a move that changed
+    // nothing would rebuild the whole bar for no reason.
+    static List<T>? Reordered<T>(List<T> order, int from, Func<int, int> targetOf, bool clampIntoRange)
+    {
         var to = targetOf(from);
 
-        // Out of range is a SUCCESSFUL no-op for the up/down buttons, unchanged from before: "Move
-        // up" on the first row should do nothing rather than raise an error at someone who clicked
-        // it. Move-to-top/end clamps instead, since an end is what it was asking for anyway.
-        if (clampIntoRange) to = Math.Clamp(to, 0, slots.Count - 1);
-        else if (to < 0 || to >= slots.Count) return Result.Success();
-        if (to == from) return Result.Success();
+        // Out of range is a no-op for the up/down buttons: "Move up" on the first row should do
+        // nothing rather than raise an error at someone who clicked it. Move-to-top/end clamps
+        // instead, since an end is what it was asking for anyway.
+        if (clampIntoRange) to = Math.Clamp(to, 0, order.Count - 1);
+        else if (to < 0 || to >= order.Count) return null;
+        if (to == from) return null;
 
-        Persist(State with { Workspaces = PeersReordered(slots, from, to) });
-        return Result.Success();
+        var moved = new List<T>(order);
+        moved.RemoveAt(from);
+        moved.Insert(to, order[from]);
+        return moved;
     }
 
-    // The positions in State.Workspaces held by everything sharing this parent, in list order.
-    List<int> PeerSlots(Guid? parentId) =>
-        State.Workspaces.Select((w, slot) => (w, slot)).Where(x => x.w.ParentId == parentId).Select(x => x.slot).ToList();
-
-    // Reorders only the workspaces sitting in `slots`, writing them back into those same slots.
+    // Persisting the flattened blocks makes the stored order the order the bar draws, which is worth
+    // stating because it also TIDIES: a group whose members were scattered through the list (a join
+    // from a distant row, or an old state.json) comes back contiguous. Lane colours follow list
+    // position and a group takes its colour from its anchor, so both agree with the screen
+    // afterwards -- and a list already in drawn order is left untouched, which is the normal case.
     //
-    // A plain remove-and-insert on the whole list would drag a moved child across other groups'
-    // positions and shuffle their colours. Permuting the occupants of a fixed set of slots keeps
-    // every other row exactly where it was.
-    IReadOnlyList<Workspace> PeersReordered(List<int> slots, int from, int to)
-    {
-        var peers = slots.Select(slot => State.Workspaces[slot]).ToList();
-        var moved = peers[from];
-        peers.RemoveAt(from);
-        peers.Insert(to, moved);
-
-        var next = State.Workspaces.ToList();
-        slots.Select((slot, position) => (slot, position)).ToList().ForEach(x => next[x.slot] = peers[x.position]);
-        return next;
-    }
+    // A null order means the move was a no-op, and that SUCCEEDS: see Reordered.
+    Result MovedTo(List<Workspace>? order) =>
+        Result.Success().Tap(() => { if (order is not null) Persist(State with { Workspaces = order }); });
 
     // Petre: "minimized workspace rows: right-click to shrink a row to a third of its height",
     // and "the right-click menu on a minimized row offers Unminimize to restore it".
@@ -1098,10 +1135,18 @@ public sealed class WorkspaceManager(
                 // plain "move out" would. Doing it in one Persist keeps the bar from drawing the
                 // half-finished state.
                 var left = WithoutMember(State, workspaceId);
-                Persist(left with
-                {
-                    Workspaces = left.Workspaces.Select(w => w.Id == workspaceId ? w with { GroupId = groupId } : w).ToList(),
-                });
+
+                // Moved in the LIST as well as in the membership, to the bottom of its new group.
+                // Setting GroupId alone would leave it wherever it happened to sit, and since the
+                // box draws its members in list order, a workspace joining from a row above the
+                // group would appear in the middle of it. The bottom is where a new member belongs,
+                // and it also keeps the group contiguous, which is the order every move now
+                // preserves (see Blocks).
+                var joiner = left.Workspaces.Single(w => w.Id == workspaceId) with { GroupId = groupId };
+                var rest = left.Workspaces.Where(w => w.Id != workspaceId).ToList();
+                rest.Insert(AfterLastMemberOf(groupId, rest), joiner);
+
+                Persist(left with { Workspaces = rest });
             });
 
     // Petre (#83): "ungroup -- dissolve a group: the parent's nested workspaces stop being nested."

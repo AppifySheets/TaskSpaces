@@ -3063,9 +3063,11 @@ public partial class FloatingBar : Window
         // see MoveWorkspaceTo, which persists and pulses once for the whole gesture instead of
         // once per row it passes.
         //
-        // All four of these move a workspace among its PEERS (#85), so on a nested row top and end
-        // mean top and end of the group. The list length passed below is deliberately larger than
-        // any group; MoveWorkspaceTo clamps it to the last sibling.
+        // All four move a row among the rows it is drawn beside (#85), which for a member of a group
+        // is the inside of its box: top and end mean top and end of the group, not of the bar. On a
+        // group's ANCHOR they move the whole group, since the anchor cannot move within its own box.
+        // The list length passed below is deliberately larger than either range; MoveWorkspaceTo
+        // clamps it to the last position available.
         Add("⤒", "Move to top", () => Report(manager.MoveWorkspaceTo(workspaceId, 0)));
         Add("⤓", "Move to end", () => Report(manager.MoveWorkspaceTo(workspaceId, manager.State.Workspaces.Count - 1)));
 

@@ -293,12 +293,12 @@ public class NestedWorkspaceTests
     //
     // Petre: "move up / move down on a workspace inside a group doesn't work."
     //
-    // The moves predate nesting and shifted a workspace one place in the FLAT list. Since the bar
-    // re-groups rows by parent when it draws them, moving the first child up swapped it with its
-    // parent and changed nothing visible: it was still the first child.
+    // The moves predate grouping and shifted a workspace one place in the FLAT list. Since the bar
+    // draws a whole group as one box, moving the first member up swapped it with the anchor and
+    // changed nothing visible: it was still the first member below the anchor.
 
-    // A parent with three children, in list order, plus one unrelated top-level workspace after
-    // them so "did this disturb anything else" can be asked.
+    // An anchored group of four, in list order, plus one ungrouped workspace after it so "did this
+    // disturb anything else" can be asked.
     (WorkspaceManager manager, Guid parent, Guid[] children, Guid outsider) Family()
     {
         var (manager, parent, child, other) = Started();
@@ -309,8 +309,13 @@ public class NestedWorkspaceTests
         return (manager, parent, [child, second.Value.Id, third.Value.Id], other);
     }
 
+    // The group's members below the anchor, in the order the box draws them. MembersOf puts the
+    // anchor first, so skipping one is exactly "everything under the parent row".
     static IReadOnlyList<string> ChildNames(WorkspaceManager manager, Guid parent) =>
-        manager.State.Workspaces.Where(w => w.ParentId == parent).Select(w => w.Name).ToList();
+        manager.State.MembersOf(manager.State.GroupOf(parent)!.Id).Skip(1).Select(w => w.Name).ToList();
+
+    static IReadOnlyList<string> ListOrder(WorkspaceManager manager) =>
+        manager.State.Workspaces.Select(w => w.Name).ToList();
 
     [Fact]
     public void A_child_moves_up_among_its_siblings()
@@ -334,16 +339,17 @@ public class NestedWorkspaceTests
     }
 
     // The exact case reported. Up on the FIRST child used to swap it with the parent in the list,
-    // which the bar drew identically, so the menu item looked broken.
+    // which the bar drew identically, so the menu item looked broken. The anchor's row is not a
+    // place a member can move to, so this is a no-op instead.
     [Fact]
     public void Up_on_the_first_child_does_nothing_instead_of_swapping_with_the_parent()
     {
         var (manager, parent, children, _) = Family();
-        var before = manager.State.Workspaces.Select(w => w.Name).ToList();
+        var before = ListOrder(manager);
 
         Assert.True(manager.MoveWorkspace(children[0], -1).IsSuccess);
 
-        Assert.Equal(before, manager.State.Workspaces.Select(w => w.Name).ToList());
+        Assert.Equal(before, ListOrder(manager));
         Assert.Equal(parent, manager.State.Workspaces.First().Id);
     }
 
@@ -351,11 +357,11 @@ public class NestedWorkspaceTests
     public void Down_on_the_last_child_does_nothing()
     {
         var (manager, parent, children, _) = Family();
-        var before = manager.State.Workspaces.Select(w => w.Name).ToList();
+        var before = ListOrder(manager);
 
         Assert.True(manager.MoveWorkspace(children[2], +1).IsSuccess);
 
-        Assert.Equal(before, manager.State.Workspaces.Select(w => w.Name).ToList());
+        Assert.Equal(before, ListOrder(manager));
         Assert.Equal(parent, ParentOf(manager, children[2]));
     }
 
@@ -386,7 +392,7 @@ public class NestedWorkspaceTests
     }
 
     // Lane colours follow list position, so a move that dragged unrelated workspaces along would
-    // recolour rows nobody touched. Reordering only the group's own slots is what prevents that.
+    // recolour rows nobody touched. Reordering only inside the box is what prevents that.
     [Fact]
     public void Moving_a_child_leaves_every_other_workspace_where_it_was()
     {
@@ -398,18 +404,61 @@ public class NestedWorkspaceTests
         Assert.Equal(outsiderAt, manager.State.Workspaces.ToList().FindIndex(w => w.Id == outsider));
     }
 
-    // The other half: a top-level workspace moves among top-level workspaces, stepping over a
-    // group's children rather than swapping with one of them.
+    // The other half: an ungrouped workspace moves among the bar's other top-level rows, stepping
+    // over a whole group rather than swapping with one of its members.
     [Fact]
-    public void A_top_level_workspace_moves_past_a_whole_group()
+    public void An_ungrouped_workspace_moves_past_a_whole_group()
     {
-        var (manager, parent, _, outsider) = Family();
+        var (manager, _, _, outsider) = Family();
 
         Assert.True(manager.MoveWorkspace(outsider, -1).IsSuccess);
 
-        var names = manager.State.Workspaces.Where(w => w.ParentId is null).Select(w => w.Name).ToList();
-        Assert.Equal(["Personal", "Project"], names);
-        // The children stayed with their parent through it.
-        Assert.Equal(3, manager.State.Workspaces.Count(w => w.ParentId == parent));
+        // The group travelled intact and stayed in its own order; only the two top-level rows
+        // traded places.
+        Assert.Equal(["Personal", "Project", "Project docs", "Second", "Third"], ListOrder(manager));
+    }
+
+    // The anchor heads its box, held there by MembersOf, so there is nowhere for it to go inside
+    // one. Up and down on it move the whole group instead, which is the only reading of "move this
+    // row down" that changes anything on screen.
+    [Fact]
+    public void Moving_the_anchor_moves_the_whole_group()
+    {
+        var (manager, parent, _, _) = Family();
+
+        Assert.True(manager.MoveWorkspace(parent, +1).IsSuccess);
+
+        Assert.Equal(["Personal", "Project", "Project docs", "Second", "Third"], ListOrder(manager));
+        Assert.Equal(["Project docs", "Second", "Third"], ChildNames(manager, parent));
+    }
+
+    // An anchorless group (#84) has no row pinned at the top of the box, so unlike a child under an
+    // anchor, a member CAN reach the first position.
+    [Fact]
+    public void A_member_of_an_anchorless_group_can_move_to_the_top_of_the_box()
+    {
+        var (manager, parent, child, other) = Started();
+        var group = manager.CreateGroup("Clients", parent).Value.Id;
+        Assert.True(manager.MoveIntoGroup(child, group).IsSuccess);
+        Assert.True(manager.MoveIntoGroup(other, group).IsSuccess);
+
+        Assert.True(manager.MoveWorkspaceTo(other, 0).IsSuccess);
+
+        Assert.Equal(["Personal", "Project", "Project docs"], manager.State.MembersOf(group).Select(w => w.Name).ToList());
+    }
+
+    // Joining moves the workspace in the LIST too, to the bottom of its new box. Membership alone
+    // would leave it where it sat, and since the box draws its members in list order, a workspace
+    // joining from a row above the group would appear in the middle of it.
+    [Fact]
+    public void Joining_a_group_from_above_it_lands_at_the_bottom_of_the_box()
+    {
+        var (manager, parent, child, _) = Started();
+        var group = manager.CreateGroup("Clients", child).Value.Id;
+
+        Assert.True(manager.MoveIntoGroup(parent, group).IsSuccess);
+
+        Assert.Equal(["Project docs", "Project"], manager.State.MembersOf(group).Select(w => w.Name).ToList());
+        Assert.Equal(["Project docs", "Project", "Personal"], ListOrder(manager));
     }
 }
