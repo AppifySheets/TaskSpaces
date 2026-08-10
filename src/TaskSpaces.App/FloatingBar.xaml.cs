@@ -2906,9 +2906,13 @@ public partial class FloatingBar : Window
         // than a menu whose shape never changes.
         Add("▲", "Move up", () => Report(manager.MoveWorkspace(workspaceId, -1)));
         Add("▼", "Move down", () => Report(manager.MoveWorkspace(workspaceId, +1)));
-        // Petre: "add move to the end and to the top". A reposition rather than a run of swaps --
+        // Petre: "add move to the end and to the top". A reposition rather than a run of swaps:
         // see MoveWorkspaceTo, which persists and pulses once for the whole gesture instead of
         // once per row it passes.
+        //
+        // All four of these move a workspace among its PEERS (#85), so on a nested row top and end
+        // mean top and end of the group. The list length passed below is deliberately larger than
+        // any group; MoveWorkspaceTo clamps it to the last sibling.
         Add("⤒", "Move to top", () => Report(manager.MoveWorkspaceTo(workspaceId, 0)));
         Add("⤓", "Move to end", () => Report(manager.MoveWorkspaceTo(workspaceId, manager.State.Workspaces.Count - 1)));
 

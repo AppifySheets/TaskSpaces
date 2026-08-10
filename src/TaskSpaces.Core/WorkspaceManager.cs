@@ -805,12 +805,7 @@ public sealed class WorkspaceManager(
     // Out-of-range moves SUCCEED as no-ops rather than failing: the Up button on the first
     // row should do nothing, not raise an error dialog at someone who clicked it.
     public Result MoveWorkspace(Guid id, int delta) =>
-        State.Workspaces.ToList().FindIndex(w => w.Id == id) switch
-        {
-            < 0 => Result.Failure("Workspace no longer exists."),
-            var from when from + delta < 0 || from + delta >= State.Workspaces.Count => Result.Success(),
-            var from => Result.Success().Tap(() => Persist(State with { Workspaces = Swapped(from, from + delta) })),
-        };
+        MoveAmongPeers(id, from => from + delta, clampIntoRange: false);
 
     // Petre: "menu options: add move to the end and to the top."
     //
@@ -824,15 +819,69 @@ public sealed class WorkspaceManager(
     // Clamped like InsertWorkspace, and for the same reason: the caller derives the target from a
     // list that may have changed since the menu opened, and landing at an end is a better answer
     // than an error dialog.
+    // `index` is a position AMONG PEERS, not in the whole list, so "move to top" on a nested
+    // workspace means the top of its group. Callers that mean "the end" may pass any number past
+    // the last peer, including the full list's length, and it is clamped.
     public Result MoveWorkspaceTo(Guid id, int index) =>
-        State.Workspaces.ToList().FindIndex(w => w.Id == id) switch
-        {
-            < 0 => Result.Failure("Workspace no longer exists."),
-            var from => Result.Success().Tap(() => Persist(State with
-            {
-                Workspaces = Repositioned(from, Math.Clamp(index, 0, State.Workspaces.Count - 1)),
-            })),
-        };
+        MoveAmongPeers(id, _ => index, clampIntoRange: true);
+
+    // Both moves reorder a workspace among its PEERS, which is the fix for #85: Petre reported that
+    // "move up / move down on a workspace inside a group doesn't work".
+    //
+    // They used to move it one place in the flat list, which predates nesting. The bar re-groups
+    // rows by parent when it draws them, so moving a child one place up swapped it with its parent
+    // in the list and changed nothing at all on screen: the child was still the first child. Moving
+    // a top-level workspace had the mirror problem, swapping it with somebody else's child and
+    // leaving the top-level order alone.
+    //
+    // Peers means "same ParentId", so a top-level workspace moves among top-level workspaces and a
+    // nested one moves among its siblings. Both cases go through here rather than being special
+    // cases of each other.
+    //
+    // Every non-peer keeps its exact slot in the list (see PeersReordered), which matters for two
+    // reasons: moving a child cannot disturb another group, and lane colours follow list position,
+    // so nothing outside the group changes colour. Within a group nothing changes colour either,
+    // because a nested row wears its parent's colour rather than its own.
+    Result MoveAmongPeers(Guid id, Func<int, int> targetOf, bool clampIntoRange)
+    {
+        if (State.Workspaces.FirstOrDefault(w => w.Id == id) is not { } workspace)
+            return Result.Failure("Workspace no longer exists.");
+
+        var slots = PeerSlots(workspace.ParentId);
+        var from = slots.FindIndex(slot => State.Workspaces[slot].Id == id);
+        var to = targetOf(from);
+
+        // Out of range is a SUCCESSFUL no-op for the up/down buttons, unchanged from before: "Move
+        // up" on the first row should do nothing rather than raise an error at someone who clicked
+        // it. Move-to-top/end clamps instead, since an end is what it was asking for anyway.
+        if (clampIntoRange) to = Math.Clamp(to, 0, slots.Count - 1);
+        else if (to < 0 || to >= slots.Count) return Result.Success();
+        if (to == from) return Result.Success();
+
+        Persist(State with { Workspaces = PeersReordered(slots, from, to) });
+        return Result.Success();
+    }
+
+    // The positions in State.Workspaces held by everything sharing this parent, in list order.
+    List<int> PeerSlots(Guid? parentId) =>
+        State.Workspaces.Select((w, slot) => (w, slot)).Where(x => x.w.ParentId == parentId).Select(x => x.slot).ToList();
+
+    // Reorders only the workspaces sitting in `slots`, writing them back into those same slots.
+    //
+    // A plain remove-and-insert on the whole list would drag a moved child across other groups'
+    // positions and shuffle their colours. Permuting the occupants of a fixed set of slots keeps
+    // every other row exactly where it was.
+    IReadOnlyList<Workspace> PeersReordered(List<int> slots, int from, int to)
+    {
+        var peers = slots.Select(slot => State.Workspaces[slot]).ToList();
+        var moved = peers[from];
+        peers.RemoveAt(from);
+        peers.Insert(to, moved);
+
+        var next = State.Workspaces.ToList();
+        slots.Select((slot, position) => (slot, position)).ToList().ForEach(x => next[x.slot] = peers[x.position]);
+        return next;
+    }
 
     // Petre: "minimized workspace rows: right-click to shrink a row to a third of its height",
     // and "the right-click menu on a minimized row offers Unminimize to restore it".
@@ -944,22 +993,6 @@ public sealed class WorkspaceManager(
         {
             Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Color = color } : w).ToList(),
         }));
-
-    IReadOnlyList<Workspace> Repositioned(int from, int to)
-    {
-        var reordered = State.Workspaces.ToList();
-        var moved = reordered[from];
-        reordered.RemoveAt(from);
-        reordered.Insert(to, moved);
-        return reordered;
-    }
-
-    IReadOnlyList<Workspace> Swapped(int from, int to)
-    {
-        var reordered = State.Workspaces.ToList();
-        (reordered[from], reordered[to]) = (reordered[to], reordered[from]);
-        return reordered;
-    }
 
     // Case-insensitive, trim-tolerant name collision check. `excluding` lets
     // RenameWorkspace allow renaming a workspace to (a variant of) its own current name --

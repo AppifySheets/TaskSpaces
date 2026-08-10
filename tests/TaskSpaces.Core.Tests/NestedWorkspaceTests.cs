@@ -288,4 +288,128 @@ public class NestedWorkspaceTests
     [Fact]
     public void Inserting_under_a_workspace_that_does_not_exist_is_refused() =>
         Assert.True(Started().manager.InsertWorkspace("Orphan", 0, Guid.NewGuid()).IsFailure);
+
+    // --- moving inside a group (#85) -----------------------------------------------------------
+    //
+    // Petre: "move up / move down on a workspace inside a group doesn't work."
+    //
+    // The moves predate nesting and shifted a workspace one place in the FLAT list. Since the bar
+    // re-groups rows by parent when it draws them, moving the first child up swapped it with its
+    // parent and changed nothing visible: it was still the first child.
+
+    // A parent with three children, in list order, plus one unrelated top-level workspace after
+    // them so "did this disturb anything else" can be asked.
+    (WorkspaceManager manager, Guid parent, Guid[] children, Guid outsider) Family()
+    {
+        var (manager, parent, child, other) = Started();
+        Assert.True(manager.NestWorkspace(child, parent).IsSuccess);
+        var second = manager.AddChildWorkspace(parent, "Second");
+        var third = manager.AddChildWorkspace(parent, "Third");
+        Assert.True(second.IsSuccess && third.IsSuccess);
+        return (manager, parent, [child, second.Value.Id, third.Value.Id], other);
+    }
+
+    static IReadOnlyList<string> ChildNames(WorkspaceManager manager, Guid parent) =>
+        manager.State.Workspaces.Where(w => w.ParentId == parent).Select(w => w.Name).ToList();
+
+    [Fact]
+    public void A_child_moves_up_among_its_siblings()
+    {
+        var (manager, parent, children, _) = Family();
+        Assert.Equal(["Project docs", "Second", "Third"], ChildNames(manager, parent));
+
+        Assert.True(manager.MoveWorkspace(children[1], -1).IsSuccess);
+
+        Assert.Equal(["Second", "Project docs", "Third"], ChildNames(manager, parent));
+    }
+
+    [Fact]
+    public void A_child_moves_down_among_its_siblings()
+    {
+        var (manager, parent, children, _) = Family();
+
+        Assert.True(manager.MoveWorkspace(children[0], +1).IsSuccess);
+
+        Assert.Equal(["Second", "Project docs", "Third"], ChildNames(manager, parent));
+    }
+
+    // The exact case reported. Up on the FIRST child used to swap it with the parent in the list,
+    // which the bar drew identically, so the menu item looked broken.
+    [Fact]
+    public void Up_on_the_first_child_does_nothing_instead_of_swapping_with_the_parent()
+    {
+        var (manager, parent, children, _) = Family();
+        var before = manager.State.Workspaces.Select(w => w.Name).ToList();
+
+        Assert.True(manager.MoveWorkspace(children[0], -1).IsSuccess);
+
+        Assert.Equal(before, manager.State.Workspaces.Select(w => w.Name).ToList());
+        Assert.Equal(parent, manager.State.Workspaces.First().Id);
+    }
+
+    [Fact]
+    public void Down_on_the_last_child_does_nothing()
+    {
+        var (manager, parent, children, _) = Family();
+        var before = manager.State.Workspaces.Select(w => w.Name).ToList();
+
+        Assert.True(manager.MoveWorkspace(children[2], +1).IsSuccess);
+
+        Assert.Equal(before, manager.State.Workspaces.Select(w => w.Name).ToList());
+        Assert.Equal(parent, ParentOf(manager, children[2]));
+    }
+
+    // Top and end mean top and end OF THE GROUP, not of the bar.
+    [Fact]
+    public void A_child_moves_to_the_top_of_its_group()
+    {
+        var (manager, parent, children, _) = Family();
+
+        Assert.True(manager.MoveWorkspaceTo(children[2], 0).IsSuccess);
+
+        Assert.Equal(["Third", "Project docs", "Second"], ChildNames(manager, parent));
+        // Still a child, and the parent is still the first row.
+        Assert.Equal(parent, ParentOf(manager, children[2]));
+        Assert.Equal(parent, manager.State.Workspaces.First().Id);
+    }
+
+    [Fact]
+    public void A_child_moves_to_the_end_of_its_group()
+    {
+        var (manager, parent, children, _) = Family();
+
+        // The bar passes the whole list's length for "end"; it clamps to the last sibling.
+        Assert.True(manager.MoveWorkspaceTo(children[0], manager.State.Workspaces.Count - 1).IsSuccess);
+
+        Assert.Equal(["Second", "Third", "Project docs"], ChildNames(manager, parent));
+        Assert.Equal(parent, ParentOf(manager, children[0]));
+    }
+
+    // Lane colours follow list position, so a move that dragged unrelated workspaces along would
+    // recolour rows nobody touched. Reordering only the group's own slots is what prevents that.
+    [Fact]
+    public void Moving_a_child_leaves_every_other_workspace_where_it_was()
+    {
+        var (manager, _, children, outsider) = Family();
+        var outsiderAt = manager.State.Workspaces.ToList().FindIndex(w => w.Id == outsider);
+
+        Assert.True(manager.MoveWorkspaceTo(children[2], 0).IsSuccess);
+
+        Assert.Equal(outsiderAt, manager.State.Workspaces.ToList().FindIndex(w => w.Id == outsider));
+    }
+
+    // The other half: a top-level workspace moves among top-level workspaces, stepping over a
+    // group's children rather than swapping with one of them.
+    [Fact]
+    public void A_top_level_workspace_moves_past_a_whole_group()
+    {
+        var (manager, parent, _, outsider) = Family();
+
+        Assert.True(manager.MoveWorkspace(outsider, -1).IsSuccess);
+
+        var names = manager.State.Workspaces.Where(w => w.ParentId is null).Select(w => w.Name).ToList();
+        Assert.Equal(["Personal", "Project"], names);
+        // The children stayed with their parent through it.
+        Assert.Equal(3, manager.State.Workspaces.Count(w => w.ParentId == parent));
+    }
 }
