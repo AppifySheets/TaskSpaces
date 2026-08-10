@@ -994,6 +994,35 @@ public sealed class WorkspaceManager(
                 });
             });
 
+    // Delete, but only an EMPTY one (#73). Petre: "if it still has windows in it, deletion is
+    // refused with a message: it can't be deleted until its contents are moved elsewhere."
+    //
+    // The refusal is the feature, not a safety rail bolted on. Windows' own desktop deletion
+    // silently reparents that desktop's windows onto a neighbour, so a plain delete scatters
+    // whatever was in the workspace across another one -- and the user finds out later, by
+    // discovering windows somewhere they never put them. There is deliberately no "delete anyway":
+    // moving the windows is a decision, and dragging their icons between rows already exists.
+    //
+    // "Has windows" is answered by the OVERVIEW rather than by counting memberships, because the
+    // question the user is really asking is about the row in front of them. The overview is what
+    // draws that row, so this cannot disagree with it -- including for a window minimized to the
+    // tray, which the OS may not report as on any desktop but which the bar still shows.
+    //
+    // Costs one overview query, which is COM-heavy. Fine for a deliberate delete; it would not be
+    // fine on a rebuild path.
+    //
+    // A workspace with CHILDREN but no windows of its own is deletable, and its children are
+    // promoted to the top level (see RemoveWorkspace). Nothing is lost -- they keep their desktops
+    // and their windows -- and refusing would leave no way to undo a nesting decision from the bar.
+    public Result DeleteWorkspaceIfEmpty(Guid id) =>
+        Workspace(id).Bind(workspace => WindowsByWorkspace()
+            .Bind(overview => overview.Workspaces.FirstOrDefault(g => g.Workspace.Id == id) is { Running.Count: > 0 } group
+                ? Result.Failure(
+                    $"'{workspace.Name}' still has {group.Running.Count} " +
+                    $"{(group.Running.Count == 1 ? "window" : "windows")} in it.\n\n" +
+                    "Move them to another workspace first — drag their icons to another row on the bar — then delete it.")
+                : RemoveWorkspace(id)));
+
     public Result SetRules(IReadOnlyList<WorkspaceRule> workspaceRules, IReadOnlyList<RenameRule> renameRules)
     {
         Persist(State with { WorkspaceRules = workspaceRules, RenameRules = renameRules });

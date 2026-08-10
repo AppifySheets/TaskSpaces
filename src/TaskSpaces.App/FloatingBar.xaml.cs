@@ -2912,6 +2912,48 @@ public partial class FloatingBar : Window
         Add("⤒", "Move to top", () => Report(manager.MoveWorkspaceTo(workspaceId, 0)));
         Add("⤓", "Move to end", () => Report(manager.MoveWorkspaceTo(workspaceId, manager.State.Workspaces.Count - 1)));
 
+        menu.Items.Add(new Separator());
+
+        // Delete (#73), which REVERSES a ruling rather than adding to the menu, so the reason is
+        // worth stating. Remove was deliberately kept off this menu: "it is the one item that
+        // cannot be undone, this menu now opens on a click that used to do nothing, and a mis-aimed
+        // right-click landing on 'Remove workspace' is a bad way to find that out."
+        //
+        // What changes the answer is the GUARD. A workspace holding windows now refuses to be
+        // deleted, so the expensive mistake -- windows silently scattered onto a neighbouring
+        // desktop by Windows' own desktop-merge behaviour -- is no longer reachable from here at
+        // all. What remains reachable is losing a NAME, plus its rules and its placement memory,
+        // for a workspace that was already empty.
+        //
+        // That is still irreversible, which is why it is last, behind its own separator, and asks.
+        // Petre confirmed the scope of what goes: "deleting a named workspace also discards its
+        // roster entry (placement memory), yes."
+        Add("🗑", "Delete workspace…", () =>
+        {
+            var workspace = manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId);
+            if (workspace is null) return; // deleted from elsewhere while the menu sat open
+
+            // Asked BEFORE the emptiness check, so the answer to a mis-click is always the same
+            // dialog rather than sometimes a refusal from deeper in. The children note only appears
+            // when there are children, because a warning about something that is not happening is
+            // worse than no warning.
+            var children = manager.State.Workspaces.Count(w => w.ParentId == workspaceId);
+            var childNote = children > 0
+                ? $"\n\nIts {children} nested {(children == 1 ? "workspace" : "workspaces")} will move up to the top level, keeping their windows."
+                : "";
+
+            if (MessageBox.Show(this,
+                    $"Delete '{workspace.Name}'?\n\n" +
+                    $"Its virtual desktop, its name, its rules and its placement memory all go. " +
+                    $"This cannot be undone." + childNote,
+                    "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
+
+            // The refusal path reports through the same Report() as everything else, so "it still
+            // has windows" arrives as a plain message rather than as a silent no-op.
+            Report(manager.DeleteWorkspaceIfEmpty(workspaceId));
+        });
+
         return menu;
     }
 
