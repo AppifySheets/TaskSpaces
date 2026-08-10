@@ -158,8 +158,13 @@ public sealed class FakeScreenLayout : IScreenLayout
     public Maybe<WindowRect> RectOf(WindowHandle window) =>
         Rects.TryGetValue(window, out var rect) ? rect : Maybe<WindowRect>.None;
 
-    public Result MoveTo(WindowHandle window, WindowRect rect)
+    // #89: mayChangeShowState is false for a window on another desktop, where un-maximizing it in order
+    // to move it would drag the desktop. Recorded so a test can assert the caller withholds it.
+    public List<bool> ShowStateAllowed { get; } = [];
+
+    public Result MoveTo(WindowHandle window, WindowRect rect, bool mayChangeShowState)
     {
+        ShowStateAllowed.Add(mayChangeShowState);
         if (RefuseMoves) return Result.Failure("refused");
         Moved.Add((window, rect));
         Rects[window] = rect;

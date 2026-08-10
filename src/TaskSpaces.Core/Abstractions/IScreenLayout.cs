@@ -29,5 +29,12 @@ public interface IScreenLayout
     // Restores a maximized window before moving it and maximizes it again afterwards, because a
     // maximized window's rectangle belongs to the monitor it is maximized on: writing a new one has no
     // effect at all until something un-maximizes it, and then it snaps back to where it was.
-    Result MoveTo(WindowHandle window, WindowRect rect);
+    //
+    // `mayChangeShowState` is false for a window that is NOT on the desktop you are standing on, and it
+    // is the guard on that un-maximizing. Bringing a window down and back up is a visible act, and doing
+    // it to a window on another desktop makes Windows follow the window to ITS desktop -- the app
+    // yanking you somewhere you did not ask to go. So for one of those, the geometry is written and
+    // nothing else is touched: if it takes, good, and if it does not, the caller queues it for when the
+    // window is somewhere it can be handled properly.
+    Result MoveTo(WindowHandle window, WindowRect rect, bool mayChangeShowState);
 }

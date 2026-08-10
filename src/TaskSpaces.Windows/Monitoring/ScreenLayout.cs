@@ -50,32 +50,81 @@ public sealed class ScreenLayout : IScreenLayout
             ? new WindowRect(rect.Left, rect.Top, rect.Right, rect.Bottom)
             : Maybe<WindowRect>.None;
 
-    public Result MoveTo(WindowHandle window, WindowRect rect)
+    public Result MoveTo(WindowHandle window, WindowRect rect, bool mayChangeShowState)
     {
         // A maximized window has to come down first. Its rectangle is the monitor's while it is
         // maximized, so SetWindowPos on it is accepted and then ignored, and the window snaps back to
         // the old monitor the moment anything restores it. Restore, move, maximize again: it ends up
         // maximized on the new screen, which is what the gesture asked for.
-        var maximized = IsZoomed(window.Value);
-        if (maximized) ShowWindowAsync(window.Value, SW_RESTORE);
-
-        // SWP_NOACTIVATE for the same reason the bar's topmost re-assert uses it: this runs from a
-        // drop, and the pointer is over the bar, so pulling the moved window to the foreground would
-        // take focus from whatever the user was actually working in. SWP_NOZORDER leaves the stack
-        // alone as well: moving a window between screens is not a request to raise it.
         //
-        // The insertAfter handle is ignored under SWP_NOZORDER, hence 0.
-        var moved = SetWindowPos(window.Value, 0, rect.Left, rect.Top, rect.Width, rect.Height,
-            SWP_NOACTIVATE | SWP_NOZORDER);
+        // AND THE RESTORE HAS TO HAVE HAPPENED before the move, which is what this got wrong when #89
+        // shipped. ShowWindowAsync POSTS the request to the window's own thread and returns
+        // immediately, so SetWindowPos ran while the window was still maximized, was ignored, and the
+        // re-maximize put it back exactly where it started. Petre: "i drag the vscode window in ec
+        // workspace to the left and it does nothing", and the trace showed the rectangle unchanged:
+        //
+        //   monitor move did not take: 20D06 screen 2->1, asked -3747,229 3747x2160, now 787,405
+        //
+        // So it is waited for. Still ShowWindowAsync rather than ShowWindow, because a synchronous
+        // call into a hung window's thread would freeze the bar with it: this way a window that never
+        // comes down costs a bounded wait and the move is simply reported as not taken, and the
+        // caller's retry picks it up.
+        var maximized = IsZoomed(window.Value) && mayChangeShowState;
+        if (maximized)
+        {
+            ShowWindowAsync(window.Value, SW_RESTORE);
+            if (!WaitUntil(() => !IsZoomed(window.Value)))
+                return Result.Failure("that window would not come out of maximized state.");
+        }
 
-        if (maximized) ShowWindowAsync(window.Value, SW_MAXIMIZE);
+        // RAISED to the front of the stack, not left where it was. Petre: "when moving, move it to the
+        // topmost window, not background." He is right, and the first version had this backwards: a
+        // window you have just deliberately sent to another screen is a window you want to look at, and
+        // one that arrives underneath whatever was already there looks like nothing happened -- the same
+        // failure as the move not being visible at all.
+        //
+        // SWP_NOACTIVATE stays, so it comes to the front WITHOUT taking focus. Raising and activating
+        // are different things: this runs from a drop with the pointer over the bar, and on a deferred
+        // move it runs as you arrive at a workspace, where the app has already decided which window
+        // focus belongs to (RestoreLastActive). Stealing it here would fight that.
+        var moved = SetWindowPos(window.Value, HWND_TOP, rect.Left, rect.Top, rect.Width, rect.Height,
+            SWP_NOACTIVATE);
+
+        // Waited for as well, and for the reverse of the reason above: the caller VERIFIES the move by
+        // reading the rectangle back, and a maximize still in flight would have it read the restored
+        // rectangle and conclude the move had not taken. Which screen it maximizes on follows the
+        // rectangle it was in, so the order here is the whole trick.
+        if (maximized)
+        {
+            ShowWindowAsync(window.Value, SW_MAXIMIZE);
+            WaitUntil(() => IsZoomed(window.Value));
+            // Raised again after the maximize, which decides its own z-order: without this a maximized
+            // window arrives on the new screen behind whatever was already there.
+            SetWindowPos(window.Value, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
 
         // A dead handle, a window belonging to an elevated process, or one that simply refuses to be
         // moved. All the same outcome to the caller, and all ordinary: the bar reports the message and
         // nothing else changes.
-        return moved || maximized
+        return moved
             ? Result.Success()
             : Result.Failure("Windows would not move that window.");
+    }
+
+    // A bounded wait for something ANOTHER process's UI thread has to do. 300ms in 15ms steps, which is
+    // generous for a window that is answering and short enough not to be noticed on a deliberate drop.
+    //
+    // False means it never happened, which the caller turns into "not taken" rather than into an error:
+    // the move is queued and tried again a second later, so a window that was merely busy still ends up
+    // where the drop asked.
+    static bool WaitUntil(Func<bool> settled)
+    {
+        for (var waited = 0; waited < 300; waited += 15)
+        {
+            if (settled()) return true;
+            Thread.Sleep(15);
+        }
+        return settled();
     }
 
     // HMONITOR -> the number Windows shows under Display Settings > Identify.

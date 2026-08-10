@@ -349,7 +349,14 @@ public sealed class WorkspaceManager(
     //     open surface, and each rebuild costs one DesktopOf COM call per known window. In the
     //     steady state -- which is almost always -- this is a GetForegroundWindow and a
     //     dictionary lookup, and nothing else happens at all.
-    public void ResyncActiveWindow() => monitor.Foreground().Tap(MarkActive);
+    public void ResyncActiveWindow()
+    {
+        monitor.Foreground().Tap(MarkActive);
+        // Free when there is nothing queued, which is almost always: one dictionary count. It rides
+        // this timer rather than owning one because what it waits for -- a window becoming reachable --
+        // is exactly the kind of OS state this method already exists to re-read (#89).
+        ApplyPendingMonitorMoves();
+    }
 
     // The one place activeWindow is written after startup, so the event path and the sweep can
     // never disagree about what "became active" means.
@@ -616,9 +623,8 @@ public sealed class WorkspaceManager(
         // -- and restoring focus to one of them only makes sense once it is here.
         ApplyInheritance(arriving);
         // After the borrowing, so a window pinned in from a parent workspace is not moved while it is
-        // only visiting, and before the focus restore, so the window it lands on is already where the
-        // drop asked for it (#89).
-        ApplyPendingMonitorMoves(arriving);
+        // only visiting. A first attempt, which may be too early to take: the resync tick retries it.
+        ApplyPendingMonitorMoves();
         RestoreLastActive(arriving);
     }
 
@@ -1440,24 +1446,33 @@ public sealed class WorkspaceManager(
     // So the move waits for the window to be reachable, and is applied the moment its desktop is the
     // one you are standing on. Which is not a compromise: the window ends up where the drop asked, and
     // it gets there without anything jumping.
-    public Result MoveWindowToMonitor(WindowHandle window, int monitorNumber)
+    public Result MoveWindowToMonitor(WindowHandle window, int monitorNumber) =>
+        MoveWindowToMonitor(window, monitorNumber, announce: true);
+
+    // `announce` pulses the surfaces when the outcome is known. True for a drop, where the row has to
+    // show the answer at once. False for the retry tick, which would otherwise rebuild the bar once a
+    // second for as long as one window refused to move -- and nothing on screen changes between
+    // attempts, since the icon has been on the target side since the drop. ApplyPendingMonitorMoves
+    // pulses once for the whole round instead.
+    Result MoveWindowToMonitor(WindowHandle window, int monitorNumber, bool announce)
     {
         // Null in compatibility mode, where there is no screen layout to ask. Nothing offers this
         // gesture there, since the row has no monitor marks to aim at either.
         if (screenLayout is null) return Result.Failure("Monitors are unavailable on this Windows build.");
 
-        // Held for later, untouched. A desktop that cannot be resolved is treated as reachable: that is
-        // the "Unplaced" case, where the window is not known to be anywhere else and trying can only
-        // help.
-        if (desktops.DesktopOf(window).GetValueOrDefault() is var where
-            && where != Guid.Empty
-            && where != desktops.CurrentDesktop().GetValueOrDefault())
-        {
-            pendingMonitor[window] = monitorNumber;
-            trace?.Invoke($"monitor move held: {window.Value:X} -> screen {monitorNumber} " +
-                          $"(on {NameOfDesktop(where)}, standing on {NameOfDesktop(currentDesktopId.GetValueOrDefault())})");
-            return Result.Success();
-        }
+        // TRIED NOW, whichever desktop the window is on. Petre: "when moving across monitors, it should
+        // update once i drop it in the new monitor."
+        //
+        // The earlier version refused outright for a window on another desktop, on the evidence of three
+        // drops that moved nothing. That evidence was contaminated: those failures were the
+        // ShowWindowAsync race (the un-maximize had not happened when the geometry was written), not
+        // cloaking, and it took fixing the race to see that the two had been confused. So the honest
+        // rule is to attempt it and let the verification below decide, rather than to assume.
+        //
+        // What IS withheld for a window on another desktop is changing its show state: see MoveTo. That
+        // is the part that can drag the desktop, and it is the part that was mistaken for the whole.
+        var here = desktops.DesktopOf(window).GetValueOrDefault() is var where
+                   && (where == Guid.Empty || where == desktops.CurrentDesktop().GetValueOrDefault());
 
         if (screenLayout.Snapshot().MonitorPlacement is not { } placement || !placement.TryGetValue(monitorNumber, out var target))
             return Result.Failure("That monitor is no longer there.");
@@ -1470,12 +1485,107 @@ public sealed class WorkspaceManager(
         // window may have been moved since, and a source monitor that disagreed with the rectangle
         // would scale the fractions against the wrong screen.
         var from = MonitorMove.MonitorOf(rect, placement);
-        if (from == monitorNumber) return Result.Success();
+        if (from == monitorNumber)
+        {
+            trace?.Invoke($"monitor move skipped: {window.Value:X} already on screen {monitorNumber}");
+            return Result.Success();
+        }
+
         if (from is not { } source || !placement.TryGetValue(source, out var origin))
             return Result.Failure("Cannot tell which monitor that window is on.");
 
-        return screenLayout.MoveTo(window, MonitorMove.Fit(rect, origin, target));
+        var landing = MonitorMove.Fit(rect, origin, target);
+        var moved = screenLayout.MoveTo(window, landing, mayChangeShowState: here);
+
+        // VERIFIED by reading the rectangle back, which is the only honest test. SetWindowPos reports
+        // success for a window it then quietly declines to move, and a window that has just become
+        // visible on arrival at a desktop may still be cloaked -- cloaking is not synchronous with the
+        // desktop-change notification, a trap this file already documents for the focus restore. So a
+        // move that did not take is put back in the queue and tried again on the next tick, rather than
+        // reported as done.
+        var settled = moved.IsSuccess
+                      && screenLayout.RectOf(window).GetValueOrDefault() is { } now
+                      && MonitorMove.MonitorOf(now, placement) == monitorNumber;
+
+        trace?.Invoke($"monitor move {(settled ? "done" : "did not take")}{(here ? "" : " [other desktop]")}: " +
+                      $"{window.Value:X} screen {source}->{monitorNumber}" +
+                      (moved.IsFailure ? $" ({moved.Error})" : "") +
+                      $", asked {landing.Left},{landing.Top} {landing.Width}x{landing.Height}" +
+                      $", now {screenLayout.RectOf(window).GetValueOrDefault()?.Left},{screenLayout.RectOf(window).GetValueOrDefault()?.Top}");
+
+        // Settled: nothing left queued for this window, so entering the workspace again does not repeat
+        // the move. Petre: "if i've already switched to the correct workspace, don't re-run that moving
+        // the window the next time i enter the workspace."
+        if (settled) Forget(window);
+        else Hold(window, monitorNumber);
+
+        // Redrawn either way. Settled, and the icon confirms where the window now is; held, and the icon
+        // shows where it is GOING, which is what makes a deferred move visible at the moment of the drop
+        // instead of whenever the bar next happened to rebuild.
+        if (announce) stateChanged.OnNext(Unit.Default);
+        return moved;
     }
+
+    // Queues a screen move, or gives up on one that has been retried enough to be hopeless -- an
+    // elevated window this process may never move, for instance. Bounded so a window that cannot be
+    // moved is not retried for the life of the session.
+    //
+    // Silent: no pulse here. This runs from the retry tick, and pulsing on every attempt would rebuild
+    // the bar once a second for as long as one window refuses to move. What the row draws does not
+    // change between attempts anyway -- the icon has been on the target side since the drop.
+    void Hold(WindowHandle window, int monitorNumber)
+    {
+        var attempts = pendingAttempts.GetValueOrDefault(window) + 1;
+        if (attempts > PendingAttemptLimit)
+        {
+            trace?.Invoke($"monitor move given up: {window.Value:X} after {attempts - 1} attempts");
+            // Pulsed, because giving up DOES change the row: the icon goes back to the side the window
+            // is really on, which is the honest answer once the move is never going to happen.
+            Forget(window);
+            stateChanged.OnNext(Unit.Default);
+            return;
+        }
+
+        pendingMonitor[window] = monitorNumber;
+        pendingAttempts[window] = attempts;
+    }
+
+    void Forget(WindowHandle window)
+    {
+        pendingMonitor.Remove(window);
+        pendingAttempts.Remove(window);
+    }
+
+    // Twenty tries at roughly a second apart, which covers a window that is slow to un-cloak without
+    // retrying an immovable one all day.
+    const int PendingAttemptLimit = 20;
+
+    // The bar draws a HELD move as though it had already happened (#89). Petre: "i need to see that it
+    // was moved, even though it hasn't, and move it when i activate the workspace."
+    //
+    // Which is the right way round. A drop is an instruction, and the row is where the instruction is
+    // read back: an icon that stays on the old side of the hairline until you happen to visit that
+    // workspace says the drop was ignored, and that is what he saw three times over.
+    //
+    // Only the MonitorOf map is rewritten, so grouping, the hairline and the icon's side all follow it,
+    // while the window itself is untouched until it can be moved. If a move is eventually given up on,
+    // the pending entry goes and the icon returns to where the window really is, which is the honest
+    // outcome rather than a lie that persists.
+    ScreenFacts WithPendingScreens(ScreenFacts facts)
+    {
+        if (pendingMonitor.Count == 0) return facts;
+
+        var monitorOf = facts.MonitorOf.ToDictionary(x => x.Key, x => x.Value);
+        pendingMonitor.ToList().ForEach(pending => monitorOf[pending.Key] = pending.Value);
+        return facts with { MonitorOf = monitorOf };
+    }
+
+    // Whether a screen move for this window would happen now or be held (#89), so the bar can say which
+    // before the drop looks like it did nothing. Asked of the same two facts the move itself uses.
+    public bool ScreenMoveWouldWait(WindowHandle window) =>
+        desktops.DesktopOf(window).GetValueOrDefault() is var where
+        && where != Guid.Empty
+        && where != desktops.CurrentDesktop().GetValueOrDefault();
 
     // Windows the launched-by tier has already had its one look at (#94). Never cleared while a window
     // lives: see LaunchedByWorkspace for why one look is the whole point.
@@ -1485,23 +1595,36 @@ public sealed class WorkspaceManager(
     // about now, and one that never got applied because the app was closed is not worth re-applying
     // days later on a machine whose monitors may have changed.
     readonly Dictionary<WindowHandle, int> pendingMonitor = [];
+    readonly Dictionary<WindowHandle, int> pendingAttempts = [];
 
-    // Applied on arrival at a desktop, for the windows that live on it. Called from OnDesktopChanged
-    // AFTER the borrowing has been settled, so a window pinned in from a parent workspace is not moved
-    // while it is only visiting.
-    void ApplyPendingMonitorMoves(Guid arriving)
+    // Tried on arrival at a desktop and again on every active-window resync tick, for the windows that
+    // live on the desktop you are now standing on.
+    //
+    // Retried rather than done once, because arriving is not the same as being able to move a window:
+    // cloaking lags the desktop-change notification, so the first attempt can be too early. Each
+    // attempt verifies by reading the rectangle back and re-queues itself if it did not take, so this
+    // stops as soon as the window really is where the drop asked.
+    public void ApplyPendingMonitorMoves()
     {
         if (pendingMonitor.Count == 0) return;
 
+        var current = desktops.CurrentDesktop().GetValueOrDefault();
+        if (current == Guid.Empty) return;
+
+        // Each attempt either settles (Forget) or re-queues itself (Hold), both from inside
+        // MoveWindowToMonitor, so nothing is removed here: the queue after the loop is the answer, and
+        // comparing it with the queue before is what says whether the bar needs redrawing.
+        var before = pendingMonitor.Count;
+
         pendingMonitor
-            .Where(pending => desktops.DesktopOf(pending.Key).GetValueOrDefault() == arriving)
+            .Where(pending => desktops.DesktopOf(pending.Key).GetValueOrDefault() == current)
             .ToList()
-            .ForEach(pending =>
-            {
-                pendingMonitor.Remove(pending.Key);
-                trace?.Invoke($"monitor move applied: {pending.Key.Value:X} -> screen {pending.Value}");
-                MoveWindowToMonitor(pending.Key, pending.Value);
-            });
+            .ForEach(pending => MoveWindowToMonitor(pending.Key, pending.Value, announce: false));
+
+        // Once, for however many moves landed: the icons were already drawn on the target side, so what
+        // this redraw settles is the window's REAL monitor agreeing with them at last, plus anything else
+        // the rebuild picks up. Silent when nothing landed, so a stuck move costs no rebuilds.
+        if (pendingMonitor.Count != before) stateChanged.OnNext(Unit.Default);
     }
 
     // Drag-and-drop onto a plain OS desktop row (e.g. Petre's unbound "Main"): the
@@ -1924,7 +2047,7 @@ public sealed class WorkspaceManager(
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);
             // One screen sweep per build, alongside the DesktopOf calls above -- and far cheaper
             // than they are, being user32 rather than COM.
-            var screen = screenLayout?.Snapshot() ?? ScreenFacts.Empty;
+            var screen = WithPendingScreens(screenLayout?.Snapshot() ?? ScreenFacts.Empty);
             return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop, screen, wantsAttention);
         }));
 

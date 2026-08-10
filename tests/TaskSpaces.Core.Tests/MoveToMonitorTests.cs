@@ -126,23 +126,44 @@ public class MoveToMonitorTests
     // forward, which takes Windows to its desktop. Beeper moved correctly for him throughout, because
     // Beeper was on the desktop he was standing on.
     [Fact]
-    public void Assigning_to_another_workspace_holds_the_screen_move_until_you_get_there()
+    public void Assigning_to_another_workspace_moves_the_screen_at_once_but_leaves_the_show_state_alone()
     {
         var manager = Started();
 
         Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsSuccess);
 
-        // The desktop move happened; the window was not touched on screen.
         Assert.Equal(personal, desktops.WindowPlacements[code.Handle]);
+        var (window, rect) = Assert.Single(screen.Moved);
+        Assert.Equal(code.Handle, window);
+        Assert.Equal(new WindowRect(-2880, 540, -960, 1620), rect);
+
+        // The one thing withheld for a window on another desktop: un-maximizing it in order to move it,
+        // which is what makes Windows follow the window to its desktop. Petre saw that as his desktop
+        // jumping about while he was doing nothing.
+        Assert.False(Assert.Single(screen.ShowStateAllowed));
+    }
+
+    // The OS declining is what deferral is FOR, and it is no longer assumed from the window being
+    // elsewhere: the attempt is made, and only a move that did not take is queued.
+    [Fact]
+    public void A_move_the_OS_declines_is_held_and_retried_when_you_arrive()
+    {
+        var manager = Started();
+        screen.RefuseMoves = true;
+
+        Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsFailure);
         Assert.Empty(screen.Moved);
 
-        // ...and it lands the moment that desktop is the one you are standing on.
+        // It lands on the next attempt, which arriving at that desktop triggers.
+        screen.RefuseMoves = false;
         desktops.CurrentDesktopId = personal;
         desktops.CurrentChangedSubject.OnNext(personal);
 
         var (window, rect) = Assert.Single(screen.Moved);
         Assert.Equal(code.Handle, window);
         Assert.Equal(new WindowRect(-2880, 540, -960, 1620), rect);
+        // Reachable this time, so the show state may be handled properly.
+        Assert.True(screen.ShowStateAllowed[^1]);
     }
 
     // The same drop onto the workspace you are ALREADY in does both immediately, since the window is
@@ -166,10 +187,32 @@ public class MoveToMonitorTests
     public void A_held_move_waits_for_the_windows_own_desktop()
     {
         var manager = Started();
-        Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsSuccess);
+        screen.RefuseMoves = true;
+        Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsFailure);
 
-        // Arriving somewhere else entirely changes nothing.
+        // Arriving somewhere else entirely changes nothing: the window lives on Personal now.
+        screen.RefuseMoves = false;
         desktops.CurrentChangedSubject.OnNext(work);
+
+        Assert.Empty(screen.Moved);
+    }
+
+    // A move that never takes is given up on rather than retried for the life of the session -- an
+    // elevated window this process may never be allowed to move.
+    [Fact]
+    public void A_move_that_never_takes_is_eventually_abandoned()
+    {
+        var manager = Started();
+        screen.RefuseMoves = true;
+        Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsFailure);
+        desktops.CurrentDesktopId = personal;
+
+        // Well past the attempt limit.
+        Enumerable.Range(0, 40).ToList().ForEach(_ => manager.ApplyPendingMonitorMoves());
+
+        // Stopped trying: a further round does nothing at all, even once the OS would allow it.
+        screen.RefuseMoves = false;
+        manager.ApplyPendingMonitorMoves();
 
         Assert.Empty(screen.Moved);
     }

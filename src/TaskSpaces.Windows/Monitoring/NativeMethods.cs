@@ -126,6 +126,12 @@ public static class NativeMethods
     public static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int cx, int cy, uint flags);
 
     public static readonly nint HWND_TOPMOST = new(-1);
+
+    // The front of the ORDINARY z-order, which is a different thing from HWND_TOPMOST above: that one
+    // puts a window in the always-on-top band the bar and the taskbar live in, which no ordinary window
+    // should join. This one just raises a window above its peers, and is what a window moved to another
+    // screen wants (#89) -- Petre: "move it to the topmost window, not background".
+    public static readonly nint HWND_TOP = new(0);
     public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
 
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(nint hwnd);

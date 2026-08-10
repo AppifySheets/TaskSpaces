@@ -2151,16 +2151,30 @@ public partial class FloatingBar : Window
 
                 var screen = rowKey is { } key ? AimedMonitor(key, container, e.GetPosition(container)) : null;
 
+                // Asked BEFORE the drop is carried out, because carrying it out is what changes the
+                // answer. A window on a desktop you are not standing on cannot be moved on screen at
+                // all (it is cloaked), so the move is held until you get there -- and without saying
+                // so, the drop looks like it did nothing. Petre: "it doesn't work, not even beeper
+                // now", on a run where every one of his drops was held and applied correctly later.
+                var waits = screen is not null && manager.ScreenMoveWouldWait(dragged.Handle);
+
                 // Dropped onto its own row. It used to be a plain no-op, and #89 is what gives it a
                 // meaning: past the hairline it is a monitor move with no desktop change at all. Short
                 // of the hairline it is still a no-op, because nothing was asked for.
                 if (dragged.SourceGroupKey == groupKey)
                 {
-                    if (screen is { } target) Report(manager.MoveWindowToMonitor(dragged.Handle, target));
-                    return;
+                    if (screen is not { } target) return;
+                    Report(manager.MoveWindowToMonitor(dragged.Handle, target));
+                }
+                else
+                {
+                    onDrop(dragged.Handle, screen);
                 }
 
-                onDrop(dragged.Handle, screen);
+                // Left on the info line rather than cleared, so the one gesture with no immediate
+                // effect says what it is waiting for. The next hover or rebuild replaces it.
+                if (waits && screen is { } held)
+                    Info.Text = $"screen {held} applies when you go to {groupLabel}";
             };
         }
 
