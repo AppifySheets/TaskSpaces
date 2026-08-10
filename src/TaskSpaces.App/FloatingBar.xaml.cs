@@ -418,6 +418,12 @@ public partial class FloatingBar : Window
         pressConsumedByChild = false;
         pressedRowKey = null;
 
+        // Set HERE, beside the trace line, and not at the end of this method: the question it answers is
+        // "did this window see the button go down", and the resize branch below returns without reaching
+        // the end. A press on a resize grip that left this false would make the release after it look
+        // orphaned, and an orphan release switches workspace -- so the honest reading is the only safe one.
+        pressSeen = true;
+
         // A press in either side strip resizes instead of doing anything else at all -- checked
         // FIRST, and returning, so the same press cannot also arm a bar-drag below.
         if (ResizeSideAt(e.GetPosition(this)) is { } side)
@@ -484,6 +490,17 @@ public partial class FloatingBar : Window
     //
     // Both are reset on every press, above.
     bool pressConsumedByChild;
+
+    // A drag has just given the mouse back, so the release that follows belongs to it rather than to a
+    // click. See onDragFinished, where it is set, and the row's release handler, which clears it.
+    bool dragJustFinished;
+
+    // Whether the press for the release now being handled ever reached this window, and its complement.
+    // Written in the window's own tunnelling handlers, which are first on both routes, so every handler
+    // further along can trust them. See OnPreviewMouseLeftButtonUp for what an orphan release means and
+    // why it is acted on rather than discarded.
+    bool pressSeen;
+    bool orphanRelease;
 
     // The row's KEY, not the row's container object, and that is the whole point (#48).
     //
@@ -566,8 +583,30 @@ public partial class FloatingBar : Window
         // delivered to the bar in any form, this line is written. A "press" with no "up" after it
         // therefore means the release genuinely never got here -- which is a different bug from a
         // release that got here and went nowhere, and needs a different fix.
+        // AN ORPHAN RELEASE: the button came up on the bar without the matching press ever arriving.
+        //
+        // The fourth and fifth mechanisms behind #48 both look like this in the log, and Petre could
+        // finally reproduce them: "i clicked personal workspace and it didn't take me there", twice, and
+        // "even icon clicking is still not working sometimes". Both times the log holds an `up` with no
+        // `press` before it, 0.35 to 0.46s after a workspace switch.
+        //
+        // That timing is the explanation. A switch animates for a few hundred milliseconds, and the app
+        // activates a window on the arriving desktop as it lands (see RestoreLastActive), so the bar is
+        // no longer the foreground window. A press during that window is eaten before it reaches us --
+        // by the shell's switch, or as the click that reactivates the bar. Nothing here can prevent it.
+        //
+        // So the release is honoured on its own. Both flags a normal click relies on are stale by
+        // definition in this case -- pressedRowKey and pressConsumedByChild describe the click BEFORE the
+        // one that went missing -- which is why the row previously either did nothing or switched to
+        // wherever the last press happened to be. pressConsumedByChild is cleared here so that only a
+        // handler running for THIS release can set it, which is what lets an icon still win over its row.
+        orphanRelease = !pressSeen;
+        pressSeen = false;
+        if (orphanRelease) pressConsumedByChild = false;
+
         if (ClickTrace.On)
-            ClickTrace.Write($"up source={e.OriginalSource.GetType().Name} clickTarget={StartedOnClickTarget(e.OriginalSource)} pressedRow={pressedRowKey ?? "none"}");
+            ClickTrace.Write($"up source={e.OriginalSource.GetType().Name} clickTarget={StartedOnClickTarget(e.OriginalSource)} " +
+                             $"pressedRow={pressedRowKey ?? "none"} orphan={orphanRelease}");
 
         dragStart = null;
         if (resizing is not null)
@@ -2113,8 +2152,24 @@ public partial class FloatingBar : Window
                 // arrived" are the two halves this bug has to be split into, and only the first
                 // one leaves a line here.
                 if (ClickTrace.On)
-                    ClickTrace.Write($"row-up group={groupLabel} consumedByChild={pressConsumedByChild} ourPress={pressedRowKey == groupKey}");
-                if (pressConsumedByChild || pressedRowKey != groupKey) return;
+                    ClickTrace.Write($"row-up group={groupLabel} consumedByChild={pressConsumedByChild} " +
+                                     $"ourPress={pressedRowKey == groupKey} afterDrag={dragJustFinished} orphan={orphanRelease}");
+
+                // The release a drag leaves behind, refused on its own evidence rather than on a leftover
+                // flag. Cleared here because this is the release it belongs to.
+                if (dragJustFinished)
+                {
+                    dragJustFinished = false;
+                    return;
+                }
+
+                // An orphan release skips the two press-derived guards, because for an orphan they
+                // describe the PREVIOUS click and can only mislead: that is how a click on Personal came
+                // to do nothing while pressedRowKey still named a row he had already left. What is trusted
+                // instead is where the release landed, which is this row -- the handler is on it -- and
+                // whether a child of this row claimed the same release, which pressConsumedByChild now
+                // only reports for handlers that ran after the orphan was detected.
+                if (orphanRelease ? pressConsumedByChild : pressConsumedByChild || pressedRowKey != groupKey) return;
                 // Stage 4: the switch itself, and its RESULT -- a failure here is invisible today
                 // because Report only shows a dialog, and a switch refused by a stale
                 // virtual-desktop COM object would look exactly like a click that did nothing.
@@ -2209,13 +2264,30 @@ public partial class FloatingBar : Window
                 // now", on a run where every one of his drops was held and applied correctly later.
                 var waits = screen is not null && manager.ScreenMoveWouldWait(dragged.Handle);
 
-                // Dropped onto its own row. It used to be a plain no-op, and #89 is what gives it a
-                // meaning: past the hairline it is a monitor move with no desktop change at all. Short
-                // of the hairline it is still a no-op, because nothing was asked for.
+                // Dropped onto its own row. Past the hairline that is #89's monitor move with no desktop
+                // change; short of it, it is the CLICK the user meant.
+                //
+                // That second half is #48's fourth mechanism, and the one Petre could finally reproduce:
+                // "i clicked two edge icons in the taskspace left monitor, I had 2 misses". The drag
+                // threshold is the system's four DIPs, which is six physical pixels at 150% scale, so a
+                // quick click on a 20px icon exceeds it easily. The press then becomes a drag, the icon
+                // never raises Click, the drop lands back where it started, and this branch used to
+                // return without doing anything at all -- a click that vanished, roughly one in ten.
+                //
+                // Raising the threshold was the other candidate and is worse: it would make deliberate
+                // short drags fail instead, and any threshold is a guess about the hand. Honouring the
+                // intent costs nothing, because a drag that ends where it began asked for nothing else.
                 if (dragged.SourceGroupKey == groupKey)
                 {
-                    if (screen is not { } target) return;
-                    Report(manager.MoveWindowToMonitor(dragged.Handle, target));
+                    if (screen is { } target)
+                    {
+                        Report(manager.MoveWindowToMonitor(dragged.Handle, target));
+                    }
+                    else
+                    {
+                        if (ClickTrace.On) ClickTrace.Write($"drop-as-click row={groupLabel} hwnd={dragged.Handle.Value:X}");
+                        Report(manager.ToggleWindow(dragged.Handle, activator));
+                    }
                 }
                 else
                 {
@@ -2911,7 +2983,19 @@ public partial class FloatingBar : Window
             // already down) can be older than the click by the time it happens. See
             // WorkspaceManager.ToggleWindow for what that cost -- a minimized window that could
             // not be brought back.
-            Report(manager.ToggleWindow(row.Window.Handle, activator));
+            var outcome = manager.ToggleWindow(row.Window.Handle, activator);
+
+            // Traced for the same reason the row's switch is (#48, and Petre again: "i've clicked on
+            // specific icons with no success, sometimes"). Without this an icon click that does nothing
+            // is an absence with nothing to be absent FROM: the press line says icon=True and then the
+            // log goes quiet, whether the Click never fired or the activation was refused. The refusal
+            // is invisible otherwise, since Report raises a dialog behind a topmost bar.
+            if (ClickTrace.On)
+                ClickTrace.Write($"icon-click app={row.Window.ProcessName} " +
+                                 $"hwnd={row.Window.Handle.Value:X} active={row.IsActive} " +
+                                 $"ok={outcome.IsSuccess}{(outcome.IsFailure ? $" error={outcome.Error}" : "")}");
+
+            Report(outcome);
         };
 
         // Petre: "i also want to be able to drag them around across tabs" -- the same drag
@@ -2926,8 +3010,49 @@ public partial class FloatingBar : Window
         // cursor raises no MouseLeave during a drag) and the bar must not fade while it is being
         // dragged ONTO (the OLE loop owns the mouse and the pointer is over another row).
         WindowDragSource.Attach(button, row.Window.Handle, groupKey,
-            onDragStarting: () => { ClearInfo(); draggingWindow = true; UpdateFade(); },
-            onDragFinished: () => { draggingWindow = false; UpdateFade(); });
+            onDragStarting: () =>
+            {
+                ClearInfo();
+                draggingWindow = true;
+                UpdateFade();
+                if (ClickTrace.On) ClickTrace.Write($"drag-start app={row.Window.ProcessName} from={groupLabel}");
+            },
+            onDragFinished: () =>
+            {
+                draggingWindow = false;
+                UpdateFade();
+                // #48, fourth visit. A drag swallows the press that started it -- DoDragDrop's modal
+                // loop takes the mouse-up as a native message, so the icon never raises Click -- but the
+                // ROW still receives a bubbling release afterwards, with no press of its own. The trace
+                // caught one: a `row-up` with no `press` and no `up` before it.
+                //
+                // Left alone, that stray release is decided by whatever pressConsumedByChild happens to
+                // hold from the click BEFORE the drag, so the same gesture either does nothing or
+                // switches workspace depending on history. Both are wrong. It is refused explicitly
+                // instead.
+                dragJustFinished = true;
+                if (ClickTrace.On) ClickTrace.Write($"drag-end app={row.Window.ProcessName}");
+            });
+        // The icon's half of the orphan-release repair. ButtonBase raises Click from a matched
+        // press-and-release pair, so a release whose press never arrived produces no Click at all and the
+        // icon is dead -- Petre: "even icon clicking is still not working sometimes". This handler stands
+        // in for the Click that could not happen, and only then.
+        //
+        // handledEventsToo, because the release is routinely marked handled before it gets here, and it
+        // runs BEFORE the row's own handler on the same bubbling route, so MarkPressConsumed keeps one
+        // gesture from both activating the window and switching workspace.
+        button.AddHandler(MouseLeftButtonUpEvent, new MouseButtonEventHandler((_, e) =>
+        {
+            if (e.ChangedButton != MouseButton.Left || !orphanRelease || dragJustFinished) return;
+            MarkPressConsumed();
+
+            var outcome = manager.ToggleWindow(row.Window.Handle, activator);
+            if (ClickTrace.On)
+                ClickTrace.Write($"icon-orphan-click app={row.Window.ProcessName} hwnd={row.Window.Handle.Value:X} " +
+                                 $"ok={outcome.IsSuccess}{(outcome.IsFailure ? $" error={outcome.Error}" : "")}");
+            Report(outcome);
+        }), handledEventsToo: true);
+
         button.ContextMenu = IconMenu(row);
         return button;
     }

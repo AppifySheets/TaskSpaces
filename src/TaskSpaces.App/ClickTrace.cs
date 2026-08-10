@@ -99,6 +99,49 @@ namespace TaskSpaces.App;
 //
 // THEN: fix the stage the log names, and add the failing sequence to this comment as a worked
 // example, so the fourth visit starts where the third finished.
+//
+// ---------------------------------------------------------------------------------------------
+// WORKED EXAMPLES: the fourth and fifth mechanisms, both caught 2026-08-10
+// ---------------------------------------------------------------------------------------------
+//
+// Petre could finally reproduce it -- "i clicked two edge icons in the taskspace left monitor, I had
+// 2 misses" -- and the log named two causes that no amount of reasoning had reached. Neither was a
+// hole in the two earlier fixes: both of those still hold.
+//
+// FOURTH: a click that became a DRAG.
+//
+//   press source=Image icon=True ...          <- eleven clicks like this, all fine
+//   up source=Button ...
+//   icon-click app=msedge hwnd=DB0FE2 ok=True
+//   row-up group=TaskSpace consumedByChild=True ourPress=True
+//   row-up group=TaskSpace consumedByChild=True ourPress=True   <- the twelfth: no press, no up
+//
+// The drag threshold is the system's four DIPs, which is six physical pixels at 150% scale, so a
+// quick click on a 20px icon exceeds it. DoDragDrop then swallows the press, the icon never raises
+// Click, and the drop lands back on the row it started from -- where the same-row branch used to
+// return without doing anything. Fixed by treating a drag that ends where it began as the click it
+// was (`drop-as-click`), and by refusing the stray release the drag leaves behind (`afterDrag=True`).
+//
+// FIFTH: a press Windows never delivered.
+//
+//   label-click TaskSpace                                          <- switch happens here
+//   up source=TextBlock ... pressedRow=...6929(Personal)           <- no press line at all
+//   row-up group=Personal consumedByChild=True ourPress=True       <- stood down, click lost
+//
+// Every instance landed 0.35-0.46s after a workspace switch. A switch animates for a few hundred ms
+// and the app activates a window on the arriving desktop as it lands, so the bar is not the
+// foreground window; the press is eaten before it arrives. Nothing here can prevent that, so the
+// release is honoured alone (`orphan=True`), skipping the two press-derived guards -- which for an
+// orphan describe the PREVIOUS click and can only mislead. Icons need their own handler for this,
+// since ButtonBase raises Click only from a matched pair (`icon-orphan-click`).
+//
+// Measured after the fix, in one session: twelve orphan releases, nine rescued switches, three
+// rescued icon clicks, no refusals. Presses 81, releases 82, orphans 12, presses with no release 11
+// -- those last being drags, whose release the OLE loop eats. Every event accounted for.
+//
+// A SIXTH visit therefore starts by asking: is `orphan` False on the failing release? If it is, this
+// is new. If it is True and nothing followed, the rescue itself is broken, which is a much smaller
+// search.
 static class ClickTrace
 {
     // A MARKER FILE beside state.json, or the environment variable. Two switches because the
