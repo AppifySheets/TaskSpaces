@@ -94,8 +94,14 @@ public static class WorkspacePalette
     public static bool IsNone(string? color) =>
         string.Equals(color?.Trim(), None, StringComparison.OrdinalIgnoreCase);
 
-    // index is the workspace's position in the user's own ordering, so the colour follows the
-    // list rather than a hash of the name: renaming a workspace should not recolour it.
-    public static string For(Workspace workspace, int index) =>
-        string.IsNullOrWhiteSpace(workspace.Color) ? Defaults[index % Defaults.Count] : workspace.Color!;
+    // index is the position in the user's own ordering, so the colour follows the list rather than a
+    // hash of the name: renaming a workspace should not recolour it.
+    //
+    // Takes a bare colour rather than a workspace because a GROUP has one too (#90, Group.Color) and
+    // the rule for resolving it is identical: an override if there is one, the position's colour
+    // otherwise. Two copies of that rule would be two places for it to drift.
+    public static string For(string? color, int index) =>
+        string.IsNullOrWhiteSpace(color) ? Defaults[index % Defaults.Count] : color!;
+
+    public static string For(Workspace workspace, int index) => For(workspace.Color, index);
 }

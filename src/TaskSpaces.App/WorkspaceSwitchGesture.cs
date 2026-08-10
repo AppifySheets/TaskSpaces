@@ -92,20 +92,26 @@ public sealed class WorkspaceSwitchGesture : IDisposable
     int DefinedIndexOf(Workspace workspace) =>
         Math.Max(0, manager.State.Workspaces.ToList().FindIndex(w => w.Id == workspace.Id));
 
-    // The workspace this one borrows its windows from, or null (#42).
+    // The name the picker prefixes a workspace with, or null for one that stands alone (#93).
     //
-    // Reads AppState.LendsWindowsTo, so the answer is null in three situations that all mean the
-    // same thing to the picker: the workspace is in no group, it is in an ANCHORLESS group (#84,
-    // where there is no parent workspace at all), or it is the anchor itself. In each case the
-    // picker shows a plain name rather than a prefix.
+    // The GROUP's name, for both kinds of group. It used to be the parent workspace's, which meant a
+    // member of an anchorless group (#84) got no prefix at all, since there is no parent workspace to
+    // read: Petre reported exactly that, and ruled that "both group kinds present the same way in the
+    // switcher". An anchored group is named after its anchor anyway, so nothing changes there.
     //
-    // An anchorless group's NAME is deliberately not used as a prefix here. It names a set, not a
-    // place, and "Clients / EuroCredit" would read as a path to a workspace that the chord cannot
-    // land on.
-    Workspace? ParentOf(Workspace workspace) =>
-        manager.State.LendsWindowsTo(workspace.Id) is { } lender
-            ? manager.State.Workspaces.FirstOrDefault(w => w.Id == lender)
+    // The ANCHOR itself gets no prefix. Its row would read "Sparrow › Sparrow", and it is not inside
+    // anything: it is the thing the others are inside.
+    string? GroupNameOf(Workspace workspace) =>
+        manager.State.GroupOf(workspace.Id) is { } group && !manager.State.IsAnchor(workspace.Id)
+            ? group.Name
             : null;
+
+    // The lane colour to draw beside the name, resolved exactly as the bar resolves it: a group has
+    // one colour (#90), so every member shows the group's, and an ungrouped workspace shows its own.
+    string ColourOf(Workspace workspace) =>
+        manager.State.GroupOf(workspace.Id) is { } group
+            ? WorkspacePalette.For(group.Color, Math.Max(0, manager.State.ColourSlotOf(group)))
+            : WorkspacePalette.For(workspace, DefinedIndexOf(workspace));
 
     // The picker's hwnd, so the composition root can hand it to WindowMonitor.Ignore. The monitor
     // no longer skips our own process (Petre wanted the Manage window in the bar), so without
@@ -134,15 +140,10 @@ public sealed class WorkspaceSwitchGesture : IDisposable
         picker.Present(
             recent.Ordered.Select(workspace =>
                 // Colour by DEFINED position, not by position in the recency list -- the same
-                // rule the floating bar's lane tints follow, so the two surfaces agree.
-                new SwitcherChoice(
-                    workspace.Name,
-                    // Colour follows the PARENT for a nested workspace, exactly as the bar's lane
-                    // tint does (#42) -- the picker's swatch and the bar's lane are the same fact
-                    // told twice, and a family that shares a colour in one place has to share it
-                    // in the other.
-                    WorkspacePalette.For(ParentOf(workspace) ?? workspace, DefinedIndexOf(ParentOf(workspace) ?? workspace)),
-                    ParentOf(workspace)?.Name)).ToList(),
+                // rule the floating bar's lane tints follow, so the two surfaces agree. The
+                // picker's swatch and the bar's lane are the same fact told twice, and a group
+                // that shares a colour in one place has to share it in the other.
+                new SwitcherChoice(workspace.Name, ColourOf(workspace), GroupNameOf(workspace))).ToList(),
             selected,
             // The hint names the chord actually in force, not a hardcoded one -- the whole point
             // of making it configurable is undone if the picker still tells you to hold Ctrl+Alt

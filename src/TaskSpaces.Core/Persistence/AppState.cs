@@ -159,6 +159,19 @@ public sealed record AppState(
 
     public bool IsAnchor(Guid workspaceId) => GroupOf(workspaceId)?.AnchorWorkspaceId == workspaceId;
 
+    // The list position a group's colour comes from when it has no colour of its own: its ANCHOR's,
+    // or its first member's when there is no anchor. Lane colours follow list position, and a group
+    // has one colour (#90), so it needs one position rather than one per member.
+    //
+    // -1 for a group with no members at all, which the callers already handle as "no colour": every
+    // surface that paints a lane accepts a null brush, because a hand-edited state.json has always
+    // been able to produce one.
+    //
+    // Here rather than in the bar and the switcher separately, because both need the same answer and
+    // #85 is what two surfaces computing their own answer looks like.
+    public int ColourSlotOf(Group group) =>
+        Workspaces.ToList().FindIndex(w => w.Id == (group.AnchorWorkspaceId ?? MembersOf(group.Id).FirstOrDefault()?.Id));
+
     // Turns a pre-groups state.json into one that uses groups, and is a no-op on anything already
     // migrated or on a file that never had nesting.
     //

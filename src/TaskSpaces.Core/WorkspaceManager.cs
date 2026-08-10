@@ -988,8 +988,13 @@ public sealed class WorkspaceManager(
     // through would let the bar draw a group with one member in it.
     AppState JoinedAnchoredGroup(Guid child, Guid parent)
     {
+        // A new group takes the parent's name AND its colour (#90), so nesting a workspace under a
+        // parent leaves the parent's row looking exactly as it did; only the child changes.
         var group = State.GroupOf(parent)
-            ?? new Group(Guid.NewGuid(), State.Workspaces.Single(w => w.Id == parent).Name, parent);
+            ?? new Group(Guid.NewGuid(), State.Workspaces.Single(w => w.Id == parent).Name, parent)
+            {
+                Color = State.Workspaces.Single(w => w.Id == parent).Color,
+            };
 
         return State with
         {
@@ -1104,9 +1109,12 @@ public sealed class WorkspaceManager(
             .Bind(w => State.GroupOf(firstMember) is { } existing
                 ? Result.Failure<Workspace>($"'{w.Name}' is already in '{existing.Name}'. Move it out first.")
                 : Result.Success(w))
-            .Bind(_ => GroupNameTaken(name, excluding: null)
+            // The group starts in the colour the workspace it was made from was already wearing, so
+            // making a group does not recolour the row you made it from (#90). Null for a workspace
+            // that never chose one, which leaves the group following its position like any other row.
+            .Bind(w => GroupNameTaken(name, excluding: null)
                 ? Result.Failure<Group>($"A group named '{name.Trim()}' already exists.")
-                : Result.Success(new Group(Guid.NewGuid(), name.Trim())))
+                : Result.Success(new Group(Guid.NewGuid(), name.Trim()) { Color = w.Color }))
             .Tap(group => Persist(State with
             {
                 Groups = [.. State.Groups, group],
@@ -1214,11 +1222,29 @@ public sealed class WorkspaceManager(
     // The hex is stored exactly as given rather than parsed here: Core has no colour type, and the
     // bar already treats an unreadable value as "no tint" rather than as a crash (see
     // FloatingBar.Lane), which is the right answer for a file a user can edit anyway.
+    //
+    // A GROUPED workspace redirects the choice to its group (#90). Petre: "the parent can change the
+    // group's colour, and so can any child... a group has one colour". So the picker on a member's
+    // row is the group's picker, and there is no such thing as a per-member colour inside a box. Its
+    // own Workspace.Color is deliberately left alone rather than overwritten, which is what lets it
+    // go back to the colour it chose for itself if it ever leaves.
     public Result SetWorkspaceColor(Guid id, string? color) =>
-        Workspace(id).Tap(_ => Persist(State with
-        {
-            Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Color = color } : w).ToList(),
-        }));
+        Workspace(id).Bind(_ => State.GroupOf(id) is { } group
+            ? SetGroupColor(group.Id, color)
+            : Result.Success().Tap(() => Persist(State with
+            {
+                Workspaces = State.Workspaces.Select(w => w.Id == id ? w with { Color = color } : w).ToList(),
+            })));
+
+    // The same choice made from an anchorless group's header row, which is the only surface a group
+    // with no anchor has of its own (#84, #90).
+    public Result SetGroupColor(Guid groupId, string? color) =>
+        State.Groups.Any(g => g.Id == groupId)
+            ? Result.Success().Tap(() => Persist(State with
+            {
+                Groups = State.Groups.Select(g => g.Id == groupId ? g with { Color = color } : g).ToList(),
+            }))
+            : Result.Failure("That group no longer exists.");
 
     // Case-insensitive, trim-tolerant name collision check. `excluding` lets
     // RenameWorkspace allow renaming a workspace to (a variant of) its own current name --

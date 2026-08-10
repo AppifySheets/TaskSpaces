@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Controls;
@@ -1141,13 +1141,11 @@ public partial class FloatingBar : Window
             var state = manager.State;
             var byGroup = overview.Workspaces.ToLookup(g => g.Workspace.GroupId);
 
-            // The position a group takes its colour from: its ANCHOR's, or its first member's when
-            // there is no anchor. An anchorless group has no parent to inherit from, so the first
-            // member is the only stable answer, and it keeps "colour follows list position" true
-            // for groups as well as for single rows.
-            int ColourSlotOf(Core.Domain.Group group) =>
-                overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id ==
-                    (group.AnchorWorkspaceId ?? state.MembersOf(group.Id).FirstOrDefault()?.Id));
+            // The position a group takes its colour from when it has none of its own, which the state
+            // answers so the switcher cannot disagree with the bar about it (AppState.ColourSlotOf).
+            // Indexing State.Workspaces rather than the overview is the same number: the overview
+            // builds one row per workspace, in list order.
+            int ColourSlotOf(Core.Domain.Group group) => state.ColourSlotOf(group);
 
             // Petre: "make the children more apparent, maybe group them together with an outline
             // or a ring."
@@ -1172,7 +1170,10 @@ public partial class FloatingBar : Window
                 var ownSlot = overview.Workspaces.ToList().FindIndex(w => w.Workspace.Id == g.Workspace.Id);
                 // The slot the row's colour comes from: its group's, or its own when ungrouped.
                 var colourSlot = group is not null ? ColourSlotOf(group) : ownSlot;
-                var colourFrom = colourSlot >= 0 ? overview.Workspaces[colourSlot].Workspace : g.Workspace;
+                // And the override in force, which for a member is the GROUP's (#90): a group is one
+                // colour whichever row set it, so a member's own Workspace.Color is ignored while it
+                // is inside a box and waiting for it if it ever leaves.
+                var colour = group is not null ? group.Color : g.Workspace.Color;
 
                 // A member is drawn as nested unless it is the anchor. In an ANCHORLESS group every
                 // member is nested, because none of them is the parent: the group's name carries
@@ -1194,11 +1195,11 @@ public partial class FloatingBar : Window
                     // Every member wears the GROUP's lane colour rather than its own. Colour is what
                     // groups things on this bar, so giving a member a colour of its own would be the
                     // surface saying "unrelated" while the layout says "belongs to".
-                    tint: LaneTint(colourFrom, colourSlot >= 0 ? colourSlot : ownSlot),
+                    tint: LaneTint(colour, colourSlot >= 0 ? colourSlot : ownSlot),
                     rowKey: g.Workspace.Id,
                     minimized: g.Workspace.Minimized,
                     nested: nested,
-                    spine: nested ? LaneAccent(colourFrom, colourSlot) : null);
+                    spine: nested ? LaneAccent(colour, colourSlot) : null);
             }
 
             // Walked in list order, emitting a whole group at its first member and skipping the
@@ -1228,15 +1229,13 @@ public partial class FloatingBar : Window
                 // An ANCHORLESS group needs a header, because nothing inside it carries the name.
                 // Deliberately not a switch target: there is no desktop behind it, and a row that
                 // looks clickable and does nothing is worse than one that plainly is not.
-                if (!group.IsAnchored) rows.Insert(0, GroupHeader(group, ColourSlotOf(group), overview));
+                if (!group.IsAnchored) rows.Insert(0, GroupHeader(group, ColourSlotOf(group)));
 
                 // A group of one gets no box: an outline around a single row would be decoration
                 // that means nothing, and most rows on the bar stand alone. It cannot normally
                 // happen, since leaving a group of two dissolves it, but a hand-edited state.json
                 // can produce one.
-                groupRows.Add(rows.Count == 1 ? rows[0] : FamilyBox(rows, LaneAccent(
-                    ColourSlotOf(group) >= 0 ? overview.Workspaces[ColourSlotOf(group)].Workspace : entry.Workspace,
-                    ColourSlotOf(group))));
+                groupRows.Add(rows.Count == 1 ? rows[0] : FamilyBox(rows, LaneAccent(group.Color, ColourSlotOf(group))));
             });
 
             // ...and unbound desktops with windows (OverviewBuilder already drops empty
@@ -1471,14 +1470,9 @@ public partial class FloatingBar : Window
     //
     // An anchored group needs none of this. Its anchor is a real workspace sitting at the top of
     // the box, and its name is already on that row.
-    UIElement GroupHeader(Core.Domain.Group group, int colourSlot, Core.Overview.Overview overview)
+    UIElement GroupHeader(Core.Domain.Group group, int colourSlot)
     {
-        var header = new Grid
-        {
-            Background = colourSlot >= 0
-                ? LaneTint(overview.Workspaces[colourSlot].Workspace, colourSlot) ?? Brushes.Transparent
-                : Brushes.Transparent,
-        };
+        var header = new Grid { Background = LaneTint(group.Color, colourSlot) ?? Brushes.Transparent };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -1514,6 +1508,11 @@ public partial class FloatingBar : Window
         var ungroup = new MenuItem { Header = "Ungroup", Icon = MenuGlyph("⊟") };
         ungroup.Click += (_, _) => Report(manager.Ungroup(group.Id));
         menu.Items.Add(ungroup);
+
+        // The group's colour belongs here too (#90): the header is a group's own row, and for an
+        // anchorless one it is the closest thing it has to a parent to set it from.
+        menu.Items.Add(new Separator());
+        AddGroupColourPicker(menu, group.Id);
 
         header.ContextMenu = menu;
         return header;
@@ -2172,22 +2171,26 @@ public partial class FloatingBar : Window
     // background for icons, and a background that wins the eye is a worse background even when it
     // is a better colour. Anything lighter than this and the row stops being a lane and starts
     // being a block of paint with icons on it.
-    static Brush? LaneTint(Workspace workspace, int index) => Lane(workspace, index, 0x38);
+    static Brush? LaneTint(string? color, int index) => Lane(color, index, 0x38);
 
     // The same lane colour at full strength, for the spine down the left of a nested row and the
     // outline around a family (#42). Deriving it from the same hex rather than picking a second
     // colour is the whole point: it has to read as "this belongs to the lane above", and two
     // colours cannot say that.
-    static Brush? LaneAccent(Workspace workspace, int index) => Lane(workspace, index, 0xC8);
+    static Brush? LaneAccent(string? color, int index) => Lane(color, index, 0xC8);
 
-    // NULL for a workspace that has opted out of a lane colour (#68), which every caller already
-    // handles: the tint, the spine and the family outline are all Brush? and all already have a
-    // "this row has no colour" path, because an unreadable hex in a hand-edited state.json has
-    // always been able to produce one.
-    static Brush? Lane(Workspace workspace, int index, byte alpha) =>
-        WorkspacePalette.IsNone(workspace.Color)
+    // NULL for a row that has opted out of a lane colour (#68), which every caller already handles:
+    // the tint, the spine and the family outline are all Brush? and all already have a "this row has
+    // no colour" path, because an unreadable hex in a hand-edited state.json has always been able to
+    // produce one.
+    //
+    // Takes the colour override rather than the workspace because for a grouped row it comes from the
+    // GROUP (#90, Group.Color), and the resolution is the same either way: the override if there is
+    // one, otherwise the palette entry for the position.
+    static Brush? Lane(string? color, int index, byte alpha) =>
+        WorkspacePalette.IsNone(color)
             ? null
-            : Tint(WorkspacePalette.For(workspace, index < 0 ? 0 : index), alpha);
+            : Tint(WorkspacePalette.For(color, index < 0 ? 0 : index), alpha);
 
     // Split out of Lane so the colour picker can draw a swatch from a bare hex, with no workspace
     // to ask and no position to look up -- and so it shares the same cache, since the picker's
@@ -3161,13 +3164,34 @@ public partial class FloatingBar : Window
     // in the menu itself. It cannot be misplaced because it is not positioned, it cannot be missed
     // on the way because there is no way, and a palette is better read as colours side by side than
     // as a list of colour names anyway.
-    void AddColourPicker(ContextMenu menu, Guid workspaceId)
-    {
-        // Read now rather than captured from the row, because the row was built with a lane colour
-        // that may have come from the palette by position -- what this menu needs is whether the
-        // workspace has an override of its OWN, which only the state can answer.
-        var chosen = manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.Color;
+    //
+    // On a row inside a group this is the GROUP's picker (#90). Petre: "the parent can change the
+    // group's colour, and so can any child... a group has one colour". So the mark comes from the
+    // group's own override and the choice goes to the group, which is also what stops a member's
+    // colour leaking into the group it joins (#92).
+    void AddColourPicker(ContextMenu menu, Guid workspaceId) =>
+        AddColourPicker(
+            menu,
+            // Read now rather than captured from the row, because the row was built with a lane colour
+            // that may have come from the palette by position -- what this menu needs is whether there
+            // is an override, which only the state can answer.
+            manager.State.GroupOf(workspaceId) is { } group
+                ? group.Color
+                : manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId)?.Color,
+            // SetWorkspaceColor does the redirect itself, so a member's choice lands on its group
+            // whichever surface asked.
+            colour => manager.SetWorkspaceColor(workspaceId, colour));
 
+    // The same picker on an anchorless group's header (#84, #90), which is the only row of its own a
+    // group without an anchor has.
+    void AddGroupColourPicker(ContextMenu menu, Guid groupId) =>
+        AddColourPicker(
+            menu,
+            manager.State.Groups.FirstOrDefault(g => g.Id == groupId)?.Color,
+            colour => manager.SetGroupColor(groupId, colour));
+
+    void AddColourPicker(ContextMenu menu, string? chosen, Func<string?, Result> choose)
+    {
         var strip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -3190,7 +3214,7 @@ public partial class FloatingBar : Window
             };
             button.Click += (_, _) =>
             {
-                Report(manager.SetWorkspaceColor(workspaceId, swatch.Hex));
+                Report(choose(swatch.Hex));
                 // Closed by hand. The wrapper below stays open on click so this handler runs at
                 // all, which means nothing else is going to close it.
                 menu.IsOpen = false;
@@ -3221,7 +3245,7 @@ public partial class FloatingBar : Window
             Header = "Transparent",
             Icon = EmptySwatch(WorkspacePalette.IsNone(chosen)),
         };
-        transparent.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, WorkspacePalette.None));
+        transparent.Click += (_, _) => Report(choose(WorkspacePalette.None));
         menu.Items.Add(transparent);
 
         var byPosition = new MenuItem
@@ -3231,7 +3255,7 @@ public partial class FloatingBar : Window
             // in the list happens to hand it, today and after the next reorder.
             Icon = MenuGlyph(string.IsNullOrWhiteSpace(chosen) ? "●" : "○"),
         };
-        byPosition.Click += (_, _) => Report(manager.SetWorkspaceColor(workspaceId, null));
+        byPosition.Click += (_, _) => Report(choose(null));
         menu.Items.Add(byPosition);
     }
 

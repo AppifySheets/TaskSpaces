@@ -25,4 +25,18 @@ namespace TaskSpaces.Core.Domain;
 public sealed record Group(Guid Id, string Name, Guid? AnchorWorkspaceId = null)
 {
     public bool IsAnchored => AnchorWorkspaceId is not null;
+
+    // The lane colour for the whole group (#90). Petre: "a group has one colour: if any child
+    // changes it, the entire group takes that colour", and it is settable "from the parent or any
+    // child".
+    //
+    // It lives HERE rather than being copied onto each member, which is what makes both halves of
+    // that work without extra bookkeeping. Joining takes the group's colour and leaving gives a
+    // workspace its own Workspace.Color back, because the group's colour was never written onto it.
+    // It also fixes #92, where a group took the colour of an incoming member: the group's colour is
+    // the group's, and nothing a member carries can overwrite it.
+    //
+    // Same three states as Workspace.Color: null follows the group's position in the list,
+    // WorkspacePalette.None opts out of a lane colour, anything else is a hex.
+    public string? Color { get; init; }
 }
