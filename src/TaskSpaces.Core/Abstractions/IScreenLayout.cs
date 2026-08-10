@@ -1,3 +1,4 @@
+using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Domain;
 
 namespace TaskSpaces.Core.Abstractions;
@@ -13,4 +14,20 @@ namespace TaskSpaces.Core.Abstractions;
 public interface IScreenLayout
 {
     ScreenFacts Snapshot();
+
+    // Where one window is, right now, and where to put it (#89: drop an icon on another monitor).
+    //
+    // Per-window rather than part of the snapshot above, because these serve a deliberate gesture
+    // rather than a rebuild: one window, once, at the moment it is dropped. Putting them in
+    // ScreenFacts would mean reading every window's rectangle on every overview build to answer a
+    // question asked once a day.
+    //
+    // Maybe rather than a Result on the read: a handle that has died between the drag and the drop is
+    // an ordinary outcome on this bar, not a failure worth reporting to anyone.
+    Maybe<WindowRect> RectOf(WindowHandle window);
+
+    // Restores a maximized window before moving it and maximizes it again afterwards, because a
+    // maximized window's rectangle belongs to the monitor it is maximized on: writing a new one has no
+    // effect at all until something un-maximizes it, and then it snaps back to where it was.
+    Result MoveTo(WindowHandle window, WindowRect rect);
 }

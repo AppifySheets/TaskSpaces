@@ -1075,6 +1075,7 @@ public partial class FloatingBar : Window
         // that is no longer in the tree. Repopulated as the new rows are built.
         rowRings.Clear();
         iconRings.Clear();
+        monitorLines.Clear();
         currentRow = null;
         ClearInfo();
         // BEFORE the overview query, and outside its Tap, deliberately: the back button reads
@@ -1099,6 +1100,23 @@ public partial class FloatingBar : Window
                 .Skip(1)
                 .Any();
 
+            // Rank -> display number, for #89's drop targeting. The ranks come from the overview,
+            // which computes them over the displays that actually hold windows (OverviewBuilder), so
+            // this is a map of the screens the bar can show anything about, in reading order.
+            //
+            // Needed for one case only: a row that starts on a later screen draws an empty half in
+            // front of its first group, and a drop in that empty half means the screen the row has
+            // nothing on. Rank 0 is that screen, which is exactly right on two monitors. With three
+            // or more the empty half stands in for every earlier screen at once and rank 0 is a
+            // choice among them rather than the answer, which is a limit of the LAYOUT rather than
+            // of this lookup: there is one empty half however many screens are missing from the row.
+            monitorByRank = overview.Pinned
+                .Concat(overview.Workspaces.SelectMany(w => w.Running))
+                .Concat(overview.OtherDesktops.SelectMany(d => d.Windows))
+                .Where(r => r.Monitor.HasValue && r.MonitorRank.HasValue)
+                .GroupBy(r => r.MonitorRank!.Value)
+                .ToDictionary(g => g.Key, g => g.First().Monitor!.Value);
+
             // Task 11 fix round 5 (Petre: "the rows are indistinguishable... i want to
             // tell which workspace i'm going to"): build the rows into a list first
             // (rather than adding straight to Rows.Children) so a hairline Separator
@@ -1119,7 +1137,9 @@ public partial class FloatingBar : Window
             // window title".
             groupRows.Add(GroupRow(visualLabel: "📌", groupLabel: "Pinned", isCurrent: false, switchTo: null,
                     groupKey: DraggedWindow.PinnedGroupKey,
-                    onDrop: h => Report(manager.PinWindow(h)),
+                    // No screen argument: a pinned window is on every desktop, and #89 is about which
+                    // screen a window sits on, which pinning has nothing to say about.
+                    onDrop: (h, _) => Report(manager.PinWindow(h)),
                     overview.Pinned));
 
             // Fix round 6 (Petre, screenshot showing ONE "Sparrow" row: "it does follow
@@ -1201,7 +1221,9 @@ public partial class FloatingBar : Window
                     g.Workspace.Name, g.IsCurrent,
                     switchTo: () => manager.Switch(g.Workspace.Id),
                     groupKey: DraggedWindow.WorkspaceGroupKey(g.Workspace.Id),
-                    onDrop: h => Report(manager.AssignWindow(h, g.Workspace.Id)),
+                    // The screen comes from WHERE in the row it was dropped (#89), and null means
+                    // the row had no split to aim at, which is the workspace-only move it always was.
+                    onDrop: (h, screen) => Report(manager.AssignWindow(h, g.Workspace.Id, screen)),
                     g.Running,
                     // Every member wears the GROUP's lane colour rather than its own. Colour is what
                     // groups things on this bar, so giving a member a colour of its own would be the
@@ -1281,7 +1303,7 @@ public partial class FloatingBar : Window
                     // switcher panel's grouped view).
                     switchTo: g.DesktopId == Guid.Empty ? null : () => manager.SwitchToDesktop(g.DesktopId),
                     groupKey: DraggedWindow.DesktopGroupKey(g.DesktopId),
-                    onDrop: g.DesktopId == Guid.Empty ? null : h => Report(manager.MoveToDesktop(h, g.DesktopId)),
+                    onDrop: g.DesktopId == Guid.Empty ? null : (h, _) => Report(manager.MoveToDesktop(h, g.DesktopId)),
                     g.Windows)));
 
             groupRows
@@ -1347,17 +1369,33 @@ public partial class FloatingBar : Window
 
         var grid = new Grid();
 
-        void AddColumn(UIElement child, GridLength width, double minWidth = 0)
+        // #89's drop target: the half of the line that stands for one screen. Painted behind the
+        // icons rather than over them (added first, so it is the bottom of the Grid's z-order), and
+        // parked outside every column until a drag arms it.
+        var aim = new Border { Background = Brushes.Transparent };
+        grid.Children.Add(aim);
+
+        // Which columns each screen's half occupies, in the order they are laid out. The mark that
+        // opens a group counts as part of THAT group's half, so the boundary between two screens is
+        // the hairline itself -- which is the rule Petre asked for: "the drop position relative to
+        // the hairline picks the monitor."
+        var zones = new List<MonitorZone>();
+
+        int AddColumn(UIElement child, GridLength width, double minWidth = 0)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width, MinWidth = minWidth });
             Grid.SetColumn(child, grid.ColumnDefinitions.Count - 1);
             grid.Children.Add(child);
+            return grid.ColumnDefinitions.Count - 1;
         }
 
         runs.Select((run, index) => (run, index)).ToList().ForEach(entry =>
         {
             var (run, index) = entry;
             var opens = opensGroup.Contains(run[0].Window.Handle);
+            // Where this run's half begins, filled in as the columns go down.
+            var firstColumn = -1;
+            FrameworkElement? mark = null;
 
             // A line can BEGIN with a group that is not the leftmost monitor's -- rows whose
             // windows all live on the second screen.
@@ -1374,7 +1412,17 @@ public partial class FloatingBar : Window
             // that row's mark on the same middle as every other row's, which is the whole point:
             // a hairline in the same place on every line is a boundary, and one that wanders is
             // just a dot.
-            if (index == 0 && opens) AddColumn(new Border(), new GridLength(1, GridUnitType.Star));
+            if (index == 0 && opens)
+            {
+                var empty = new Border();
+                var at = AddColumn(empty, new GridLength(1, GridUnitType.Star));
+                // The empty half is a real drop target (#89): it stands for the screen this row has
+                // nothing on, so dropping a window there is how you send it to a screen the row does
+                // not currently show. Only when that screen can be named, and only when it is not
+                // this run's own.
+                if (monitorByRank.TryGetValue(0, out var first) && first != run[0].Monitor.GetValueOrDefault(-1))
+                    zones.Add(new MonitorZone(first, null, at, 1));
+            }
 
             // The mark, in an Auto column with an equal star on each side -- which is what lands it
             // on the MIDDLE and keeps it there.
@@ -1383,7 +1431,11 @@ public partial class FloatingBar : Window
             // start on the leftmost monitor and the empty half above has just been laid down for
             // it. The mark divides rather than leads: its own column, symmetric margins, rather
             // than the first thing inside the group after it, which read as belonging to that group.
-            if (index > 0 || opens) AddColumn(MonitorMarker(run[0].MonitorRank.Value), GridLength.Auto);
+            if (index > 0 || opens)
+            {
+                mark = MonitorMarker(run[0].MonitorRank.Value);
+                firstColumn = AddColumn(mark, GridLength.Auto);
+            }
 
             var stack = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
 
@@ -1427,10 +1479,123 @@ public partial class FloatingBar : Window
             //
             // Counted in IconCellWidth, the same constant the wrap budget uses, so the two agree
             // about what an icon occupies rather than each having its own opinion.
-            AddColumn(stack, new GridLength(1, GridUnitType.Star), run.Count * IconCellWidth);
+            var stackColumn = AddColumn(stack, new GridLength(1, GridUnitType.Star), run.Count * IconCellWidth);
+            if (firstColumn < 0) firstColumn = stackColumn;
+            if (run[0].Monitor.HasValue)
+                zones.Add(new MonitorZone(run[0].Monitor.Value, mark, firstColumn, stackColumn - firstColumn + 1));
         });
 
+        // Registered per LINE rather than per row, because a wrapped row can hold one screen's icons
+        // above and another's below, and then "which half" is a question about the line the pointer is
+        // over. A row's own drop handler picks the line first and the half second.
+        if (rowKey is { } key && zones.Count > 0)
+        {
+            if (!monitorLines.TryGetValue(key, out var lines)) monitorLines[key] = lines = [];
+            lines.Add(new MonitorLine(grid, aim, zones));
+        }
+
         return grid;
+    }
+
+    // #89. Petre: "dropping the icon onto a specific monitor of another workspace", and "dropping the
+    // icon onto another monitor within the current workspace -- same drag, same row: drag the icon
+    // across its own row's hairline to send the window to the other screen."
+    //
+    // The row already draws the geography this needs: icons grouped by screen, a hairline where the
+    // screen changes. So the drop does not need a new surface, only a reading of where in the row it
+    // landed, and that reading is these two records.
+    //
+    // Held per row and rebuilt with the rows, for the reason everything else on this bar is: a
+    // rebuild throws every element away, and rebuilds fire on any window event.
+    sealed record MonitorZone(int Monitor, FrameworkElement? Mark, int FirstColumn, int ColumnCount);
+    sealed record MonitorLine(Grid Line, Border Aim, IReadOnlyList<MonitorZone> Zones);
+
+    readonly Dictionary<Guid, List<MonitorLine>> monitorLines = [];
+
+    // Rank -> display number for the screens the bar knows about. See where it is filled in.
+    IReadOnlyDictionary<int, int> monitorByRank = new Dictionary<int, int>();
+
+    // The half of the row a drop at this point is aiming at, or null for "no screen, just the
+    // workspace".
+    //
+    // Null in three cases, and all three mean the same thing to the caller: the row shows only one
+    // screen, so there is nothing to aim at; the row shows none at all; or the pointer is to the left
+    // of every half, which happens over the row's own left edge.
+    (MonitorLine Line, MonitorZone Zone)? Aimed(Guid rowKey, UIElement container, Point at)
+    {
+        if (!monitorLines.TryGetValue(rowKey, out var lines)) return null;
+
+        // One screen is not a choice. Petre's own rule for this: "today's behaviour (workspace only)
+        // would remain the meaning of a drop when the target row has no split to aim at."
+        if (lines.SelectMany(l => l.Zones).Select(z => z.Monitor).Distinct().Count() < 2) return null;
+
+        // The line under the pointer, or the nearest one: a row is a few pixels of padding taller
+        // than its lines, and a drop in that padding still means the line beside it.
+        var line = lines
+            .Select(l => (Line: l, Bounds: BoundsIn(l.Line, container)))
+            .Where(x => x.Bounds is not null)
+            .OrderBy(x => VerticalDistance(x.Bounds!.Value, at.Y))
+            .Select(x => x.Line)
+            .FirstOrDefault();
+
+        return line is not null && AimedZone(line, container, at) is { } zone ? (line, zone) : null;
+    }
+
+    int? AimedMonitor(Guid rowKey, UIElement container, Point at) => Aimed(rowKey, container, at)?.Zone.Monitor;
+
+    // The last half whose left edge the pointer has passed. A zone with no mark starts at the line's
+    // own left edge, which is why its start is negative infinity rather than zero: the row is padded,
+    // so the pointer can legitimately be at a smaller x than the line.
+    MonitorZone? AimedZone(MonitorLine line, UIElement container, Point at) =>
+        line.Zones
+            .Select(zone => (zone, Start: zone.Mark is null
+                ? double.NegativeInfinity
+                : BoundsIn(zone.Mark, container)?.Left ?? double.PositiveInfinity))
+            .Where(x => at.X >= x.Start)
+            .OrderByDescending(x => x.Start)
+            .Select(x => x.zone)
+            .FirstOrDefault();
+
+    // Null when the element is not (or is no longer) inside this container, which a rebuild during a
+    // drag can produce: the handler on the old row is still wired up while monitorLines already holds
+    // the new one's elements. A null means "cannot tell", and the drop falls back to workspace-only.
+    static Rect? BoundsIn(FrameworkElement element, UIElement container)
+    {
+        try
+        {
+            return element.TransformToAncestor((Visual)container).TransformBounds(new Rect(element.RenderSize));
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    static double VerticalDistance(Rect bounds, double y) =>
+        y < bounds.Top ? bounds.Top - y : y > bounds.Bottom ? y - bounds.Bottom : 0;
+
+    // Paints the half being aimed at and clears every other one on the row, so exactly one half is
+    // ever lit. Called on every DragOver, which is why it repaints from the answer rather than
+    // remembering what it lit last time: that is how a highlight gets stuck on a half the pointer left.
+    void ArmAim(Guid? rowKey, UIElement container, Point at)
+    {
+        if (rowKey is not { } key || !monitorLines.TryGetValue(key, out var lines)) return;
+
+        // ONE line, the one the pointer is on: a wrapped row can hold the same screen twice, and
+        // lighting both halves would claim the window is about to go to two places.
+        var aimed = Aimed(key, container, at);
+        lines.ToList().ForEach(line => line.Aim.Background = Brushes.Transparent);
+        if (aimed is not { } hit) return;
+
+        Grid.SetColumn(hit.Line.Aim, hit.Zone.FirstColumn);
+        Grid.SetColumnSpan(hit.Line.Aim, hit.Zone.ColumnCount);
+        hit.Line.Aim.Background = DropHighlight;
+    }
+
+    void ClearAim(Guid? rowKey)
+    {
+        if (rowKey is { } key && monitorLines.TryGetValue(key, out var lines))
+            lines.ToList().ForEach(line => line.Aim.Background = Brushes.Transparent);
     }
 
     // Group membership on the row's own menu (#83, #84). Petre: "all three live on the workspace
@@ -1663,7 +1828,7 @@ public partial class FloatingBar : Window
     // ends where every other row does and the monitor alignment (#39) still lines up across rows.
     const double NestedIndent = SpineWidth + 1;
 
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null)
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -1953,20 +2118,49 @@ public partial class FloatingBar : Window
                 e.Effects = accepted ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
                 if (!accepted) return;
+
+                // #89: which SCREEN the pointer is over, when the row draws more than one.
+                var screen = rowKey is { } key ? AimedMonitor(key, container, e.GetPosition(container)) : null;
+                var ownRow = e.Data.GetData(DraggedWindow.DragFormat) is DraggedWindow d && d.SourceGroupKey == groupKey;
+
+                // The half is highlighted, not the row, whenever a screen is being aimed at. On the
+                // window's OWN row that half-highlight is the only feedback there is -- the row is not
+                // changing, only the screen -- and on another row it answers "which half of which
+                // row", which is the question a split row raises and the plain row highlight cannot.
+                ArmAim(rowKey, container, e.GetPosition(container));
+                container.Background = screen is null && !ownRow ? DropHighlight : idle;
+
                 // The reserved info line doubles as the drop-target readout: on a bar this
                 // small, "where will this land?" is otherwise pure guesswork -- rows are
                 // ~28px tall and adjacent.
-                container.Background = DropHighlight;
-                Info.Text = $"→ move to {groupLabel}";
+                Info.Text = (screen, ownRow) switch
+                {
+                    (null, true) => "→ drop past the hairline for the other screen",
+                    (null, false) => $"→ move to {groupLabel}",
+                    ({ } s, true) => $"→ move to screen {s}",
+                    ({ } s, false) => $"→ move to {groupLabel}, screen {s}",
+                };
             };
-            container.DragLeave += (_, _) => { container.Background = idle; ClearInfo(); };
+            container.DragLeave += (_, _) => { container.Background = idle; ClearAim(rowKey); ClearInfo(); };
             container.Drop += (_, e) =>
             {
                 container.Background = idle;
+                ClearAim(rowKey);
                 ClearInfo();
                 if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) return;
-                if (dragged.SourceGroupKey == groupKey) return; // dropped onto its own group
-                onDrop(dragged.Handle);
+
+                var screen = rowKey is { } key ? AimedMonitor(key, container, e.GetPosition(container)) : null;
+
+                // Dropped onto its own row. It used to be a plain no-op, and #89 is what gives it a
+                // meaning: past the hairline it is a monitor move with no desktop change at all. Short
+                // of the hairline it is still a no-op, because nothing was asked for.
+                if (dragged.SourceGroupKey == groupKey)
+                {
+                    if (screen is { } target) Report(manager.MoveWindowToMonitor(dragged.Handle, target));
+                    return;
+                }
+
+                onDrop(dragged.Handle, screen);
             };
         }
 
@@ -2888,7 +3082,7 @@ public partial class FloatingBar : Window
     // those rows got an indent of its margin alone, matching no other row's. Reserving the gutter
     // for every group fixed the alignment and left an empty indent on the commonest row; Petre
     // saw both and chose flush.
-    static UIElement MonitorMarker(int rank)
+    static FrameworkElement MonitorMarker(int rank)
     {
         // CENTRED in the fixed 3px box below, and that is a fix rather than a detail. Petre: "space
         // between the hairline and icons following on the right is not consistent across

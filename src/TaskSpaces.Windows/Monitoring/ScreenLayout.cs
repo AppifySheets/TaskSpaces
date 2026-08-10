@@ -41,6 +41,43 @@ public sealed class ScreenLayout : IScreenLayout
         return new ScreenFacts(monitorOf, minimized, zOrder, primary, placement);
     }
 
+    // #89. Physical pixels, not DIPs: this is what SetWindowPos speaks, and MonitorMove does its
+    // arithmetic in the same units as the monitor bounds that came out of GetMonitorInfoEx above, so
+    // nothing here converts anything. The app is per-monitor-DPI-aware, which is what makes that
+    // true across screens at different scales.
+    public Maybe<WindowRect> RectOf(WindowHandle window) =>
+        GetWindowRect(window.Value, out var rect)
+            ? new WindowRect(rect.Left, rect.Top, rect.Right, rect.Bottom)
+            : Maybe<WindowRect>.None;
+
+    public Result MoveTo(WindowHandle window, WindowRect rect)
+    {
+        // A maximized window has to come down first. Its rectangle is the monitor's while it is
+        // maximized, so SetWindowPos on it is accepted and then ignored, and the window snaps back to
+        // the old monitor the moment anything restores it. Restore, move, maximize again: it ends up
+        // maximized on the new screen, which is what the gesture asked for.
+        var maximized = IsZoomed(window.Value);
+        if (maximized) ShowWindowAsync(window.Value, SW_RESTORE);
+
+        // SWP_NOACTIVATE for the same reason the bar's topmost re-assert uses it: this runs from a
+        // drop, and the pointer is over the bar, so pulling the moved window to the foreground would
+        // take focus from whatever the user was actually working in. SWP_NOZORDER leaves the stack
+        // alone as well: moving a window between screens is not a request to raise it.
+        //
+        // The insertAfter handle is ignored under SWP_NOZORDER, hence 0.
+        var moved = SetWindowPos(window.Value, 0, rect.Left, rect.Top, rect.Width, rect.Height,
+            SWP_NOACTIVATE | SWP_NOZORDER);
+
+        if (maximized) ShowWindowAsync(window.Value, SW_MAXIMIZE);
+
+        // A dead handle, a window belonging to an elevated process, or one that simply refuses to be
+        // moved. All the same outcome to the caller, and all ordinary: the bar reports the message and
+        // nothing else changes.
+        return moved || maximized
+            ? Result.Success()
+            : Result.Failure("Windows would not move that window.");
+    }
+
     // HMONITOR -> the number Windows shows under Display Settings > Identify.
     //
     // Read out of szDevice ("\\.\DISPLAY1", "\\.\DISPLAY2", ...) rather than taken from the

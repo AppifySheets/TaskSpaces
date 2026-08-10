@@ -126,7 +126,7 @@ public static class NativeMethods
     public static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int cx, int cy, uint flags);
 
     public static readonly nint HWND_TOPMOST = new(-1);
-    public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
 
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(nint hwnd);
 
@@ -141,6 +141,15 @@ public static class NativeMethods
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attachTo, uint attachFrom, bool attach);
     [DllImport("user32.dll")] public static extern bool IsIconic(nint hwnd);
+
+    // #89, moving a window to another monitor: where it is now, and whether it is maximized.
+    //
+    // IsZoomed rather than reading WINDOWPLACEMENT: a maximized window's rectangle belongs to the
+    // monitor it is maximized on, so writing a new one does nothing visible until something restores
+    // it, at which point it snaps back. It has to be restored, moved, and maximized again.
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool GetWindowRect(nint hwnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(nint hwnd);
+    public const int SW_MAXIMIZE = 3;
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(nint hwnd, int cmdShow);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
