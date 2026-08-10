@@ -624,8 +624,12 @@ public sealed class WorkspaceManager(
         ApplyInheritance(arriving);
         // After the borrowing, so a window pinned in from a parent workspace is not moved while it is
         // only visiting. A first attempt, which may be too early to take: the resync tick retries it.
-        ApplyPendingMonitorMoves();
-        RestoreLastActive(arriving);
+        //
+        // A move that LANDS takes the focus with it (#89) and the ledger's answer is skipped, because the
+        // two would otherwise fight: the moved window is activated here and RestoreLastActive would
+        // immediately hand focus back to whatever was last active. A window you have just sent to this
+        // screen is the more useful answer to "what were you about to use".
+        if (!ApplyPendingMonitorMoves()) RestoreLastActive(arriving);
     }
 
     // --- a nested workspace borrows its parent's windows (#42) ---------------------------------
@@ -1516,7 +1520,19 @@ public sealed class WorkspaceManager(
         // Settled: nothing left queued for this window, so entering the workspace again does not repeat
         // the move. Petre: "if i've already switched to the correct workspace, don't re-run that moving
         // the window the next time i enter the workspace."
-        if (settled) Forget(window);
+        // FOREGROUND, not merely raised. Petre: "when you move that window, make it foreground, first
+        // window." Raising it without focus was the cautious choice and it was the wrong one: a window
+        // you have just deliberately sent to another screen is the window you are about to use, and one
+        // that arrives in front but unfocused still needs a click before it answers the keyboard.
+        //
+        // Only when the move SETTLED, so a held move does not pull focus to a window that has not gone
+        // anywhere. See OnDesktopChanged for what this does to the arrival focus restore, which it now
+        // deliberately outranks.
+        if (settled)
+        {
+            Forget(window);
+            activator?.Activate(window);
+        }
         else Hold(window, monitorNumber);
 
         // Redrawn either way. Settled, and the icon confirms where the window now is; held, and the icon
@@ -1604,12 +1620,15 @@ public sealed class WorkspaceManager(
     // cloaking lags the desktop-change notification, so the first attempt can be too early. Each
     // attempt verifies by reading the rectangle back and re-queues itself if it did not take, so this
     // stops as soon as the window really is where the drop asked.
-    public void ApplyPendingMonitorMoves()
+    // True when at least one move landed, which the arrival path reads: a window moved onto the screen
+    // you are arriving at is a better answer to "what should have focus" than the ledger's, and the two
+    // must not fight over it.
+    public bool ApplyPendingMonitorMoves()
     {
-        if (pendingMonitor.Count == 0) return;
+        if (pendingMonitor.Count == 0) return false;
 
         var current = desktops.CurrentDesktop().GetValueOrDefault();
-        if (current == Guid.Empty) return;
+        if (current == Guid.Empty) return false;
 
         // Each attempt either settles (Forget) or re-queues itself (Hold), both from inside
         // MoveWindowToMonitor, so nothing is removed here: the queue after the loop is the answer, and
@@ -1624,7 +1643,9 @@ public sealed class WorkspaceManager(
         // Once, for however many moves landed: the icons were already drawn on the target side, so what
         // this redraw settles is the window's REAL monitor agreeing with them at last, plus anything else
         // the rebuild picks up. Silent when nothing landed, so a stuck move costs no rebuilds.
-        if (pendingMonitor.Count != before) stateChanged.OnNext(Unit.Default);
+        var landed = pendingMonitor.Count != before;
+        if (landed) stateChanged.OnNext(Unit.Default);
+        return landed;
     }
 
     // Drag-and-drop onto a plain OS desktop row (e.g. Petre's unbound "Main"): the
