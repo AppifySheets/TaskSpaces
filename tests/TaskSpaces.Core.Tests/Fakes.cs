@@ -31,9 +31,15 @@ public sealed class FakeDesktops : IVirtualDesktopService
         Result.SuccessIf(Desktops.RemoveAll(d => d.Id == id) > 0, "missing").Tap(() => Desktops.Add(new DesktopInfo(id, name)));
     public Result Switch(Guid id) { Switches.Add(id); return Result.Success(); }
     public Result Remove(Guid id) { Desktops.RemoveAll(d => d.Id == id); return Result.Success(); }
+    // #89 needs the ORDER of two moves to be observable: the screen move has to happen before the
+    // desktop move, because moving a window to another desktop cloaks it and a cloaked window's
+    // rectangle is not reliably writable.
+    public Action<WindowHandle, Guid>? OnMoveWindow { get; set; }
+
     public Result MoveWindow(WindowHandle w, Guid id)
     {
         if (RejectMoveFor.Contains(w)) return Result.Failure("move rejected (test)");
+        OnMoveWindow?.Invoke(w, id);
         WindowPlacements[w] = id;
         return Result.Success();
     }
@@ -126,6 +132,25 @@ public sealed class FakeScreenLayout : IScreenLayout
     public int SnapshotCount { get; private set; }
 
     public ScreenFacts Snapshot() { SnapshotCount++; return Facts; }
+
+    // #89, moving a window to another monitor. Rects holds where each window "is"; Moved records
+    // every write, so a test can assert both that the move happened and where it landed.
+    public Dictionary<WindowHandle, WindowRect> Rects { get; } = [];
+    public List<(WindowHandle Window, WindowRect Rect)> Moved { get; } = [];
+    // Set to make the OS refuse, which is an ordinary outcome: an elevated window cannot be moved
+    // by an unelevated process.
+    public bool RefuseMoves { get; set; }
+
+    public Maybe<WindowRect> RectOf(WindowHandle window) =>
+        Rects.TryGetValue(window, out var rect) ? rect : Maybe<WindowRect>.None;
+
+    public Result MoveTo(WindowHandle window, WindowRect rect)
+    {
+        if (RefuseMoves) return Result.Failure("refused");
+        Moved.Add((window, rect));
+        Rects[window] = rect;
+        return Result.Success();
+    }
 
     // Front-to-back, which is the order EnumWindows reports and therefore the order the real
     // ScreenLayout indexes.

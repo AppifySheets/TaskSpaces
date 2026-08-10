@@ -1326,14 +1326,57 @@ public sealed class WorkspaceManager(
         return Result.Success();
     }
 
-    public Result AssignWindow(WindowHandle window, Guid workspaceId) =>
+    // `monitor` is #89: the drop landed on a particular monitor's half of the row, so the window
+    // gets moved to that screen as well as to that workspace. Null means the row had no split to
+    // aim at, or the drop was nowhere near one, and then this is the workspace-only move it always
+    // was.
+    //
+    // Monitor FIRST, workspace second, and the order is load-bearing. Moving a window to another
+    // virtual desktop cloaks it, and a cloaked window's rectangle is not reliably writable -- the
+    // move is accepted and lands somewhere else, or nowhere. So the screen move happens while the
+    // window is still on a desktop you can see.
+    public Result AssignWindow(WindowHandle window, Guid workspaceId, int? monitor = null) =>
         knownWindows.TryGetValue(window, out var info)
             // Explicitly moving a pinned window to ONE workspace is a statement that it
             // should no longer be on ALL of them -- unpin first, then place (spec).
             ? desktops.IsPinned(window)
                 .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
+                .Bind(() => monitor is { } screen ? MoveWindowToMonitor(window, screen) : Result.Success())
                 .Bind(() => Place(info, workspaceId))
             : Result.Failure("Window no longer exists.");
+
+    // #89. Petre: "dropping the icon onto another monitor within the current workspace -- same drag,
+    // same row: drag the icon across its own row's hairline to send the window to the other screen."
+    //
+    // Nothing to do with virtual desktops, which is why it is a separate operation rather than an
+    // argument to Place: a window has a desktop and a monitor, and neither implies the other. Dropping
+    // across the hairline of a row the window is already in is this on its own.
+    //
+    // A no-op when the window is already there, so dropping onto its own half of its own row costs
+    // nothing rather than nudging the window by a rounding error.
+    public Result MoveWindowToMonitor(WindowHandle window, int monitorNumber)
+    {
+        // Null in compatibility mode, where there is no screen layout to ask. Nothing offers this
+        // gesture there, since the row has no monitor marks to aim at either.
+        if (screenLayout is null) return Result.Failure("Monitors are unavailable on this Windows build.");
+
+        if (screenLayout.Snapshot().MonitorPlacement is not { } placement || !placement.TryGetValue(monitorNumber, out var target))
+            return Result.Failure("That monitor is no longer there.");
+
+        if (screenLayout.RectOf(window).GetValueOrDefault() is not { } rect)
+            return Result.Failure("Window no longer exists.");
+
+        // Read from the RECTANGLE rather than from facts.MonitorOf, so both halves of one calculation
+        // agree about where the window is: MonitorOf was captured for the whole overview and the
+        // window may have been moved since, and a source monitor that disagreed with the rectangle
+        // would scale the fractions against the wrong screen.
+        var from = MonitorMove.MonitorOf(rect, placement);
+        if (from == monitorNumber) return Result.Success();
+        if (from is not { } source || !placement.TryGetValue(source, out var origin))
+            return Result.Failure("Cannot tell which monitor that window is on.");
+
+        return screenLayout.MoveTo(window, MonitorMove.Fit(rect, origin, target));
+    }
 
     // Drag-and-drop onto a plain OS desktop row (e.g. Petre's unbound "Main"): the
     // counterpart to AssignWindow for destinations that aren't workspaces. Same shape --
