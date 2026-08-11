@@ -92,6 +92,7 @@ public static class IconCache
             {
                 byWindow[key] = own;
                 probing.Remove(key);
+                Trace(window, processPath, own, "own");
                 return own;
             }
         }
@@ -137,8 +138,26 @@ public static class IconCache
         {
             byWindow[key] = provisional; // give up on the window, and stop paying for it
             probing.Remove(key);
+            Trace(window, processPath, provisional, "provisional-final");
         }
         return provisional;
+    }
+
+    // Which source answered, at what size, and with what fingerprint. Trace only, and written once per
+    // window when its icon is settled.
+    //
+    // Here because #105 keeps being decided by facts about pictures that no amount of reading the code
+    // produces: first that a PWA shares the browser's process, then -- from Petre, on the build that
+    // grouped by pixels -- "now two edges don't carry the ordinal band", which means two windows of one
+    // app resolved to two DIFFERENT pictures. This is the line that says which source each of them came
+    // from and how big it was.
+    static void Trace(WindowHandle window, string? processPath, ImageSource? icon, string source)
+    {
+        if (!ClickTrace.On) return;
+        var size = icon is BitmapSource b ? $"{b.PixelWidth}x{b.PixelHeight} {b.Format}" : "none";
+        var print = icon is BitmapSource bitmap ? Fingerprint(bitmap) ?? "?" : "-";
+        ClickTrace.Write($"icon {window.Value:X} {System.IO.Path.GetFileName(processPath) ?? "?"} " +
+                         $"source={source} {size} print={print}");
     }
 
     // THIS WINDOW's own icon, asked of the owning process. The only source specific to the

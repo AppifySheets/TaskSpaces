@@ -1146,6 +1146,8 @@ public partial class FloatingBar : Window
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, DumpRowGeometry);
         manager.WindowsByWorkspace().Tap(overview =>
         {
+            if (ClickTrace.On) DumpBands(overview);
+
             // Decided ONCE per rebuild, across every row, so the whole bar agrees. A machine
             // with one display needs no marker at all -- there is no "which monitor" to answer
             // -- and deciding per row instead would let a workspace whose windows happen to
@@ -1646,6 +1648,35 @@ public partial class FloatingBar : Window
         {
             return null;
         }
+    }
+
+    string lastBands = "";
+
+    // Which windows the ordinal colour band grouped together, and by what key (#105). Trace only, and
+    // only when it changes.
+    //
+    // Written because this issue has now been wrong twice in ways no reading of the code predicted, and
+    // both times the fix was decided by a measurement rather than an argument. Petre, on the build that
+    // groups by the picture: "now two edges don't carry the ordinal band" -- so two windows of one app
+    // are landing in different families, and the only way to see why is to print the key each one got
+    // beside the ordinal it ended up with.
+    void DumpBands(Core.Overview.Overview overview)
+    {
+        var rows = overview.Workspaces
+            .Select(w => (Label: w.Workspace.Name, Windows: w.Running))
+            .Concat(overview.OtherDesktops.Select(d => (Label: d.Name, Windows: d.Windows)))
+            .Append((Label: "Pinned", Windows: overview.Pinned));
+
+        var bands = string.Join("\n", rows
+            .Where(row => row.Windows.Count > 0)
+            .Select(row => $"  band {row.Label}: " + string.Join(", ", row.Windows.Select(r =>
+                $"{r.Window.Handle.Value:X}/{r.Window.ProcessName}" +
+                $"/ord={(r.Ordinal.HasValue ? r.Ordinal.Value.ToString() : "-")}" +
+                $"/key={IconCache.ArtworkKeyOf(r.Window.Handle, r.Window.ProcessPath) ?? "path"}"))));
+
+        if (bands == lastBands) return;
+        lastBands = bands;
+        ClickTrace.Write(bands);
     }
 
     // The last geometry written, so an unchanged layout is not written again. The bar rebuilds on every
@@ -3351,12 +3382,25 @@ public partial class FloatingBar : Window
         //
         // Reusing the underline slot the front-most marker used to occupy, which fell vacant
         // when z-order sorting made it redundant -- so this costs no new visual channel.
+        //
+        // RIMMED, in the dark the attention dot uses, and this is #105's third act. Petre: "now two edges
+        // don't carry the ordinal band", and the band trace said they both did -- `4A18F6/msedge/ord=2`
+        // beside `42103A/msedge/ord=1`. What changed was not the grouping but WHICH COLOURS those two
+        // windows drew: with YouTube Music correctly out of the family, the two Edges moved from amber and
+        // green to sky and amber, and sky blue on the bottom edge of a blue Edge icon is invisible.
+        //
+        // The palette is not the fix, because there is no palette that reads on every icon: amber
+        // disappears on Chrome, green on GitExtensions. A band needs to be legible against artwork nobody
+        // chose, which is exactly the problem the attention dot solved with a dark rim -- so it gets the
+        // same treatment rather than a cleverer colour.
         var band = new Border
         {
             Width = 16,
-            Height = 3,
-            CornerRadius = new CornerRadius(1),
+            Height = 4,
+            CornerRadius = new CornerRadius(2),
             Background = OrdinalBands[(ordinal.Value - 1) % OrdinalBands.Count],
+            BorderBrush = AttentionDotRim,
+            BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom,
         };
