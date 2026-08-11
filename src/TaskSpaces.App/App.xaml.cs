@@ -431,7 +431,14 @@ public partial class App : Application
             processes: new ProcessTree(),
             // ...and a line per decision when tracing is on, because a window that stays put looks the
             // same whether no launcher was found, two workspaces were, or the walk never ran.
-            trace: ClickTrace.On ? ClickTrace.Write : null);
+            trace: ClickTrace.On ? ClickTrace.Write : null,
+            // #105: the ordinal colour band groups windows by the picture they are drawn with, and this
+            // is the only layer that knows what that is. A pure read of the icon cache -- no probing, no
+            // bitmap creation -- so it is safe to call while an overview is being built, and it answers
+            // None for a window whose icon has not arrived yet, which the builder falls back for.
+            artworkOf: w => IconCache.ArtworkKeyOf(w.Handle, w.ProcessPath) is { } key
+                ? key
+                : Maybe<string>.None);
 
         // Time tracking (#53). Its own file beside state.json, because this is the one thing the
         // app stores that grows without bound -- one row per workspace per day, forever -- and

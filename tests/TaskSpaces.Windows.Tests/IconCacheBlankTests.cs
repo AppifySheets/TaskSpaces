@@ -49,6 +49,27 @@ public class IconCacheBlankTests
     public void One_visible_pixel_is_enough_to_be_a_real_icon() => StaThread.Run(() =>
         Assert.False(IconCache.IsBlank(Icon(alpha: 0, oneVisiblePixel: true))));
 
+    // #105, second visit: the ordinal colour band groups by the PICTURE, because every cheaper proxy
+    // for "the same app" was measured wrong on Petre's machine (IconCache.ArtworkKeyOf lists them).
+    // These pin the two halves of that claim.
+    [Fact]
+    public void The_same_picture_fingerprints_the_same() => StaThread.Run(() =>
+        Assert.Equal(IconCache.Fingerprint(Icon(alpha: 0xFF)), IconCache.Fingerprint(Icon(alpha: 0xFF))));
+
+    [Fact]
+    public void A_different_picture_fingerprints_differently() => StaThread.Run(() =>
+        Assert.NotEqual(IconCache.Fingerprint(Icon(alpha: 0xFF)), IconCache.Fingerprint(Icon(alpha: 0x80))));
+
+    // One pixel apart is still a different picture. The band's job is telling apart windows that look
+    // identical, so "nearly identical" has to count as different or a badged icon would be swallowed.
+    [Fact]
+    public void One_pixel_of_difference_is_enough() => StaThread.Run(() =>
+        // The blank icon against the same icon with a single pixel switched on: one byte apart out of
+        // four thousand, and it has to read as a different picture.
+        Assert.NotEqual(
+            IconCache.Fingerprint(Icon(alpha: 0)),
+            IconCache.Fingerprint(Icon(alpha: 0, oneVisiblePixel: true))));
+
     // Window icons do not always arrive as Bgra32; the predicate must convert rather than
     // assume, or it would read another format's bytes as alpha and answer nonsense.
     [Fact]

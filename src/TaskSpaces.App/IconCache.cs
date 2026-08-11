@@ -216,6 +216,75 @@ public static class IconCache
         catch (Exception) { return null; } // an odd/stale HICON: fall through to the next source
     }
 
+    // What the ordinal colour band groups by (#105, second visit): the ARTWORK, fingerprinted.
+    //
+    // The band's only job is telling apart windows that look identical, and every cheaper proxy for
+    // "same app" has now been measured and found wrong on Petre's own machine:
+    //
+    //   * ProcessName. A Chromium PWA runs as the browser's exe, so YouTube Music counted as another
+    //     Edge window. That was the original bug.
+    //   * The command line's --app-id. Measured: YouTube Music's window belongs to pid 26364, THE SAME
+    //     PROCESS as all ten ordinary Edge windows, because a PWA opened while the browser is running
+    //     is hosted by the browser. A command line is per process, so there is no --app-id to find.
+    //     This is why the first fix changed nothing that Petre could see.
+    //   * The window's AppUserModelID, which is what the shell groups taskbar buttons by, and it does
+    //     name the PWA exactly: `music.youtube.com-5929F88E_vezhnr0wkvrcy!App` against `MSEdge`. It
+    //     also splits what must stay together -- his two automation Chromes report
+    //     `Chrome.mcpchrome97bea9e.Default` and `Chrome.mcpchrome5adf218.Default`, two windows drawn
+    //     with the same Chrome icon, sitting in one row, which is the exact pair the band exists for.
+    //   * The HICON, or the cached ImageSource's identity. Same failure: those two Chromes are two
+    //     processes with two icon handles holding identical pixels.
+    //
+    // So the pixels are the answer, because the pixels are the question. Two windows share a band
+    // family when they are drawn the same, whatever the OS thinks they are.
+    //
+    // READ-ONLY against the caches: no probing, no bitmap creation, no side effects. A window whose
+    // icon has not resolved yet answers null and the caller falls back to the exe path, which is what
+    // it did before -- and by the next rebuild (there is one per window event) the icon is cached and
+    // the band is right. Never negative-cached, for the reason this class exists: an icon arrives
+    // asynchronously, and the first null is not the answer.
+    public static string? ArtworkKeyOf(WindowHandle window, string? processPath)
+    {
+        if (!byWindow.TryGetValue((window.Value, processPath ?? ""), out var icon) || icon is not BitmapSource bitmap)
+            return null;
+
+        if (fingerprints.TryGetValue(bitmap, out var known)) return known;
+
+        var fingerprint = Fingerprint(bitmap);
+        if (fingerprint is not null) fingerprints[bitmap] = fingerprint;
+        return fingerprint;
+    }
+
+    // By REFERENCE, which is what the dictionary's default comparer gives for an ImageSource, and
+    // that is exactly right here: byIconHandle already hands the same frozen instance to every window
+    // sharing an icon handle, so this is one hash per distinct bitmap rather than one per window.
+    static readonly Dictionary<BitmapSource, string> fingerprints = [];
+
+    // Public for the tests, like IsBlank beside it and for the same reason: it is pure, and it is the
+    // claim the whole band grouping rests on -- same picture, same key; different picture, different key.
+    public static string? Fingerprint(BitmapSource source)
+    {
+        try
+        {
+            var bgra = source.Format == PixelFormats.Bgra32
+                ? source
+                : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+            var stride = bgra.PixelWidth * 4;
+            var pixels = new byte[stride * bgra.PixelHeight];
+            bgra.CopyPixels(pixels, stride, 0);
+            // Truncated to eight bytes: this only ever separates the handful of icons on one bar, and
+            // a collision would merely put two apps in one band family, which is what the old
+            // ProcessName rule did to everything.
+            return System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pixels), 0, 8);
+        }
+        catch (Exception)
+        {
+            // A bitmap that will not give up its pixels is one fewer fact, not a crash: the caller
+            // falls back to the exe path.
+            return null;
+        }
+    }
+
     // True when every pixel is fully transparent. Public for the tests: it is the one piece of
     // this class that is pure, and it is the piece the YouTube Music bug turned on.
     public static bool IsBlank(BitmapSource source)

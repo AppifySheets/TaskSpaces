@@ -1,4 +1,4 @@
-using CSharpFunctionalExtensions;
+﻿using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
@@ -31,7 +31,13 @@ public static class OverviewBuilder
         // before this existed -- and leaves ordering and rendering exactly as they were.
         ScreenFacts? screen = null,
         // Windows whose taskbar button has flashed and that the user has not looked at since.
-        IReadOnlySet<WindowHandle>? wantsAttention = null)
+        IReadOnlySet<WindowHandle>? wantsAttention = null,
+        // What each window is DRAWN with, as an opaque key (#105). Optional and last, as everything
+        // here is; null means "nobody can tell me", and the grouping falls back to the exe path. Only
+        // the ordinal colour band uses it, and it is a Func rather than a dictionary because the app's
+        // icon cache fills in as icons arrive, so the answer is better a moment later than it was a
+        // moment ago.
+        Func<WindowInfo, Maybe<string>>? artworkOf = null)
     {
         var facts = screen ?? ScreenFacts.Empty;
         var attention = wantsAttention ?? new HashSet<WindowHandle>();
@@ -69,7 +75,7 @@ public static class OverviewBuilder
         // row. The cost is that closing a window renumbers the ones after it -- acceptable
         // because it happens on close, never on focus, which is the moment that had to stay
         // stable.
-        static Dictionary<WindowHandle, int> Ordinals(IReadOnlyList<WindowInfo> group) =>
+        Dictionary<WindowHandle, int> Ordinals(IReadOnlyList<WindowInfo> group) =>
             group
                 .GroupBy(SameArtwork)
                 .Where(sameApp => sameApp.Count() > 1)
@@ -81,29 +87,26 @@ public static class OverviewBuilder
         static Maybe<int> OrdinalOf(IReadOnlyDictionary<WindowHandle, int> ordinals, WindowInfo w) =>
             ordinals.TryGetValue(w.Handle, out var ordinal) ? ordinal : Maybe<int>.None;
 
-        // What the ordinal groups by, and the answer is NOT "the app" in any of the three senses this
-        // codebase already has a key for. #105: "the YouTube Music icon in the Personal row shows the
+        // What the ordinal groups by. #105: "the YouTube Music icon in the Personal row shows the
         // underline colour band, but there is only one YouTube Music window." It was grouped by
         // ProcessName, and a Chromium PWA runs as the browser's own exe, so YouTube Music and the
-        // Chrome window beside it counted as two windows of one app and both earned a band.
+        // browser window beside it counted as two windows of one app and both earned a band.
         //
-        // The band exists for ONE job: telling apart windows whose artwork is identical. So the key
-        // has to be whatever decides the artwork, which is neither the process nor the roster identity:
+        // Two keys, and the order matters.
         //
-        //   * ProcessName is too coarse. A PWA is drawn with its own icon (IconCache asks the WINDOW,
-        //     via WM_GETICON), so it never needs distinguishing from the browser.
-        //   * RosterIdentity is too fine. It includes the browser profile and, for everything else, the
-        //     arguments -- so two Chrome windows on different profiles, or two Rider windows on
-        //     different solutions, would each be a family of one and lose the band. Those are exactly
-        //     the identical-looking pairs the band was asked for.
+        // The ARTWORK ITSELF when the caller can identify it, which is the only key that answers the
+        // question the band actually asks -- "do these two look the same?" -- rather than a proxy for
+        // it. Every proxy has now been measured wrong on Petre's machine; IconCache.ArtworkKeyOf
+        // carries the list, and it is worth reading before replacing this with something cheaper.
         //
-        // Process path plus the PWA app id sits between them and matches the artwork in both
-        // directions. Path rather than name so two same-named exes in different places stay apart, and
-        // the name as the fallback when the path is unreadable (elevated), which is the best key
-        // available then and still groups two elevated windows of one app together.
-        static string SameArtwork(WindowInfo w) =>
-            (w.ProcessPath?.ToLowerInvariant() ?? w.ProcessName.ToLowerInvariant())
-            + BrowserProfile.AppFromCommandLine(w.CommandLine).Map(app => $"|app:{app}").GetValueOrDefault("");
+        // The path-and-app-id key below is the fallback, for a window whose icon has not resolved yet
+        // (they arrive asynchronously) and for compatibility mode and every test predating this. It is
+        // still better than the process name alone: it separates a PWA that DID get its own process,
+        // which is what happens when the browser was not already running.
+        string SameArtwork(WindowInfo w) =>
+            (artworkOf?.Invoke(w) ?? Maybe<string>.None).GetValueOrDefault(() =>
+                (w.ProcessPath?.ToLowerInvariant() ?? w.ProcessName.ToLowerInvariant())
+                + BrowserProfile.AppFromCommandLine(w.CommandLine).Map(app => $"|app:{app}").GetValueOrDefault(""));
 
         Maybe<int> MonitorOf(WindowInfo w) =>
             facts.MonitorOf.TryGetValue(w.Handle, out var number) ? number : Maybe<int>.None;

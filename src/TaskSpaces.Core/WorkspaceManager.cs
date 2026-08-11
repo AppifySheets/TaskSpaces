@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -56,7 +56,11 @@ public sealed class WorkspaceManager(
     // class with no visible output when it declines: a window that stays put looks identical whether
     // the walk found no launcher, found two workspaces, or was never asked. The app passes
     // ClickTrace.Write, which is off unless the marker file exists.
-    Action<string>? trace = null)
+    Action<string>? trace = null,
+    // What each window is DRAWN with (#105), for the ordinal colour band's grouping. Optional and last,
+    // as everything here is; null leaves the band grouping on its exe-path fallback. The app passes
+    // IconCache.ArtworkKeyOf, which is a read of its icon cache and nothing more.
+    Func<WindowInfo, Maybe<string>>? artworkOf = null)
 {
     readonly Func<DateTimeOffset> now = clock ?? (() => DateTimeOffset.Now);
     readonly int ownProcess = ownProcessId ?? Environment.ProcessId;
@@ -2143,7 +2147,7 @@ public sealed class WorkspaceManager(
             // One screen sweep per build, alongside the DesktopOf calls above -- and far cheaper
             // than they are, being user32 rather than COM.
             var screen = WithPendingScreens(screenLayout?.Snapshot() ?? ScreenFacts.Empty);
-            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop, screen, wantsAttention);
+            return OverviewBuilder.Build(State, windows, h => ledger.OriginalTitle(h), pinned, desktopOf, live, current, activeWindow, lastActiveByDesktop, screen, wantsAttention, artworkOf);
         }));
 
     // Both now RECORD the placement as well as performing it. Petre's defect: "move Beeper

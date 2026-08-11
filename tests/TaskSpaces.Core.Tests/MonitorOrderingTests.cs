@@ -25,7 +25,12 @@ public class MonitorOrderingTests
     static readonly WindowInfo C = Window(0xC, "Charlie");
 
     // All three on one unbound desktop, which surfaces as a single OtherDesktops group.
-    static IReadOnlyList<WindowRow> Rows(IReadOnlyList<WindowInfo> windows, ScreenFacts screen) =>
+    //
+    // `artwork` stands in for the app's icon cache (#105): what each window is DRAWN with, which is what
+    // the ordinal band groups by when it can be known. Null means "the app cannot say", which is the
+    // state every test predating it describes and the state a window is in before its icon arrives.
+    static IReadOnlyList<WindowRow> Rows(IReadOnlyList<WindowInfo> windows, ScreenFacts screen,
+        Func<WindowInfo, Maybe<string>>? artwork = null) =>
         OverviewBuilder.Build(
                 AppState.Empty,
                 windows,
@@ -34,7 +39,8 @@ public class MonitorOrderingTests
                 windows.ToDictionary(w => w.Handle, _ => Desktop),
                 [new DesktopInfo(Desktop, "Main")],
                 Guid.NewGuid(), // current is something else, so nothing is suppressed as "here"
-                screen: screen)
+                screen: screen,
+                artworkOf: artwork)
             .OtherDesktops.Single().Windows;
 
     static ScreenFacts Facts(
@@ -144,6 +150,61 @@ public class MonitorOrderingTests
 
         Assert.False(rows.Single(r => r.Window.Handle == browser.Handle).Ordinal.HasValue);
         Assert.False(rows.Single(r => r.Window.Handle == music.Handle).Ordinal.HasValue);
+    }
+
+    // #105 again, and the case the first fix could not see. MEASURED on Petre's machine: YouTube Music's
+    // window belongs to pid 26364, THE SAME PROCESS as all ten ordinary Edge windows, because a PWA
+    // opened while the browser is already running is hosted by the browser. Same process, same command
+    // line, so there is no --app-id anywhere to find -- and the band came back.
+    //
+    // What does differ is the picture. Both windows here share a path AND a command line, and only the
+    // artwork tells them apart.
+    [Fact]
+    public void A_browser_app_window_sharing_the_browsers_process_is_told_apart_by_its_icon()
+    {
+        var command = @"""C:\msedge.exe"" --profile-directory=Default";
+        var browser = new WindowInfo(new WindowHandle(0x10), 26364, "msedge", @"C:\msedge.exe", "Inbox", command);
+        var music = new WindowInfo(new WindowHandle(0x20), 26364, "msedge", @"C:\msedge.exe", "YouTube Music", command);
+
+        var rows = Rows([browser, music], Facts([(browser, 1), (music, 1)]),
+            artwork: w => w.Handle == music.Handle ? "yt-music-pixels" : "edge-pixels");
+
+        Assert.False(rows.Single(r => r.Window.Handle == browser.Handle).Ordinal.HasValue);
+        Assert.False(rows.Single(r => r.Window.Handle == music.Handle).Ordinal.HasValue);
+    }
+
+    // The mirror, and the reason the artwork is the key rather than the window's AppUserModelID, which
+    // was the other candidate and is what the shell groups taskbar buttons by. Measured: Petre's two
+    // automation Chromes report `Chrome.mcpchrome97bea9e.Default` and `Chrome.mcpchrome5adf218.Default`
+    // -- two processes, two AUMIDs, two icon handles, one identical Chrome picture, sitting in one row.
+    // That is the exact pair the band exists for, so any key finer than the picture loses it.
+    [Fact]
+    public void Two_windows_drawn_the_same_are_numbered_even_from_different_processes()
+    {
+        var one = new WindowInfo(new WindowHandle(0x10), 103008, "chrome", @"C:\chrome.exe", "Backup",
+            @"""C:\chrome.exe"" --user-data-dir=C:\a");
+        var two = new WindowInfo(new WindowHandle(0x20), 105920, "chrome", @"C:\chrome.exe", "Dice",
+            @"""C:\chrome.exe"" --user-data-dir=C:\b");
+
+        var rows = Rows([one, two], Facts([(one, 1), (two, 1)]), artwork: _ => "chrome-pixels");
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == one.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == two.Handle).Ordinal.Value);
+    }
+
+    // A window whose icon has not arrived yet -- they arrive asynchronously -- falls back to the path
+    // key rather than becoming a family of one. So a band can be briefly wrong on a window that has
+    // just appeared, and right again on the next rebuild, which is the honest order of events.
+    [Fact]
+    public void A_window_with_no_known_artwork_falls_back_to_the_path()
+    {
+        var one = Window(0x10, "Edge");
+        var two = Window(0x20, "Edge");
+
+        var rows = Rows([one, two], Facts([(one, 1), (two, 1)]), artwork: _ => Maybe<string>.None);
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == one.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == two.Handle).Ordinal.Value);
     }
 
     // The other direction, and the reason RosterIdentity is the WRONG key here however tempting the
