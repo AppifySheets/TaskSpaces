@@ -114,6 +114,20 @@ public partial class App : Application
         availableUpdate = release;
 
         Announce(release);
+
+        // ...and then ASK, with a real dialog, rather than trusting the balloon (#123).
+        //
+        // The original design was deliberately quiet: one balloon, plus a tray menu item, and no
+        // interruption. That assumed the balloon appears. Measured on Petre's machine it never does:
+        // there is no per-app notification key, the process has no AppUserModelID and the app is a
+        // portable exe with no Start-menu shortcut, so Windows has no identity to attribute a toast to
+        // and drops it. Petre, after a full end-to-end test: "i didn't see the update", then "popup".
+        //
+        // So the quiet channel is the one that was never seen, and the announcement now costs an
+        // interruption ONCE PER RELEASE -- the availableUpdate guard above is what keeps it to once,
+        // including across the daily tick. Answering No leaves the tray menu item exactly as it was, so
+        // the decision remains reversible without the app asking twice.
+        OfferUpdate(release);
     }
 
     // The menu item and the balloon, which the manual check (#110) shares: it has to leave the tray
