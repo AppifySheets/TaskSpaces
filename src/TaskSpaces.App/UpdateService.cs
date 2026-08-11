@@ -22,6 +22,12 @@ public static class UpdateService
     // than assembled at runtime from metadata a build could change.
     const string LatestRelease = "https://api.github.com/repos/AppifySheets/TaskSpaces/releases/latest";
 
+    // Where to send someone when the API cannot be reached at all (#110's manual check): the same
+    // repo, its human-readable half. A separate constant beside the endpoint rather than derived from
+    // it, because deriving one URL from another by string surgery is how a browser ends up opening
+    // api.github.com.
+    public const string ReleasesPage = "https://github.com/AppifySheets/TaskSpaces/releases/latest";
+
     // One client for the process. HttpClient is designed to be shared -- a new one per call leaks
     // sockets in TIME_WAIT -- and this one is used at most once a day.
     //

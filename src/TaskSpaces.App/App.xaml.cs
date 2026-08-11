@@ -95,13 +95,77 @@ public partial class App : Application
         if (availableUpdate?.Version == release.Version) return;
         availableUpdate = release;
 
-        // ConfigureAwait(true) above put us back on the dispatcher, which both of these need.
-        trayIcon!.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp,
+        Announce(release);
+    }
+
+    // The menu item and the balloon, which the manual check (#110) shares: it has to leave the tray
+    // in the same state a background check would, or asking by hand and then dismissing the dialog
+    // would lose the news the check just found.
+    //
+    // ConfigureAwait(true) on both callers' awaits put us back on the dispatcher, which these need.
+    void Announce(ReleaseInfo release)
+    {
+        trayIcon!.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow,
             ($"Update to {release.Version}…", () => OfferUpdate(release)));
 
         trayIcon.ShowNotification(
             title: $"TaskSpaces {release.Version} is available",
             message: $"You are running {UpdateService.RunningVersion}. Click here to update.");
+    }
+
+    // #110: "check for new version as a right-click menu option."
+    //
+    // The same check the timer runs, with the opposite manners at every step. The background check
+    // is silent about everything -- no network, a proxy, GitHub rate-limiting a shared IP are all
+    // just today's answer -- because nobody asked it anything. This one was asked, and somebody is
+    // waiting on the reply, so all three outcomes get a dialog: a newer version, no newer version,
+    // or a check that could not be made.
+    //
+    // "No newer version" is the important one and the reason the item was left out until now: a
+    // button that usually reports nothing looks broken every time it works correctly. Saying which
+    // version is running turns that into an answer.
+    //
+    // NOT gated on State.CheckForUpdates, deliberately. That setting exists because the automatic
+    // check is the app's only phone-home, so what it governs is the UNPROMPTED request. Clicking
+    // this IS the prompt, and refusing to answer a direct question because of an opt-out from being
+    // asked without prompting would be the wrong reading of it.
+    async void CheckForUpdateNow()
+    {
+        // The tooltip is the only progress there is room for, and the same one DownloadAndRestart
+        // uses. A menu item that closes and then says nothing for two seconds looks like a click
+        // that missed.
+        var wasTip = trayIcon!.ToolTipText;
+        trayIcon.ToolTipText = "TaskSpaces — checking for updates…";
+
+        var latest = await UpdateService.NewerThanRunningAsync().ConfigureAwait(true);
+
+        trayIcon.ToolTipText = wasTip;
+
+        if (latest.IsFailure)
+        {
+            if (MessageBox.Show(
+                    $"Could not check for updates:\n{latest.Error}\n\nOpen the releases page instead?",
+                    "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+                OpenUrl(UpdateService.ReleasesPage);
+            return;
+        }
+
+        if (latest.Value.HasNoValue)
+        {
+            MessageBox.Show(
+                $"You are running {UpdateService.DisplayVersion}, which is the latest version.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var release = latest.Value.Value;
+
+        // Announced as well as offered, so declining the dialog leaves the news on the tray menu
+        // rather than throwing it away. The version guard the background check uses is deliberately
+        // not here: asking by hand should always answer, even for a release already announced.
+        availableUpdate = release;
+        Announce(release);
+        OfferUpdate(release);
     }
 
     // Petre: "i clicked it, it disappeared."
@@ -228,17 +292,22 @@ public partial class App : Application
     // UseShellExecute is what makes this open a BROWSER rather than trying to execute the string.
     // The url is already known to be http(s) -- UpdateCheck refuses a release whose html_url is
     // anything else -- which matters because it arrived from the network.
-    static void OpenReleasePage(ReleaseInfo release)
+    static void OpenReleasePage(ReleaseInfo release) => OpenUrl(release.PageUrl);
+
+    // Split out for #110's failure path, which has no ReleaseInfo to name a page with: a check that
+    // could not be made knows nothing about any release, and the releases page is still the way
+    // through.
+    static void OpenUrl(string url)
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(release.PageUrl) { UseShellExecute = true });
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
         }
         catch (Exception e)
         {
-            // No browser registered, or the shell refused. Worth saying, because unlike the check
-            // itself this one happened because the user just clicked something.
-            MessageBox.Show($"Could not open the download page:\n{e.Message}\n\n{release.PageUrl}",
+            // No browser registered, or the shell refused. Worth saying, because unlike the background
+            // check this one happened because the user just clicked something.
+            MessageBox.Show($"Could not open the download page:\n{e.Message}\n\n{url}",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -433,7 +502,7 @@ public partial class App : Application
             // taskbar and window icons cannot drift apart.
             IconSource = AppIcon,
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
-            ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp),
+            ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow),
             // Petre: "left click gives us the main window, right click gives exit and
             // manage". RightClick only, so a left-click is free to open Manage (wired
             // below) instead of raising the same menu twice.

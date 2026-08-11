@@ -19,11 +19,18 @@ namespace TaskSpaces.App;
 public static class TrayMenu
 {
     // `update` is the one item that is not always here: null until a check finds a newer release
-    // (#71), at which point App rebuilds this menu with it. A permanent "Check for updates…" item
-    // was considered and left out -- it would be a button that usually reports nothing, on a menu
-    // Petre deliberately cut to two commands. The check runs on its own; the menu only ever says
-    // there IS one.
-    public static ContextMenu Build(bool compatibilityMode, Action openManage, Action exit,
+    // (#71), at which point App rebuilds this menu with it. The menu only ever says there IS one.
+    //
+    // `checkNow` is #110, and it overturns a decision recorded here: a permanent "Check for
+    // updates…" item was considered and left out, because it would be a button that usually reports
+    // nothing on a menu deliberately cut to two commands. Petre asked for it anyway, which settles
+    // that, and the objection survives as a requirement rather than as a refusal -- a manual check
+    // MUST say what it found, including "nothing", or it is a button that looks broken every time
+    // it works. See App.CheckForUpdateNow.
+    //
+    // Third rather than first: it is the least used of the three, and the two that were here are
+    // where the hand already expects them.
+    public static ContextMenu Build(bool compatibilityMode, Action openManage, Action exit, Action checkNow,
         (string Label, Action Open)? update = null)
     {
         var menu = new ContextMenu();
@@ -51,6 +58,10 @@ public static class TrayMenu
         var manage = new MenuItem { Header = "Manage…" };
         manage.Click += (_, _) => openManage();
         menu.Items.Add(manage);
+
+        var check = new MenuItem { Header = "Check for updates…" };
+        check.Click += (_, _) => checkNow();
+        menu.Items.Add(check);
 
         var exitItem = new MenuItem { Header = "Exit" };
         exitItem.Click += (_, _) => exit();
