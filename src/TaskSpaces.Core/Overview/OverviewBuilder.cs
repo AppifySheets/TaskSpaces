@@ -3,6 +3,7 @@ using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rehydration;
+using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Overview;
 
@@ -70,7 +71,7 @@ public static class OverviewBuilder
         // stable.
         static Dictionary<WindowHandle, int> Ordinals(IReadOnlyList<WindowInfo> group) =>
             group
-                .GroupBy(w => w.ProcessName)
+                .GroupBy(SameArtwork)
                 .Where(sameApp => sameApp.Count() > 1)
                 .SelectMany(sameApp => sameApp
                     .OrderBy(w => w.Handle.Value)
@@ -79,6 +80,30 @@ public static class OverviewBuilder
 
         static Maybe<int> OrdinalOf(IReadOnlyDictionary<WindowHandle, int> ordinals, WindowInfo w) =>
             ordinals.TryGetValue(w.Handle, out var ordinal) ? ordinal : Maybe<int>.None;
+
+        // What the ordinal groups by, and the answer is NOT "the app" in any of the three senses this
+        // codebase already has a key for. #105: "the YouTube Music icon in the Personal row shows the
+        // underline colour band, but there is only one YouTube Music window." It was grouped by
+        // ProcessName, and a Chromium PWA runs as the browser's own exe, so YouTube Music and the
+        // Chrome window beside it counted as two windows of one app and both earned a band.
+        //
+        // The band exists for ONE job: telling apart windows whose artwork is identical. So the key
+        // has to be whatever decides the artwork, which is neither the process nor the roster identity:
+        //
+        //   * ProcessName is too coarse. A PWA is drawn with its own icon (IconCache asks the WINDOW,
+        //     via WM_GETICON), so it never needs distinguishing from the browser.
+        //   * RosterIdentity is too fine. It includes the browser profile and, for everything else, the
+        //     arguments -- so two Chrome windows on different profiles, or two Rider windows on
+        //     different solutions, would each be a family of one and lose the band. Those are exactly
+        //     the identical-looking pairs the band was asked for.
+        //
+        // Process path plus the PWA app id sits between them and matches the artwork in both
+        // directions. Path rather than name so two same-named exes in different places stay apart, and
+        // the name as the fallback when the path is unreadable (elevated), which is the best key
+        // available then and still groups two elevated windows of one app together.
+        static string SameArtwork(WindowInfo w) =>
+            (w.ProcessPath?.ToLowerInvariant() ?? w.ProcessName.ToLowerInvariant())
+            + BrowserProfile.AppFromCommandLine(w.CommandLine).Map(app => $"|app:{app}").GetValueOrDefault("");
 
         Maybe<int> MonitorOf(WindowInfo w) =>
             facts.MonitorOf.TryGetValue(w.Handle, out var number) ? number : Maybe<int>.None;

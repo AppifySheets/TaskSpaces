@@ -125,6 +125,103 @@ public class MonitorOrderingTests
         Assert.False(rows.Single(r => r.Window.Handle == editor.Handle).Ordinal.HasValue);
     }
 
+    // #105, and the bug this file's grouping had all along: "the YouTube Music icon in the Personal
+    // row shows the underline colour band, but there is only one YouTube Music window."
+    //
+    // A Chromium PWA runs as the BROWSER's own exe, so grouping by process name counted the PWA and
+    // the browser window beside it as two windows of one app. The band's only job is telling apart
+    // windows whose ARTWORK is identical, and a PWA is drawn with its own icon (IconCache asks the
+    // window itself), so it never needed distinguishing from the browser at all.
+    [Fact]
+    public void A_browser_app_window_is_not_another_window_of_the_browser()
+    {
+        var browser = new WindowInfo(new WindowHandle(0x10), 10, "chrome", @"C:\chrome.exe", "Inbox",
+            @"""C:\chrome.exe"" --profile-directory=Default");
+        var music = new WindowInfo(new WindowHandle(0x20), 10, "chrome", @"C:\chrome.exe", "YouTube Music",
+            @"""C:\chrome.exe"" --profile-directory=Default --app-id=cinhimbnkkaeohfgghhklpknlkffjgod");
+
+        var rows = Rows([browser, music], Facts([(browser, 1), (music, 1)]));
+
+        Assert.False(rows.Single(r => r.Window.Handle == browser.Handle).Ordinal.HasValue);
+        Assert.False(rows.Single(r => r.Window.Handle == music.Handle).Ordinal.HasValue);
+    }
+
+    // The other direction, and the reason RosterIdentity is the WRONG key here however tempting the
+    // reuse looks: it includes the profile, so two browser windows on different profiles would each
+    // be a family of one and lose the band. They are drawn with the same icon, which makes them
+    // exactly the pair the band was asked for.
+    [Fact]
+    public void Two_browser_windows_on_different_profiles_are_still_numbered()
+    {
+        var work = new WindowInfo(new WindowHandle(0x10), 10, "chrome", @"C:\chrome.exe", "Work",
+            @"""C:\chrome.exe"" --profile-directory=Default");
+        var home = new WindowInfo(new WindowHandle(0x20), 11, "chrome", @"C:\chrome.exe", "Home",
+            @"""C:\chrome.exe"" --profile-directory=""Profile 2""");
+
+        var rows = Rows([work, home], Facts([(work, 1), (home, 1)]));
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == work.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == home.Handle).Ordinal.Value);
+    }
+
+    // Two PWAs of the same browser are two apps, not two windows of one, and each is alone.
+    [Fact]
+    public void Two_different_browser_apps_are_each_alone()
+    {
+        var music = new WindowInfo(new WindowHandle(0x10), 10, "chrome", @"C:\chrome.exe", "YouTube Music",
+            @"""C:\chrome.exe"" --app-id=music");
+        var mail = new WindowInfo(new WindowHandle(0x20), 10, "chrome", @"C:\chrome.exe", "Outlook",
+            @"""C:\chrome.exe"" --app-id=mail");
+
+        var rows = Rows([music, mail], Facts([(music, 1), (mail, 1)]));
+
+        Assert.False(rows.Single(r => r.Window.Handle == music.Handle).Ordinal.HasValue);
+        Assert.False(rows.Single(r => r.Window.Handle == mail.Handle).Ordinal.HasValue);
+    }
+
+    // ...and two windows of the SAME PWA are two windows of one app, band and all.
+    [Fact]
+    public void Two_windows_of_one_browser_app_are_numbered()
+    {
+        var first = new WindowInfo(new WindowHandle(0x10), 10, "chrome", @"C:\chrome.exe", "YouTube Music",
+            @"""C:\chrome.exe"" --app-id=music");
+        var second = new WindowInfo(new WindowHandle(0x20), 10, "chrome", @"C:\chrome.exe", "YouTube Music",
+            @"""C:\chrome.exe"" --app-id=music");
+
+        var rows = Rows([first, second], Facts([(first, 1), (second, 1)]));
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == first.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == second.Handle).Ordinal.Value);
+    }
+
+    // Two Rider windows on different solutions look identical and must stay numbered, which is the
+    // second reason the roster's identity cannot be reused: it separates them by their arguments.
+    [Fact]
+    public void Two_windows_of_one_app_on_different_documents_are_still_numbered()
+    {
+        var x = new WindowInfo(new WindowHandle(0x10), 10, "rider64", @"C:\rider64.exe", "X", @"""C:\rider64.exe"" X.sln");
+        var y = new WindowInfo(new WindowHandle(0x20), 11, "rider64", @"C:\rider64.exe", "Y", @"""C:\rider64.exe"" Y.sln");
+
+        var rows = Rows([x, y], Facts([(x, 1), (y, 1)]));
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == x.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == y.Handle).Ordinal.Value);
+    }
+
+    // An elevated window has no readable path, and two of them still have to group. The process
+    // name is the only key left, which is what the old grouping used for everything.
+    [Fact]
+    public void Windows_with_no_readable_path_group_by_name()
+    {
+        var one = new WindowInfo(new WindowHandle(0x10), 10, "admin", null, "One", null);
+        var two = new WindowInfo(new WindowHandle(0x20), 11, "admin", null, "Two", null);
+
+        var rows = Rows([one, two], Facts([(one, 1), (two, 1)]));
+
+        Assert.Equal(1, rows.Single(r => r.Window.Handle == one.Handle).Ordinal.Value);
+        Assert.Equal(2, rows.Single(r => r.Window.Handle == two.Handle).Ordinal.Value);
+    }
+
     // The point of the number is to stay put while the icons move. If it were derived from
     // position, watching "2 change places with 1" would be impossible -- the labels would just
     // follow the sort and nothing would appear to have happened.
