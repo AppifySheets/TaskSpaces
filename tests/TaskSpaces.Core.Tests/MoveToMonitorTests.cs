@@ -1,4 +1,4 @@
-using TaskSpaces.Core.Abstractions;
+﻿using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 
@@ -26,6 +26,8 @@ public class MoveToMonitorTests
     Guid personal;
     Guid target;
 
+    readonly FakeActivator activator = new();
+
     WorkspaceManager Started(bool withScreen = true)
     {
         var here = new Workspace(Guid.NewGuid(), "Work", Guid.NewGuid());
@@ -49,7 +51,7 @@ public class MoveToMonitorTests
         // On the right-hand screen, half its width and height.
         screen.Rects[code.Handle] = new WindowRect(480, 270, 1440, 810);
 
-        var manager = new WorkspaceManager(desktops, monitor, titles, store,
+        var manager = new WorkspaceManager(desktops, monitor, titles, store, activator: activator,
             screenLayout: withScreen ? screen : null);
         Assert.True(manager.Start().IsSuccess);
         return manager;
@@ -228,5 +230,37 @@ public class MoveToMonitorTests
 
         Assert.Empty(screen.Moved);
         Assert.Equal(personal, desktops.WindowPlacements[code.Handle]);
+    }
+
+    // Petre: "when you move that window, make it foreground, first window." A window you have just sent
+    // to another screen is the one you are about to use.
+    [Fact]
+    public void A_moved_window_comes_to_the_front()
+    {
+        var manager = Started();
+
+        Assert.True(manager.MoveWindowToMonitor(code.Handle, 1).IsSuccess);
+
+        Assert.Equal([code.Handle], activator.Activated);
+    }
+
+    // ...and #107's other half: a MINIMIZED window stays down. The drag said which screen the window
+    // belongs on, not that it should come back up, and a gesture that quietly un-minimizes windows while
+    // you tidy up is a gesture nobody can use. Its restore rectangle still moves, which is what makes it
+    // come back on the new screen when you next open it.
+    [Fact]
+    public void A_minimized_window_moves_without_being_woken_up()
+    {
+        var manager = Started();
+        screen.Facts = screen.Facts with { Minimized = new HashSet<WindowHandle> { code.Handle } };
+
+        Assert.True(manager.MoveWindowToMonitor(code.Handle, 1).IsSuccess);
+
+        // It moved...
+        var (window, rect) = Assert.Single(screen.Moved);
+        Assert.Equal(code.Handle, window);
+        Assert.Equal(new WindowRect(-2880, 540, -960, 1620), rect);
+        // ...and nothing brought it to the front.
+        Assert.Empty(activator.Activated);
     }
 }

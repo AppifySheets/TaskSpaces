@@ -157,6 +157,34 @@ public static class NativeMethods
     [DllImport("user32.dll")] public static extern bool IsZoomed(nint hwnd);
     public const int SW_MAXIMIZE = 3;
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(nint hwnd, int cmdShow);
+    // #107, a MINIMIZED window sent to the other monitor: "minimized windows don't move monitors when
+    // dragged across the split."
+    //
+    // GetWindowRect on a minimized window reports the ICONIC rectangle, which is off in the corner of
+    // nowhere -- the trace caught it exactly: `asked 0,0 237x39, now -32000,-32000`. So the geometry the
+    // move was computed from was garbage, and SetWindowPos then wrote the iconic position, which nothing
+    // reads. The window came back up on the screen it started on.
+    //
+    // WINDOWPLACEMENT is where a minimized window's real rectangle lives: rcNormalPosition is what it
+    // restores to. Reading and writing THAT moves a window that is not currently anywhere.
+    //
+    // The coordinates are "workspace" coordinates rather than screen ones, which differ by the primary
+    // monitor's work-area origin -- zero with a taskbar at the bottom, the taskbar's size with one at the
+    // top or left. See ScreenLayout, which converts in both directions rather than assuming.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT
+    {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    [DllImport("user32.dll")] public static extern bool GetWindowPlacement(nint hwnd, ref WINDOWPLACEMENT placement);
+    [DllImport("user32.dll")] public static extern bool SetWindowPlacement(nint hwnd, ref WINDOWPLACEMENT placement);
+
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
 

@@ -45,10 +45,42 @@ public sealed class ScreenLayout : IScreenLayout
     // arithmetic in the same units as the monitor bounds that came out of GetMonitorInfoEx above, so
     // nothing here converts anything. The app is per-monitor-DPI-aware, which is what makes that
     // true across screens at different scales.
+    //
+    // A MINIMIZED window answers with its RESTORE rectangle instead, and that is #107: GetWindowRect on
+    // a minimized window reports the iconic rectangle, off at -32000,-32000, so every calculation built
+    // on it is nonsense. The trace said so in one line: `asked 0,0 237x39, now -32000,-32000`. Where a
+    // minimized window "is" can only sensibly mean where it will come back, which is what rcNormalPosition
+    // holds -- and it is the same answer MonitorFromWindow gives, so the bar's grouping and this agree.
     public Maybe<WindowRect> RectOf(WindowHandle window) =>
-        GetWindowRect(window.Value, out var rect)
-            ? new WindowRect(rect.Left, rect.Top, rect.Right, rect.Bottom)
-            : Maybe<WindowRect>.None;
+        IsIconic(window.Value)
+            ? RestoreRectOf(window)
+            : GetWindowRect(window.Value, out var rect)
+                ? new WindowRect(rect.Left, rect.Top, rect.Right, rect.Bottom)
+                : Maybe<WindowRect>.None;
+
+    // rcNormalPosition, converted out of workspace coordinates into the screen coordinates every other
+    // rectangle in this codebase is in.
+    static Maybe<WindowRect> RestoreRectOf(WindowHandle window)
+    {
+        var placement = new WINDOWPLACEMENT { length = System.Runtime.InteropServices.Marshal.SizeOf<WINDOWPLACEMENT>() };
+        if (!GetWindowPlacement(window.Value, ref placement)) return Maybe<WindowRect>.None;
+
+        var (dx, dy) = WorkspaceOffset();
+        var rect = placement.rcNormalPosition;
+        return new WindowRect(rect.Left + dx, rect.Top + dy, rect.Right + dx, rect.Bottom + dy);
+    }
+
+    // What separates workspace coordinates from screen coordinates: the primary monitor's work-area
+    // origin. Zero with the taskbar at the bottom, which is why ignoring this works on most machines and
+    // is still wrong -- a taskbar at the top or left would land every restored window off by its height.
+    //
+    // Point (0,0) IS the primary monitor's origin by definition, so no search is needed to find it.
+    static (int X, int Y) WorkspaceOffset()
+    {
+        var info = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
+        var primary = MonitorFromPoint(new POINT { X = 0, Y = 0 }, MONITOR_DEFAULTTONEAREST);
+        return GetMonitorInfo(primary, ref info) ? (info.rcWork.Left, info.rcWork.Top) : (0, 0);
+    }
 
     public Result MoveTo(WindowHandle window, WindowRect rect, bool mayChangeShowState)
     {
@@ -69,6 +101,16 @@ public sealed class ScreenLayout : IScreenLayout
         // call into a hung window's thread would freeze the bar with it: this way a window that never
         // comes down costs a bounded wait and the move is simply reported as not taken, and the
         // caller's retry picks it up.
+        // A MINIMIZED window is moved by writing its RESTORE rectangle and nothing else (#107). It stays
+        // minimized: the drag said which screen it belongs on, not that it should come back up, and
+        // restoring it would be a state change nobody asked for. SetWindowPos cannot do this job at all --
+        // it writes the iconic position, which nothing reads.
+        //
+        // Also the one monitor move that is safe on another desktop whatever `mayChangeShowState` says,
+        // since it changes no show state: showCmd is written back exactly as it was read.
+        if (IsIconic(window.Value))
+            return MoveRestoreRect(window, rect);
+
         var maximized = IsZoomed(window.Value) && mayChangeShowState;
         if (maximized)
         {
@@ -107,6 +149,28 @@ public sealed class ScreenLayout : IScreenLayout
         // moved. All the same outcome to the caller, and all ordinary: the bar reports the message and
         // nothing else changes.
         return moved
+            ? Result.Success()
+            : Result.Failure("Windows would not move that window.");
+    }
+
+    // The minimized case: read the placement, replace rcNormalPosition, write it back. showCmd travels
+    // unchanged, so the window is exactly as minimized afterwards as it was before.
+    static Result MoveRestoreRect(WindowHandle window, WindowRect rect)
+    {
+        var placement = new WINDOWPLACEMENT { length = System.Runtime.InteropServices.Marshal.SizeOf<WINDOWPLACEMENT>() };
+        if (!GetWindowPlacement(window.Value, ref placement))
+            return Result.Failure("Windows would not report that window's placement.");
+
+        var (dx, dy) = WorkspaceOffset();
+        placement.rcNormalPosition = new RECT
+        {
+            Left = rect.Left - dx,
+            Top = rect.Top - dy,
+            Right = rect.Right - dx,
+            Bottom = rect.Bottom - dy,
+        };
+
+        return SetWindowPlacement(window.Value, ref placement)
             ? Result.Success()
             : Result.Failure("Windows would not move that window.");
     }

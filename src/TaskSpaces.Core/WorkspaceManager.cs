@@ -1545,7 +1545,8 @@ public sealed class WorkspaceManager(
         var here = desktops.DesktopOf(window).GetValueOrDefault() is var where
                    && (where == Guid.Empty || where == desktops.CurrentDesktop().GetValueOrDefault());
 
-        if (screenLayout.Snapshot().MonitorPlacement is not { } placement || !placement.TryGetValue(monitorNumber, out var target))
+        var facts = screenLayout.Snapshot();
+        if (facts.MonitorPlacement is not { } placement || !placement.TryGetValue(monitorNumber, out var target))
             return Result.Failure("That monitor is no longer there.");
 
         if (screenLayout.RectOf(window).GetValueOrDefault() is not { } rect)
@@ -1595,10 +1596,16 @@ public sealed class WorkspaceManager(
         // Only when the move SETTLED, so a held move does not pull focus to a window that has not gone
         // anywhere. See OnDesktopChanged for what this does to the arrival focus restore, which it now
         // deliberately outranks.
+        //
+        // Except for a MINIMIZED window (#107), which stays down. Bringing it to the front would answer a
+        // question the drag never asked: it said which screen the window belongs on, not that it should
+        // come back up, and a gesture that quietly un-minimizes three windows while you tidy up is a
+        // gesture nobody can use. Its restore rectangle has moved, so it comes back on the new screen when
+        // you next open it, which is the whole of what was asked for.
         if (settled)
         {
             Forget(window);
-            activator?.Activate(window);
+            if (!facts.Minimized.Contains(window)) activator?.Activate(window);
         }
         else Hold(window, monitorNumber);
 
