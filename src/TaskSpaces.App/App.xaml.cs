@@ -1,4 +1,4 @@
-using System.Drawing;
+﻿using System.Drawing;
 using System.IO;
 using System.Windows;
 using System.Windows.Interop;
@@ -60,7 +60,11 @@ public partial class App : Application
     void StartUpdateChecks()
     {
         // The only gate. With it off nothing below ever runs, so no request leaves the machine.
-        if (manager?.State.CheckForUpdates != true) return;
+        if (manager?.State.CheckForUpdates != true)
+        {
+            ClickTrace.Write("update checks off (State.CheckForUpdates is not true)");
+            return;
+        }
 
         // Daily, and the first one is on a delay rather than immediate. Startup is already the
         // busiest moment this process has -- desktop enumeration, the placement sweep, the rename
@@ -84,6 +88,16 @@ public partial class App : Application
     {
         var latest = await UpdateService.NewerThanRunningAsync().ConfigureAwait(true);
 
+        // TRACED, every outcome, and this line is why: the whole path is silent on purpose, so
+        // "i didn't get a notification" is indistinguishable from four different things -- the check
+        // never ran, the request failed, there is no newer release, or the balloon was raised and
+        // Windows did not draw it. Petre hit exactly that ambiguity testing #71 against a build
+        // stamped one version behind, and there was nothing to read.
+        ClickTrace.Write(
+            latest.IsFailure ? $"update check failed: {latest.Error}"
+            : latest.Value.HasNoValue ? $"update check: {UpdateService.RunningVersion} is current"
+            : $"update check: {latest.Value.Value.Version} available, running {UpdateService.RunningVersion}");
+
         // A failure is today's answer, not a problem: no network, a proxy, GitHub rate-limiting a
         // shared IP. Tomorrow's tick asks again, and the user is never told any of it.
         if (latest.IsFailure || latest.Value.HasNoValue) return;
@@ -92,7 +106,11 @@ public partial class App : Application
 
         // Already announced this exact version. The daily tick would otherwise re-balloon the same
         // release every day for as long as the user chooses not to update, which is nagging.
-        if (availableUpdate?.Version == release.Version) return;
+        if (availableUpdate?.Version == release.Version)
+        {
+            ClickTrace.Write($"update {release.Version} already announced, staying quiet");
+            return;
+        }
         availableUpdate = release;
 
         Announce(release);
@@ -108,9 +126,24 @@ public partial class App : Application
         trayIcon!.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow,
             ($"Update to {release.Version}…", () => OfferUpdate(release)));
 
-        trayIcon.ShowNotification(
-            title: $"TaskSpaces {release.Version} is available",
-            message: $"You are running {UpdateService.RunningVersion}. Click here to update.");
+        // The balloon is BEST EFFORT and always has been, which the trace now says out loud. It is a
+        // Shell_NotifyIcon balloon, so whether anything appears is Windows' decision: notifications
+        // off, Focus Assist, a full action centre, or simply a shell that drops it. The tray MENU item
+        // set above is the channel that does not depend on any of that, and it stays until the user is
+        // on the new version -- so a missing balloon is a missed glance, not a missed update.
+        try
+        {
+            trayIcon.ShowNotification(
+                title: $"TaskSpaces {release.Version} is available",
+                message: $"You are running {UpdateService.RunningVersion}. Click here to update.");
+            ClickTrace.Write($"update {release.Version} announced: menu item set, balloon requested");
+        }
+        catch (Exception e)
+        {
+            // Never worth losing the app over, and never worth losing the menu item over either: it is
+            // already set by the time we get here.
+            ClickTrace.Write($"update {release.Version} announced: menu item set, balloon threw {e.GetType().Name}: {e.Message}");
+        }
     }
 
     // #110: "check for new version as a right-click menu option."
