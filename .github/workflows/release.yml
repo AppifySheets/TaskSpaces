@@ -103,7 +103,12 @@ jobs:
 
       - name: Keep the build even when there is no release to attach it to
         # So a workflow_dispatch run still leaves something downloadable to inspect.
-        uses: actions/upload-artifact@v4
+        #
+        # v7, up from v4, because the v1.8.0 run reported it: "Node.js 20 is deprecated. The
+        # following actions target Node.js 20 but are being forced to run on Node.js 24". Forced
+        # today, refused at some point, and the failure would land on a release run -- the worst
+        # moment to discover it. v7 declares node24 itself, so nothing is being forced.
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: artifacts/publish/${{ steps.artifact.outputs.name }}
