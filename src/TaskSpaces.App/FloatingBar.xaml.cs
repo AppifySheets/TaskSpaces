@@ -895,7 +895,12 @@ public partial class FloatingBar : Window
 
     // The one place the bar stops being SizeToContent in the width axis. Height stays content-driven
     // -- rows wrap, and how tall that makes the bar is not something anyone wants to drag.
-    void ApplyWidth(double width)
+    //
+    // BOTH lines matter and the order does too: assigning Width while SizeToContent still owns that
+    // axis changes nothing, because the content recomputes it. Internal so #120's tests can drive a
+    // resize through the same entry point the drag uses, rather than reproducing this pair and drifting
+    // from it.
+    internal void ApplyWidth(double width)
     {
         SizeToContent = SizeToContent.Height;
         Width = width;
@@ -1112,7 +1117,8 @@ public partial class FloatingBar : Window
             // the slow ones are logged -- a rebuild is COM-heavy (one DesktopOf per known window)
             // and there are many, so logging every one would bury the interesting ones.
             if (clock is { } elapsed && elapsed.ElapsedMilliseconds >= 150)
-                ClickTrace.Write($"rebuild took {elapsed.ElapsedMilliseconds}ms");
+                ClickTrace.Write($"rebuild took {elapsed.ElapsedMilliseconds}ms " +
+                                 $"(query {lastQueryMs}ms, draw {elapsed.ElapsedMilliseconds - lastQueryMs}ms)");
         }
 
         // The suppressed pulse still carried real news (a window opened, closed or moved),
@@ -1124,7 +1130,73 @@ public partial class FloatingBar : Window
         Dispatcher.BeginInvoke(new Action(() => { if (IsVisible) Rebuild(); }));
     }
 
-    void RebuildCore()
+    // The last overview drawn, kept so a RE-LAYOUT can happen without asking the OS anything (#120).
+    //
+    // The query is what a rebuild costs, and it is not close: measured on Petre's machine, one
+    // rebuild is 160-240ms, and WindowsByWorkspace makes a DesktopOf COM call per known window --
+    // about thirty-five of them. A drag delivers mouse moves at 60 to 125 a second, so "rebuild on
+    // every resize step" is not a slower version of this fix, it is a different and worse feature.
+    //
+    // Nothing about the WINDOWS changes while you drag the bar's edge. Only how they are laid out
+    // does, and that is entirely a function of the width -- so the rows can be redrawn from the
+    // overview already in hand.
+    Core.Overview.Overview? lastOverview;
+
+    // How long the last query took, and how long it did not have to take, for the rebuild timing
+    // line below. Split out because "a rebuild is slow" is not actionable while "the query is 190ms
+    // of the 200" is.
+    long lastQueryMs;
+
+    Result<Core.Overview.Overview> OverviewFor(bool fresh)
+    {
+        if (!fresh && lastOverview is { } cached)
+        {
+            lastQueryMs = 0;
+            return cached;
+        }
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var overview = manager.WindowsByWorkspace().Tap(o => lastOverview = o);
+        lastQueryMs = clock.ElapsedMilliseconds;
+        return overview;
+    }
+
+    // #120. Petre: "when resizing the floating window in width, icons should immediately flow to the
+    // second row, instead of waiting for the resize to finish and then do it, so i can determine the
+    // correct width."
+    //
+    // The same draw as a rebuild, from the overview already held, and it exists as a separate entry
+    // point because of the ONE guard it has to skip. Rebuild() defers while the left button is down
+    // over the bar (#48: a rebuild between a press and its release destroys the pressed Button, which
+    // then raises no Click) -- and a resize drag holds that button down for its whole length, so a
+    // rebuild request would be postponed to exactly the moment this feature exists to pre-empt.
+    //
+    // Skipping it is safe HERE and only here, because a resize press lands on the grip rather than on
+    // a row: pressedRowKey is null, so there is no pending Click to destroy. That is checked rather
+    // than assumed, so a width change from anywhere else still stands down for a real press.
+    void Relayout()
+    {
+        if (lastOverview is null) return;          // nothing drawn yet; the first rebuild will do it
+        if (pressedRowKey is not null) return;     // a row press is pending -- leave its Button alone
+        if (openMenu?.IsOpen == true) return;      // #77: a rebuild closes a menu whose row it destroys
+        if (rebuilding)
+        {
+            rebuildRequested = true;
+            return;
+        }
+
+        rebuilding = true;
+        try
+        {
+            RebuildCore(fresh: false);
+        }
+        finally
+        {
+            rebuilding = false;
+        }
+    }
+
+    void RebuildCore(bool fresh = true)
     {
         Rows.Children.Clear();
         // The rows these pointed at have just been thrown away, so every entry is now a Border
@@ -1144,7 +1216,7 @@ public partial class FloatingBar : Window
         // from the last one (see DumpRowGeometry).
         if (ClickTrace.On)
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, DumpRowGeometry);
-        manager.WindowsByWorkspace().Tap(overview =>
+        OverviewFor(fresh).Tap(overview =>
         {
             if (ClickTrace.On) DumpBands(overview);
 
@@ -4136,6 +4208,18 @@ public partial class FloatingBar : Window
     // the bar's home is the bottom of the work area.
     void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
+        // FIRST, before every early return below, because the one below that matters most is
+        // `moving` -- which a resize sets, since a left-edge drag has to be allowed to break the
+        // growth anchor. So the branch that repositions the window and the branch that re-flows its
+        // icons cannot share an exit.
+        //
+        // Only when the width is EXPLICIT, and that is what makes this safe rather than recursive: a
+        // re-layout changes the bar's HEIGHT (rows wrapping onto second lines is the whole point), and
+        // a height change raises SizeChanged again -- but it cannot change a width that is pinned, so
+        // the loop closes after one pass. With SizeToContent still owning the width there is nothing
+        // to re-flow against anyway; the wrap falls back to its fixed five-per-line rule.
+        if (e.WidthChanged && !double.IsNaN(Width)) Relayout();
+
         if (moving) return;
         if (MonitorBounds(Left, Top) is not { } work) return;
 

@@ -1,4 +1,4 @@
-using System.Reactive.Subjects;
+﻿using System.Reactive.Subjects;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -518,6 +518,88 @@ public class FloatingBarRebuildTests
     // around the whole row, and that border has to exist on every row (transparent when not
     // current) or the SizeToContent bar would resize on each switch. Separators are Bordered
     // too, but childless, so asking for the Grid inside filters them out.
+    // #120. Petre: "when resizing the floating window in width, icons should immediately flow to the
+    // second row, instead of waiting for the resize to finish and then do it, so i can determine the
+    // correct width."
+    //
+    // Driven by setting Width rather than by a mouse: that is what a resize drag does on every mouse
+    // move, and SizeChanged does not care who moved it. So the behaviour is testable without SendInput.
+    [Fact]
+    public void Narrowing_the_bar_re_wraps_its_icons_at_once() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build(busyWorkspace: true);
+        using var bar = harness.ShowBar();
+
+        // Six icons, no explicit width: the fixed five-per-line rule, so one break.
+        Assert.Equal(2, IconLines(bar.Rows, "Sparrow"));
+
+        // Now a width that leaves room for about four. 170 = 58 caption + 4 ring + 8 padding + ~100 of
+        // icons, and the three-icon floor means the break lands after the fourth.
+        bar.Bar.ApplyWidth(170); // the same call a resize drag makes on every mouse move
+        // SizeChanged is raised by a LAYOUT pass, not by the assignment: WPF defers layout to the
+        // dispatcher, and nothing is pumping one here. The app gets that pass for free on every mouse
+        // move; a test has to ask.
+        bar.Bar.UpdateLayout();
+
+        Assert.Equal(2, IconLines(bar.Rows, "Sparrow"));
+        Assert.Equal([4, 2], LineWidths(bar.Rows, "Sparrow"));
+    });
+
+    // ...and it does it WITHOUT asking the OS anything, which is the whole reason it is a separate path
+    // from Rebuild. Measured on Petre's machine, one rebuild is 160-240ms and the query is nearly all of
+    // it: at 60 to 125 mouse moves a second, re-querying would make the drag unusable.
+    [Fact]
+    public void A_re_wrap_asks_the_desktops_nothing() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build(busyWorkspace: true);
+        using var bar = harness.ShowBar();
+
+        var queriesBefore = harness.Desktops.DesktopOfCalls;
+        Assert.True(queriesBefore > 0); // precondition: the first draw DID query
+
+        bar.Bar.ApplyWidth(170); // the same call a resize drag makes on every mouse move
+        // SizeChanged is raised by a LAYOUT pass, not by the assignment: WPF defers layout to the
+        // dispatcher, and nothing is pumping one here. The app gets that pass for free on every mouse
+        // move; a test has to ask.
+        bar.Bar.UpdateLayout();
+
+        Assert.Equal([4, 2], LineWidths(bar.Rows, "Sparrow"));
+        Assert.Equal(queriesBefore, harness.Desktops.DesktopOfCalls);
+    });
+
+    // A row press must still stand its ground: a re-layout throws every row away, and the pressed
+    // Button with it, which is #48's whole mechanism. A resize press lands on the grip and sets no
+    // pressed row, so the two cases are told apart rather than assumed to be the same.
+    [Fact]
+    public void A_width_change_stands_down_while_a_row_is_pressed() => StaThread.Run(() =>
+    {
+        var harness = Harness.Build(busyWorkspace: true);
+        using var bar = harness.ShowBar();
+        var row = RowFor(bar.Rows, "Sparrow");
+
+        Press(row); // as if the press had begun on the row itself
+        bar.Bar.ApplyWidth(170); // the same call a resize drag makes on every mouse move
+        // SizeChanged is raised by a LAYOUT pass, not by the assignment: WPF defers layout to the
+        // dispatcher, and nothing is pumping one here. The app gets that pass for free on every mouse
+        // move; a test has to ask.
+        bar.Bar.UpdateLayout();
+
+        // Unchanged: still the five-per-line split, because no re-layout ran.
+        Assert.Equal([5, 1], LineWidths(bar.Rows, "Sparrow"));
+    });
+
+    // The vertical stack of icon lines in one row: one child per line.
+    static Panel IconStack(Panel rows, string label) =>
+        RowFor(rows, label).Children.OfType<StackPanel>()
+            .Single(panel => panel.Orientation == Orientation.Vertical);
+
+    static int IconLines(Panel rows, string label) => IconStack(rows, label).Children.Count;
+
+    static IReadOnlyList<int> LineWidths(Panel rows, string label) =>
+        IconStack(rows, label).Children.OfType<DependencyObject>()
+            .Select(line => IconButtons(line).Count)
+            .ToList();
+
     static Grid RowFor(Panel rows, string label) =>
         rows.Children.OfType<Border>()
             .Select(b => b.Child)
@@ -620,7 +702,10 @@ sealed class Harness
     // singleWorkspace: the only state in which the bar's back button has nowhere to go -- one
     // workspace, and you are standing on it. Sparrow and its window are simply left out rather
     // than a second fixture being written, so the two paths share every other detail.
-    public static Harness Build(bool withUnresolvableWindow = false, bool singleWorkspace = false)
+    // busyWorkspace: five extra windows in Sparrow, so its row has something to WRAP. One window per
+    // row is enough for every other test here and cannot exercise a line break at all.
+    public static Harness Build(bool withUnresolvableWindow = false, bool singleWorkspace = false,
+        bool busyWorkspace = false)
     {
 
         // NO Application is created here, deliberately. An Application belongs to the thread
@@ -648,6 +733,14 @@ sealed class Harness
         var monitor = new StubMonitor();
         monitor.Initial.Add(rdm);
         if (!singleWorkspace) monitor.Initial.Add(beeper);
+
+        if (busyWorkspace)
+            Enumerable.Range(1, 5).ToList().ForEach(i =>
+            {
+                var extra = new WindowInfo(new WindowHandle(400 + i), 40 + i, $"app{i}", $@"C:pp{i}.exe", $"App {i}", null);
+                desktops.Placements[extra.Handle] = sparrowDesktop;
+                monitor.Initial.Add(extra);
+            });
 
         if (withUnresolvableWindow)
             // Deliberately absent from Placements, so DesktopOf fails for it exactly as
@@ -725,8 +818,13 @@ sealed class PulsingDesktops : IVirtualDesktopService
         return Result.Success();
     }
 
+    // Counted because #120 turns on it: a re-layout during a resize must draw from the overview it
+    // already has, and the only way to assert "no query happened" is to count the calls the query makes.
+    public int DesktopOfCalls { get; private set; }
+
     public Result<Guid> DesktopOf(WindowHandle window)
     {
+        DesktopOfCalls++;
         var pulse = PulseOnNextDesktopOf;
         PulseOnNextDesktopOf = null;
         pulse?.Invoke();
