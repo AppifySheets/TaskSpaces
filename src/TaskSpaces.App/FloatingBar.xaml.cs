@@ -1198,10 +1198,16 @@ public partial class FloatingBar : Window
             // window title".
             groupRows.Add(GroupRow(visualLabel: "📌", groupLabel: "Pinned", isCurrent: false, switchTo: null,
                     groupKey: DraggedWindow.PinnedGroupKey,
-                    // No screen argument: a pinned window is on every desktop, and #89 is about which
-                    // screen a window sits on, which pinning has nothing to say about.
-                    onDrop: (h, _) => Report(manager.PinWindow(h)),
-                    overview.Pinned));
+                    // The screen is honoured here now, and it has to be: with #108 the pinned row draws
+                    // halves that answer, so its DragOver readout says "→ move to Pinned, screen 2" and a
+                    // drop that pinned the window and ignored the screen would be the bar promising
+                    // something it does not do. Pinning and which screen a window sits on are
+                    // independent facts, so a drop aimed at a half states both.
+                    onDrop: (h, screen) => Report(manager.PinWindow(h)
+                        .Bind(() => screen is { } s ? manager.MoveWindowToMonitor(h, s) : Result.Success())),
+                    overview.Pinned,
+                    // #109: shorter than a workspace row, since it holds a window or two.
+                    pinned: true));
 
             // Fix round 6 (Petre, screenshot showing ONE "Sparrow" row: "it does follow
             // across every workspace, but not showw all workspace tabs"). The original
@@ -1538,9 +1544,20 @@ public partial class FloatingBar : Window
         // Registered per LINE rather than per row, because a wrapped row can hold one screen's icons
         // above and another's below, and then "which half" is a question about the line the pointer is
         // over. A row's own drop handler picks the line first and the half second.
-        if (rowKey is { } key && zones.Count > 0)
+        // Keyed on the row's GROUP KEY, not on a workspace id, and that is #108: "dragging doesn't work
+        // in the pinned row at the top of the bar." The zones were registered only for rows that HAVE a
+        // workspace, so the pinned row drew a hairline and two halves that answered nothing. The trace says
+        // it outright -- `drop row=Pinned zones=none`, beside `drop row=Messengers zones=[line@0-26:
+        // screen1fromstart, screen2from84]` from the same session. Dragging OUT of the row worked all
+        // along; what did not work was the gesture the rest of the bar teaches, dragging across the
+        // hairline to send the window to the other screen.
+        //
+        // Every row has a group key (`pinned`, `workspace:<id>`, `desktop:<id>`, `unplaced`) and it is
+        // already threaded through every one of these call sites, so the pinned row, the unbound desktops
+        // and Unplaced all gain working halves for the price of the key.
+        if (zones.Count > 0)
         {
-            if (!monitorLines.TryGetValue(key, out var lines)) monitorLines[key] = lines = [];
+            if (!monitorLines.TryGetValue(groupKey, out var lines)) monitorLines[groupKey] = lines = [];
             lines.Add(new MonitorLine(grid, aim, zones));
         }
 
@@ -1560,7 +1577,7 @@ public partial class FloatingBar : Window
     sealed record MonitorZone(int Monitor, FrameworkElement? Mark, int FirstColumn, int ColumnCount);
     sealed record MonitorLine(Grid Line, Border Aim, IReadOnlyList<MonitorZone> Zones);
 
-    readonly Dictionary<Guid, List<MonitorLine>> monitorLines = [];
+    readonly Dictionary<string, List<MonitorLine>> monitorLines = [];
 
     // Rank -> display number for the screens the bar knows about. See where it is filled in.
     IReadOnlyDictionary<int, int> monitorByRank = new Dictionary<int, int>();
@@ -1571,9 +1588,9 @@ public partial class FloatingBar : Window
     // Null in three cases, and all three mean the same thing to the caller: the row shows only one
     // screen, so there is nothing to aim at; the row shows none at all; or the pointer is to the left
     // of every half, which happens over the row's own left edge.
-    (MonitorLine Line, MonitorZone Zone)? Aimed(Guid rowKey, UIElement container, Point at)
+    (MonitorLine Line, MonitorZone Zone)? Aimed(string groupKey, UIElement container, Point at)
     {
-        if (!monitorLines.TryGetValue(rowKey, out var lines)) return null;
+        if (!monitorLines.TryGetValue(groupKey, out var lines)) return null;
 
         // One screen is not a choice. Petre's own rule for this: "today's behaviour (workspace only)
         // would remain the meaning of a drop when the target row has no split to aim at."
@@ -1591,12 +1608,12 @@ public partial class FloatingBar : Window
         return line is not null && AimedZone(line, container, at) is { } zone ? (line, zone) : null;
     }
 
-    int? AimedMonitor(Guid rowKey, UIElement container, Point at) => Aimed(rowKey, container, at)?.Zone.Monitor;
+    int? AimedMonitor(string groupKey, UIElement container, Point at) => Aimed(groupKey, container, at)?.Zone.Monitor;
 
     // Every line's halves and where each one starts, in the container's own coordinates: the same numbers
     // AimedZone compares the pointer against. For the trace only (#101).
-    string DescribeZones(Guid? rowKey, UIElement container) =>
-        rowKey is { } key && monitorLines.TryGetValue(key, out var lines)
+    string DescribeZones(string groupKey, UIElement container) =>
+        monitorLines.TryGetValue(groupKey, out var lines)
             ? "[" + string.Join(" | ", lines.Select(line =>
                 $"line@{BoundsIn(line.Line, container)?.Top:F0}-{BoundsIn(line.Line, container)?.Bottom:F0}: " +
                 string.Join(", ", line.Zones.Select(z =>
@@ -1669,13 +1686,13 @@ public partial class FloatingBar : Window
     // Paints the half being aimed at and clears every other one on the row, so exactly one half is
     // ever lit. Called on every DragOver, which is why it repaints from the answer rather than
     // remembering what it lit last time: that is how a highlight gets stuck on a half the pointer left.
-    void ArmAim(Guid? rowKey, UIElement container, Point at)
+    void ArmAim(string groupKey, UIElement container, Point at)
     {
-        if (rowKey is not { } key || !monitorLines.TryGetValue(key, out var lines)) return;
+        if (!monitorLines.TryGetValue(groupKey, out var lines)) return;
 
         // ONE line, the one the pointer is on: a wrapped row can hold the same screen twice, and
         // lighting both halves would claim the window is about to go to two places.
-        var aimed = Aimed(key, container, at);
+        var aimed = Aimed(groupKey, container, at);
         lines.ToList().ForEach(line => line.Aim.Background = Brushes.Transparent);
         if (aimed is not { } hit) return;
 
@@ -1684,9 +1701,9 @@ public partial class FloatingBar : Window
         hit.Line.Aim.Background = DropHighlight;
     }
 
-    void ClearAim(Guid? rowKey)
+    void ClearAim(string groupKey)
     {
-        if (rowKey is { } key && monitorLines.TryGetValue(key, out var lines))
+        if (monitorLines.TryGetValue(groupKey, out var lines))
             lines.ToList().ForEach(line => line.Aim.Background = Brushes.Transparent);
     }
 
@@ -1896,7 +1913,23 @@ public partial class FloatingBar : Window
     // of the height rather than painting small inside a full-size slot. The row still spans the
     // bar's full width, because the transform scales the space it is given as well as what it
     // draws there.
-    const double MinimizedRowScale = 1.0 / 3;
+    // #111: "minimized workspace rows are too small; make them 30% larger." A third of a row was
+    // right in the abstract and too small in use, which is the sort of thing only a running bar can
+    // say. 30% larger than a third, so 0.43 rather than 0.33.
+    const double MinimizedRowScale = 0.43;
+
+    // #109: "make the pinned row at the top of the bar smaller in height." It holds a window or two
+    // and does not earn a full row.
+    //
+    // The same transform #52 built, at a gentler ratio, and that reuse is the whole reason this is
+    // cheap: clicks, drags, drops and the aim highlight all travel through the transform along with
+    // the pixels, so the shrunk row keeps working with no second implementation.
+    //
+    // There is a decision pulling the other way and it is why this is 0.8 rather than a third: the
+    // pinned row's icon stack carries a full line's height DELIBERATELY, because dropping onto it is
+    // the only way to pin a window from the bar, and shrinking a row shrinks the target you have to
+    // hit. A fifth off is visible without turning the bar's one pin gesture into a game of darts.
+    const double PinnedRowScale = 0.8;
 
     // The spine down the left of a nested row, in its parent's colour. Two pixels: a hairline
     // reads as an artefact and anything wider starts competing with the icons.
@@ -1920,7 +1953,7 @@ public partial class FloatingBar : Window
     // ends where every other row does and the monitor alignment (#39) still lines up across rows.
     const double NestedIndent = SpineWidth + 1;
 
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null)
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null, bool pinned = false)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -2202,9 +2235,11 @@ public partial class FloatingBar : Window
         // about the workspace.
         if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel, minimized, nested);
 
-        // A third of the height, everything included (#52). Applied to the whole row and applied
-        // LAST, so nothing built above has to know it is being drawn small.
-        if (minimized) container.LayoutTransform = new ScaleTransform(MinimizedRowScale, MinimizedRowScale);
+        // Scaled down as a whole, everything included: a minimized row (#52) or the pinned row (#109).
+        // Applied LAST, so nothing built above has to know it is being drawn small, and minimized wins
+        // when a row is somehow both -- the smaller claim is the more specific one.
+        var scale = minimized ? MinimizedRowScale : pinned ? PinnedRowScale : 1.0;
+        if (scale is not 1.0) container.LayoutTransform = new ScaleTransform(scale, scale);
 
         container.Tag = new RowTag(groupKey);
         container.MouseEnter += (_, _) => EnterRow(groupKey, rowKey, ordered);
@@ -2312,14 +2347,14 @@ public partial class FloatingBar : Window
                 if (!accepted) return;
 
                 // #89: which SCREEN the pointer is over, when the row draws more than one.
-                var screen = rowKey is { } key ? AimedMonitor(key, container, e.GetPosition(container)) : null;
+                var screen = AimedMonitor(groupKey, container, e.GetPosition(container));
                 var ownRow = e.Data.GetData(DraggedWindow.DragFormat) is DraggedWindow d && d.SourceGroupKey == groupKey;
 
                 // The half is highlighted, not the row, whenever a screen is being aimed at. On the
                 // window's OWN row that half-highlight is the only feedback there is -- the row is not
                 // changing, only the screen -- and on another row it answers "which half of which
                 // row", which is the question a split row raises and the plain row highlight cannot.
-                ArmAim(rowKey, container, e.GetPosition(container));
+                ArmAim(groupKey, container, e.GetPosition(container));
                 container.Background = screen is null && !ownRow ? DropHighlight : idle;
 
                 // The reserved info line doubles as the drop-target readout: on a bar this
@@ -2333,23 +2368,23 @@ public partial class FloatingBar : Window
                     ({ } s, false) => $"→ move to {groupLabel}, screen {s}",
                 };
             };
-            container.DragLeave += (_, _) => { container.Background = idle; ClearAim(rowKey); ClearInfo(); };
+            container.DragLeave += (_, _) => { container.Background = idle; ClearAim(groupKey); ClearInfo(); };
             container.Drop += (_, e) =>
             {
                 container.Background = idle;
-                ClearAim(rowKey);
+                ClearAim(groupKey);
                 ClearInfo();
                 if (e.Data.GetData(DraggedWindow.DragFormat) is not DraggedWindow dragged) return;
 
                 var at = e.GetPosition(container);
-                var screen = rowKey is { } key ? AimedMonitor(key, container, at) : null;
+                var screen = AimedMonitor(groupKey, container, at);
 
                 // #101: the highlight said one screen and the window went to another. Both sides compute
                 // from AimedMonitor, so what they disagree about is not the code but the INPUT -- and the
                 // only way to tell which is to record the geometry at the moment of release.
                 if (ClickTrace.On)
                     ClickTrace.Write($"drop row={groupLabel} x={at.X:F0} y={at.Y:F0} aimed={screen?.ToString() ?? "none"} " +
-                                     $"ownRow={dragged.SourceGroupKey == groupKey} zones={DescribeZones(rowKey, container)}");
+                                     $"ownRow={dragged.SourceGroupKey == groupKey} zones={DescribeZones(groupKey, container)}");
 
                 // Asked BEFORE the drop is carried out, because carrying it out is what changes the
                 // answer. A window on a desktop you are not standing on cannot be moved on screen at
