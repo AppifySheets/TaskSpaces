@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -138,12 +138,27 @@ public partial class ManageWindow : Window
 
     // --- tracked time (#53) -----------------------------------------------------------------
 
+    // Each duration twice over: once formatted for the eye, once as the TimeSpan the column SORTS by.
+    //
+    // Petre: "time should be sortable correctly, not by text." The columns bound to the formatted
+    // strings, so the grid compared them as text -- which puts "1h 45m" above "47m" because '1' sorts
+    // before '4', and reads as the sort being broken rather than as being asked the wrong question.
+    // The XAML now points each column's SortMemberPath at these, and a TimeSpan compares as a
+    // duration. Keeping the pair means the format stays free to change without dragging the ordering
+    // with it, which is what caused this.
     public sealed class TimeRow
     {
         public required string Workspace { get; init; }
+        // The group this workspace belongs to, or empty. Petre: "workspace should have group name."
+        // Its own column rather than a prefix on the name: it sorts, so a group's rows can be brought
+        // together, and it never has to be picked back out of a composed string.
+        public required string Group { get; init; }
         public required string Today { get; init; }
         public required string ThisWeek { get; init; }
         public required string LastMonth { get; init; }
+        public required TimeSpan TodayTime { get; init; }
+        public required TimeSpan ThisWeekTime { get; init; }
+        public required TimeSpan LastMonthTime { get; init; }
     }
 
     readonly ObservableCollection<TimeRow> times = [];
@@ -165,17 +180,28 @@ public partial class ManageWindow : Window
         // of work carried over from the last one.
         var monday = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
 
-        manager.State.Workspaces.ToList().ForEach(w => times.Add(new TimeRow
+        manager.State.Workspaces.ToList().ForEach(w =>
         {
-            Workspace = w.Name,
-            Today = Format(timeTracker.Time.On(w.Id, today)),
-            ThisWeek = Format(timeTracker.Time.Between(w.Id, monday, today)),
-            LastMonth = Format(timeTracker.Time.Between(w.Id, today.AddDays(-29), today)),
-        }));
+            var todayTime = timeTracker.Time.On(w.Id, today);
+            var weekTime = timeTracker.Time.Between(w.Id, monday, today);
+            var monthTime = timeTracker.Time.Between(w.Id, today.AddDays(-29), today);
+
+            times.Add(new TimeRow
+            {
+                Workspace = w.Name,
+                Group = manager.State.GroupOf(w.Id)?.Name ?? "",
+                Today = Format(todayTime),
+                ThisWeek = Format(weekTime),
+                LastMonth = Format(monthTime),
+                TodayTime = todayTime,
+                ThisWeekTime = weekTime,
+                LastMonthTime = monthTime,
+            });
+        });
 
         // Says what the numbers cannot: a fresh install shows zeroes everywhere, and without this
         // line that is indistinguishable from tracking being broken.
-        TimeStatus.Text = times.All(t => t.LastMonth == Format(TimeSpan.Zero))
+        TimeStatus.Text = times.All(t => t.LastMonthTime == TimeSpan.Zero)
             ? "Nothing tracked yet. Time accrues while you work in a workspace, in 15-second steps, and is written to time.json beside state.json."
             : $"Counted in 15-second steps while you are active; idle after {ActivityAccrual.IdleAfter.TotalMinutes:0} minutes without input.";
     }

@@ -1,4 +1,4 @@
-<!-- Icon uses an ABSOLUTE pack URI naming the assembly, not the short "/Assets/..." form:
+﻿<!-- Icon uses an ABSOLUTE pack URI naming the assembly, not the short "/Assets/..." form:
      the short form resolves against Application.ResourceAssembly, which a WPF exe's generated
      Main sets but a test host does not, so it made this window unconstructable under test
      with "Cannot locate resource". Same form in PromptDialog and App.AppIcon. -->
@@ -132,10 +132,16 @@
                     <TextBlock x:Name="TimeStatus" DockPanel.Dock="Bottom" Opacity="0.75" Margin="0,8,0,0" TextWrapping="Wrap"/>
                     <DataGrid x:Name="TimeGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column">
                         <DataGrid.Columns>
+                            <!-- Group first, so a group's workspaces read as belonging to it and sorting
+                                 by this column brings them together. Empty for a workspace in no group. -->
+                            <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="140"/>
                             <DataGridTextColumn Header="Workspace" Binding="{Binding Workspace}" Width="*"/>
-                            <DataGridTextColumn Header="Today" Binding="{Binding Today}" Width="110"/>
-                            <DataGridTextColumn Header="This week" Binding="{Binding ThisWeek}" Width="110"/>
-                            <DataGridTextColumn Header="Last 30 days" Binding="{Binding LastMonth}" Width="110"/>
+                            <!-- SortMemberPath, and it is the whole point of these three columns having two
+                                 properties each: the cell shows "1h 45m" and the sort compares a TimeSpan.
+                                 Bound to the text alone, the grid sorted "1h 45m" above "47m". -->
+                            <DataGridTextColumn Header="Today" Binding="{Binding Today}" SortMemberPath="TodayTime" Width="110"/>
+                            <DataGridTextColumn Header="This week" Binding="{Binding ThisWeek}" SortMemberPath="ThisWeekTime" Width="110"/>
+                            <DataGridTextColumn Header="Last 30 days" Binding="{Binding LastMonth}" SortMemberPath="LastMonthTime" Width="110"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
