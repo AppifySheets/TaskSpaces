@@ -40,6 +40,14 @@ public static class IconRowLimit
     // is never broken before three icons, even when three do not fit. A row whose label eats the
     // width would otherwise degrade to one icon per line and a bar taller than the screen, which
     // is a worse answer than icons running past the edge.
+    //
+    // It applies to a LINE, and a line is now divided into one lane per monitor -- so the caller
+    // divides this by the number of lanes, and that division is the whole reason `minimumPerLine`
+    // below is a parameter rather than this constant read directly. Measured on a 177px bar: each
+    // lane got 61 DIP, which is 2.5 cells, and a floor of three per lane drew three and clipped
+    // the third. Petre: "on the second monitor, edge is cut, not moved to the second row." The
+    // rule was written when the budget was the whole row, where three icons is 72 against 127 and
+    // never bites; applied to a half row it guarantees the clipping it exists to prevent.
     public const int MinimumIconsPerLine = 3;
 
     // The same split, but against a WIDTH the user chose rather than a fixed count.
@@ -54,15 +62,19 @@ public static class IconRowLimit
     // Widths arrive as a FUNCTION rather than one constant, because a line is not made of equal
     // cells: the monitor markers are drawn inline between groups, and ignoring them would let a
     // line overflow by exactly as many markers as it happens to contain.
-    public static IReadOnlyList<IReadOnlyList<T>> LinesThatFit<T>(IEnumerable<T> icons, Func<T, double> widthOf, double available) =>
+    //
+    // `minimumPerLine` is the floor described above, and the caller states it because only the
+    // caller knows how many lanes are sharing the line: three is right for a row measured whole
+    // and wrong for one lane of two, where it means six icons on a line that fits four.
+    public static IReadOnlyList<IReadOnlyList<T>> LinesThatFit<T>(IEnumerable<T> icons, Func<T, double> widthOf, double available, int minimumPerLine = MinimumIconsPerLine) =>
         icons
             .Aggregate(new List<List<T>>(), (lines, icon) =>
             {
                 var width = widthOf(icon);
                 var current = lines.LastOrDefault();
                 // Break when this icon would overflow -- unless the line has not yet earned its
-                // three, in which case it takes the overflow instead.
-                if (current is null || (current.Count >= MinimumIconsPerLine && Used(current, widthOf) + width > available))
+                // floor, in which case it takes the overflow instead.
+                if (current is null || (current.Count >= Math.Max(1, minimumPerLine) && Used(current, widthOf) + width > available))
                     lines.Add([icon]);
                 else
                     current.Add(icon);

@@ -72,6 +72,27 @@ public class IconRowLimitTests
     public void A_line_is_never_broken_before_three_icons(double available) =>
         Assert.Equal([3, 3, 1], FitSizes(7, available));
 
+    // ...and the floor is the CALLER's to state, because a line divided into one lane per monitor
+    // gives each lane a share of it. Undivided, three per lane means six on a line that fits four,
+    // and the overflow is clipped rather than wrapped: measured on a 177px bar, a 61 DIP lane held
+    // two cells and drew three. Petre: "on the second monitor, edge is cut, not moved to the second
+    // row."
+    [Fact]
+    public void A_lane_sharing_a_line_wraps_at_the_floor_it_is_given() =>
+        Assert.Equal(
+            [2, 2, 2],
+            IconRowLimit.LinesThatFit(Enumerable.Range(1, 6), _ => 24.0, available: 61, minimumPerLine: 1)
+                .Select(line => line.Count));
+
+    // One is the smallest floor there is, and a zero or negative one must not produce an infinite
+    // sequence of empty lines: an icon always lands somewhere.
+    [Fact]
+    public void A_floor_below_one_still_puts_one_icon_on_a_line() =>
+        Assert.Equal(
+            [1, 1, 1],
+            IconRowLimit.LinesThatFit(Enumerable.Range(1, 3), _ => 24.0, available: 10, minimumPerLine: 0)
+                .Select(line => line.Count));
+
     // Exactly at the boundary: a line is broken when the NEXT icon would overflow, not when the
     // current one merely fills the width. Off by one here means a permanently ragged bar.
     [Fact]

@@ -2106,7 +2106,11 @@ public partial class FloatingBar : Window
                     // No width of its own yet: the fixed five-per-line rule, now applied per screen rather
                     // than per row, which is the same rule doing the same job in a narrower space.
                     ? IconRowLimit.Lines(g.ToList())
-                    : IconRowLimit.LinesThatFit(g.ToList(), _ => IconCellWidth, share))
+                    // The 3-icon floor is a rule about a LINE, and the line is split between lanes, so
+                    // each lane gets its share of it. Undivided it outvoted the width it was measuring:
+                    // a 61 DIP lane holds two cells, the floor said three, and the third was clipped.
+                    : IconRowLimit.LinesThatFit(g.ToList(), _ => IconCellWidth, share,
+                        Math.Max(1, IconRowLimit.MinimumIconsPerLine / lanes)))
                 .Select(line => line.ToList()).ToList())
             .ToList();
 
