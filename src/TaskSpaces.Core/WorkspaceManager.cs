@@ -529,6 +529,13 @@ public sealed class WorkspaceManager(
                 : Result.Failure("Workspace has no desktop (compatibility mode)."))
             .Tap(() =>
             {
+                // The one case the OS cannot answer for us afterwards: a HIDDEN window that we move.
+                // See lastKnownDesktop -- a window minimised to the tray reports no desktop at all, so
+                // without recording the move here the memory would keep naming where it used to live.
+                Workspace(workspaceId).Tap(w =>
+                {
+                    if (w.DesktopId is { } moved) lastKnownDesktop[window.Handle] = moved;
+                });
                 memberships[window.Handle] = workspaceId;
                 detached.Remove(window.Handle); // a workspace claims it again
                 if (roster) RosterAdd(window, workspaceId);
@@ -1736,12 +1743,16 @@ public sealed class WorkspaceManager(
     // explicit editing UI ("Add app…" / "Remove from workspace"). A drag says where this
     // window should be right now, not what the workspace is made of -- so ▶ Start still
     // relaunches the app later, exactly as before the drag.
+    // Recorded here as well as read from the OS, for the one case the OS cannot answer: moving a
+    // window that is currently hidden. Without this the memory above would keep naming where it used
+    // to live until the next time it was visible.
     public Result MoveToDesktop(WindowHandle window, Guid desktopId) =>
         desktops.IsPinned(window)
             .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
             .Bind(() => desktops.MoveWindow(window, desktopId))
             .Tap(() =>
             {
+                lastKnownDesktop[window] = desktopId;
                 memberships.Remove(window);
                 detached.Add(window);
                 // Persisted too, for the same reason pinning is: `detached` is live-only, so
@@ -2107,6 +2118,48 @@ public sealed class WorkspaceManager(
                 .Tap(r => { ApplyRename(w, r.ShortName); }));
     }
 
+    // The last desktop each window was seen on, and the reason it exists is measured rather than
+    // supposed. Petre: "i have teams running on the messenger workspace and it's not there", with a
+    // screenshot showing Teams in the Unplaced row instead. Probed against the live windows:
+    //
+    //   20842 WhatsApp  isWindow=True  visible=False  FromHwnd=NULL        (minimised to tray)
+    //   313F8 Teams     isWindow=True  visible=True   FromHwnd=Messengers
+    //   1611EC Edge     isWindow=True  visible=True   cloaked=2  FromHwnd=GEPHA
+    //
+    // A window minimised to the tray HAS NO RESOLVABLE DESKTOP. Not closed, not pinned, not cloaked:
+    // the Edge window in the control is cloaked, because it is on another desktop, and answers
+    // perfectly. Invisibility is what the virtual-desktop API declines to answer for.
+    //
+    // So the bar was dropping a window out of its workspace and into the "Unplaced" catch-all for as
+    // long as it sat in the tray, which is where messengers spend most of their day.
+    //
+    // The fix is to remember, because the fact was true a moment ago and is merely unavailable now.
+    // That is the mirror of a rule this codebase already keeps for icons: never cache a lookup failure
+    // that can succeed later. Here: never discard a lookup that succeeded, just because the next one
+    // failed. It self-heals -- the window is shown, the OS answers again, the memory is refreshed --
+    // and it costs one dictionary and no extra calls.
+    readonly Dictionary<WindowHandle, Guid> lastKnownDesktop = [];
+
+    // Asks the OS, remembers a real answer, and falls back to the last real answer when the OS
+    // declines. Unplaced is still reachable, and still means what it says: we have NEVER been told
+    // where this window lives.
+    Result<Guid> DesktopOfRemembering(WindowHandle window, IReadOnlyList<DesktopInfo> live)
+    {
+        var answer = desktops.DesktopOf(window);
+        if (answer.IsSuccess)
+        {
+            lastKnownDesktop[window] = answer.Value;
+            return answer;
+        }
+
+        // Only a desktop that STILL EXISTS. A remembered desktop that has since been deleted would
+        // put the window in a row nothing draws, which is worse than the catch-all: at least the
+        // catch-all is visible and can be dragged out of.
+        return lastKnownDesktop.TryGetValue(window, out var remembered) && live.Any(d => d.Id == remembered)
+            ? Result.Success(remembered)
+            : answer;
+    }
+
     // --- overview / switcher-facing operations -----------------------------------
 
     // Ground truth for "which workspace is this window in": ASK THE OS which desktop
@@ -2141,7 +2194,7 @@ public sealed class WorkspaceManager(
                     // window is present on the child's screen and stays in its parent's row, which
                     // is also why the child's row is not doubled up -- the thing he rejected first.
                     ? Result.Success(home)
-                    : desktops.DesktopOf(w.Handle)))
+                    : DesktopOfRemembering(w.Handle, live)))
                 .Where(x => x.Desktop.IsSuccess) // closed mid-query: just not shown this round
                 .ToDictionary(x => x.Handle, x => x.Desktop.Value);
             // One screen sweep per build, alongside the DesktopOf calls above -- and far cheaper

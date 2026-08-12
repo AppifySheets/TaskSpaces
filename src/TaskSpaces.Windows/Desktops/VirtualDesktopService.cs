@@ -1,4 +1,4 @@
-using System.Reactive.Linq;
+﻿using System.Reactive.Linq;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
@@ -18,8 +18,12 @@ namespace TaskSpaces.Windows.Desktops;
 // already runs its UI thread as STA, so this falls out naturally there. If the caller is
 // NOT on an STA thread, Configure() throws and Initialize() turns that into a Result
 // failure -- the app degrades to compatibility mode instead of crashing, per spec.
-public sealed class VirtualDesktopService : IVirtualDesktopService
+public sealed class VirtualDesktopService(Action<string>? trace = null) : IVirtualDesktopService
 {
+    // Windows whose desktop could not be resolved, and what was true of them when we asked. Kept so
+    // the trace line is written ONCE per window rather than on every five-second sweep.
+    readonly HashSet<nint> unresolved = [];
+
     // DEVIATION from the brief's draft (Initialize body): the draft only touched
     // VirtualDesktop.Current to force the interop compile. The spike found that
     // VirtualDesktop.Configure() -- documented only in the package's XML doc comments,
@@ -73,10 +77,41 @@ public sealed class VirtualDesktopService : IVirtualDesktopService
             () => VirtualDesktop.MoveToDesktop(window.Value, d),
             e => $"Could not move window {window.Value} (it may have closed): {e.Message}"));
 
-    public Result<Guid> DesktopOf(WindowHandle window) =>
-        Result.Try(() => VirtualDesktop.FromHwnd(window.Value), e => e.Message)
+    public Result<Guid> DesktopOf(WindowHandle window)
+    {
+        var answer = Result.Try(() => VirtualDesktop.FromHwnd(window.Value), e => e.Message)
             .Ensure(d => d is not null, "Window is not on any desktop (closed or pinned).")
             .Map(d => d!.Id);
+
+        // A failure here is what puts a window in the bar's "Unplaced" row, and until now the row was
+        // a mystery bucket: Petre, with Teams running in Messengers, "i have teams running on the
+        // messenger workspace and it's not there". The Ensure message names two possibilities (closed,
+        // pinned) and there is a third, so the honest thing is to ASK, once, and write down the answer.
+        //
+        // The three questions worth asking, and note the second and third are not the same question:
+        // IsPinnedWindow is about THIS window, while pinning is also available per APPLICATION and is
+        // keyed on the AppUserModelID -- so an app-pinned window is on every desktop, belongs to none,
+        // and reports false for the window-level check the app uses.
+        if (answer.IsFailure && trace is not null && unresolved.Add(window.Value))
+        {
+            var pinnedWindow = Try(() => VirtualDesktop.IsPinnedWindow(window.Value).ToString());
+            var appId = Try(() => VirtualDesktop.TryGetAppUserModelId(window.Value, out var id) ? id : "(none)");
+            var pinnedApp = Try(() => VirtualDesktop.IsPinnedApplication(appId).ToString());
+            trace($"unplaced {window.Value:X}: {answer.Error} " +
+                  $"pinnedWindow={pinnedWindow} pinnedApp={pinnedApp} appId={appId}");
+        }
+
+        if (answer.IsSuccess) unresolved.Remove(window.Value);
+        return answer;
+    }
+
+    // Diagnostics only, so a question that throws answers with the exception rather than taking the
+    // process down: this runs inside a sweep over every window on the machine.
+    static string Try(Func<string> ask)
+    {
+        try { return ask(); }
+        catch (Exception e) { return $"threw {e.GetType().Name}"; }
+    }
 
     // DEVIATION from the brief's draft: the draft subscribed to the static
     // VirtualDesktop.CurrentChanged event eagerly, in a property initializer that runs

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using CSharpFunctionalExtensions;
@@ -29,7 +29,15 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
     readonly WinEventProc callback;
     readonly List<nint> hooks = [];
 
-    public WindowMonitor() => callback = OnWinEvent;
+    // A line of diagnostics, or nothing, on the same pattern as WorkspaceManager: this class repairs
+    // the window list on a timer and every one of its decisions is invisible from the outside.
+    readonly Action<string>? trace;
+
+    public WindowMonitor(Action<string>? trace = null)
+    {
+        callback = OnWinEvent;
+        this.trace = trace;
+    }
 
     public IObservable<WindowEvent> Events => events.AsObservable();
 
@@ -147,7 +155,17 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
 
         // Recovered: listed by the OS but missing from `known`, or flagged hidden despite
         // being visible again. TryAppear handles both, and no-ops for the ones already fine.
-        live.ForEach(TryAppear);
+        //
+        // PER WINDOW, so one hostile window cannot cost the sweep its whole job. TryAppear reads a
+        // process path and a command line, which are exactly the reads that throw for an elevated or
+        // exiting process -- and a throw here used to abandon every window after it, in a loop whose
+        // entire purpose is repairing drift. Measured consequence: a live Teams window absent from
+        // the bar while two destroyed handles stayed in it.
+        live.ForEach(hwnd =>
+        {
+            try { TryAppear(hwnd); }
+            catch (Exception e) { trace?.Invoke($"resync: adopting {hwnd:X} threw {e.GetType().Name}: {e.Message}"); }
+        });
 
         // Gone for real. Deliberately NOT "absent from `live`": a window minimised to the
         // tray is absent from the taskbar-candidate list while still existing, and reporting
@@ -159,6 +177,9 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         {
             if (!known.Remove(hwnd, out var gone)) return;
             hidden.Remove(hwnd);
+            // Traced because a ghost is invisible in the log otherwise: this is the line that says a
+            // row you were looking at was a window that no longer exists.
+            trace?.Invoke($"resync: dropped dead handle {hwnd:X} ({gone.ProcessName})");
             events.OnNext(new WindowEvent(WindowEventKind.Disappeared, gone));
         });
     }

@@ -460,8 +460,9 @@ public partial class App : Application
 
         var stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces");
         var statePath = Path.Combine(stateDir, "state.json");
-        desktops = new VirtualDesktopService();
-        monitor = new WindowMonitor();
+        // The trace explains the "Unplaced" row: why a window's desktop could not be resolved.
+        desktops = new VirtualDesktopService(ClickTrace.On ? ClickTrace.Write : null);
+        monitor = new WindowMonitor(ClickTrace.On ? ClickTrace.Write : null);
         // The activator is what lets a desktop switch put focus back on the window that had it
         // last time you were there (WorkspaceManager.RestoreLastActive). Same WindowActivator
         // the bar's icons use -- one definition of "bring it to me", so a restored window and a
@@ -742,11 +743,37 @@ public partial class App : Application
         if (!compatibilityMode)
         {
             var sweep = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            var sweeps = 0;
             sweep.Tick += (_, _) =>
             {
-                monitor.Resync();
-                manager.ReapplyRenames();
-                // No ReclaimTopmost here any more -- the dedicated 1s timer above supersedes it.
+                // ISOLATED, and traced, as a GUARD rather than as a fix for anything observed. Worth
+                // being clear about that, because it was written while chasing a bug that turned out to
+                // be elsewhere (a tray-minimised window has no resolvable desktop; see
+                // WorkspaceManager.lastKnownDesktop) and a comment claiming otherwise would be a false
+                // record.
+                //
+                // The reasoning stands on its own. This sweep is the app's only repair mechanism for a
+                // window list that WinEvents can only ever lose entries from. An exception in a
+                // DispatcherTimer tick goes to the dispatcher's unhandled handler, which this app
+                // deliberately swallows so a stray fault cannot take the process down with renamed
+                // titles still applied. The cost of that mercy would be a sweep that throws once and
+                // then throws forever, silently, freezing the window list at that moment -- and the
+                // reads inside it (a process path, a command line) are exactly the ones that throw for
+                // an elevated or exiting process.
+                //
+                // So each job runs on its own and each failure is written down once. If the trace ever
+                // shows one of these lines, that is a real bug with a name, found before it could look
+                // like something else.
+                try { monitor.Resync(); }
+                catch (Exception e) { ClickTrace.Write($"sweep: Resync threw {e.GetType().Name}: {e.Message}"); }
+
+                try { manager.ReapplyRenames(); }
+                catch (Exception e) { ClickTrace.Write($"sweep: ReapplyRenames threw {e.GetType().Name}: {e.Message}"); }
+
+                // A heartbeat, rare enough to be free: one line on the first tick and one every five
+                // minutes after. A stalled timer is otherwise indistinguishable from a timer whose
+                // work does nothing, and telling those apart is what cost this afternoon.
+                if (++sweeps == 1 || sweeps % 60 == 0) ClickTrace.Write($"sweep tick {sweeps}");
             };
             sweep.Start();
         }
