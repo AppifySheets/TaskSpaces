@@ -1,4 +1,4 @@
-using TaskSpaces.Core.Domain;
+﻿using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Persistence;
@@ -76,16 +76,19 @@ public sealed record AppState(
     // remembered for all of them, which is why placement memory deliberately stands down when two
     // live windows share an identity. That left the reboot case with no answer at all, which is #132.
     //
-    // Written ONLY when Petre moves a window by hand, never from where a window is found sitting.
-    // That was his ruling and the reason is concrete: when he reported this, every VS Code window was
-    // sitting in one workspace after a restart, so learning from position would have memorised the
-    // very mess being fixed. See WorkspaceManager.LearnContainer.
+    // Written two ways: at once when Petre moves a window by hand, and from a SNAPSHOT of where windows
+    // sit, taken on the 5s sweep once a position has held still. He asked for the second one -- "it
+    // should take a snapshot of where windows are, rather than where they're moved" -- over my objection
+    // that a snapshot would memorise the pile a reboot leaves behind. What makes it safe is ordering,
+    // not luck: the container tier corrects a window in milliseconds while learning needs two sweeps, so
+    // correction always wins and the snapshot sees the corrected state. See
+    // WorkspaceManager.SnapshotContainerHomes, and the two tests named for that race.
     //
     // Init property with an empty default, so a state.json written before this key loads with no
     // migration -- same pattern as everything above it.
     public IReadOnlyList<ContainerHome> ContainerHomes { get; init; } = [];
 
-    // Apps whose windows are named after the CONTAINER each one has open (#134), by process name.
+    // Apps whose windows are named after the CONTAINER each one has open (#136), by process name.
     // Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
     //
     // It replaces what a rename rule can do for these apps rather than extending it. A rule gives one

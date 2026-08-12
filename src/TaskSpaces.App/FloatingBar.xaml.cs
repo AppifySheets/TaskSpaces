@@ -4058,7 +4058,11 @@ public partial class FloatingBar : Window
 
 
         var rename = new MenuItem { Header = "Rename this window…", Icon = MenuGlyph("✏") };
-        rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:", row.Window.Title, owner: this)
+        // The hint carries the two forms, because neither is discoverable from an empty box: a bare name
+        // renames this window only, and either a wildcard or an arrow makes it a durable rule (#136).
+        rename.Click += (_, _) => PromptDialog.Ask("Rename window",
+                "Short name to show on the taskbar, or a rule: \"beeper *\", \"*taskspace* => TaskSpace\"",
+                row.Window.Title, owner: this)
             .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
         menu.Items.Add(rename);
 
@@ -4079,7 +4083,7 @@ public partial class FloatingBar : Window
             .Tap(shortName => Report(manager.RenameApp(row.Window.Handle, shortName)));
         menu.Items.Add(renameApp);
 
-        // #134. Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in
+        // #136. Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in
         // folders." One name for every window of an app is the wrong shape for an editor -- seven VS
         // Code windows all reading "VSC" say nothing about which is which -- so this names each window
         // after the folder it has open instead.

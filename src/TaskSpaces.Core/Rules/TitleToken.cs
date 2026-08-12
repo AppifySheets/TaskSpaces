@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using CSharpFunctionalExtensions;
 
 namespace TaskSpaces.Core.Rules;
@@ -110,7 +110,7 @@ public static class TitleToken
         container.Trim() is { Length: > 1 } cleaned ? cleaned : Maybe<string>.None;
 
     // Whether this app's title shape is known at all, which is what decides where "Name by folder"
-    // is offered (#134). An app not on the list has no container to name a window after, so offering
+    // is offered (#136). An app not on the list has no container to name a window after, so offering
     // it would be a menu item that silently does nothing.
     public static bool Knows(string processName) => Apps.ContainsKey(processName);
 

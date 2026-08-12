@@ -1,10 +1,10 @@
-using TaskSpaces.Core.Domain;
+﻿using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Tests;
 
-// #134. Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
+// #136. Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
 //
 // What was bad about it, precisely, because that is what shapes the feature. A rename rule gives ONE
 // name to every window of an app, which is the wrong shape for an editor: seven VS Code windows all

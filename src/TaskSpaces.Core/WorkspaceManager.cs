@@ -316,7 +316,7 @@ public sealed class WorkspaceManager(
                 .Tap(decided => ApplyPlacement(window, decided.Placement, decided.Roster));
 
         // Fire-and-forget for the same reason as above. WantedName rather than the rules directly, so an
-        // app named by its folder (#134) gets that name here too -- which for a window that opens with a
+        // app named by its folder (#136) gets that name here too -- which for a window that opens with a
         // folder already loaded is the only chance before it is on screen.
         WantedName(window)
             .Tap(shortName => { ApplyRename(window, shortName); });
@@ -473,7 +473,7 @@ public sealed class WorkspaceManager(
         //
         // The folder branch comes first and is not conditioned on the ledger, unlike the two below it,
         // because a folder name is not fixed: opening another folder in the same window is a DIFFERENT
-        // name, so "we already renamed this window" is not a reason to leave it alone (#134). Comparing
+        // name, so "we already renamed this window" is not a reason to leave it alone (#136). Comparing
         // against the observed title covers both cases at once -- the app rewrote our name, or the name
         // we want has changed -- and it is what stops our own echo from looping, since after we set the
         // title the observed title IS the wanted name.
@@ -1851,7 +1851,7 @@ public sealed class WorkspaceManager(
         return new Decision(Placement.In(home), Roster: false);
     }
 
-    // --- naming a window after what it has open (#134) -------------------------------------------
+    // --- naming a window after what it has open (#136) -------------------------------------------
     //
     // Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
     //
@@ -2269,14 +2269,20 @@ public sealed class WorkspaceManager(
     // renaming, so it lapses as soon as the app rewrites its title (Beeper carries the current
     // chat, RDM the session), whereas a rule keeps matching. Everything downstream already
     // applies rename rules on Appeared and on TitleChanged, so nothing else needed changing.
+    // IsRule rather than IsWildcard (#136): "*taskspace* => TaskSpace" is a rule too, and the arrow is
+    // the whole reason it can exist. Deriving the name from the pattern cannot say "match loosely, name
+    // precisely" -- "*taskspace*" would put "taskspace" on the taskbar, and he wants "TaskSpace".
     public Result RenameWindow(WindowHandle window, string input) =>
-        RenamePattern.IsWildcard(input)
+        RenamePattern.IsRule(input)
             ? AddRenameRule(input)
             : RenameExactly(window, input);
 
     public Result AddRenameRule(string input) =>
         Result.FailureIf(RenamePattern.ShortNameOf(input).Length == 0,
                 "A wildcard rename still needs a name: \"*\" on its own matches everything and names it nothing.")
+            // An arrow with nothing on its left would match every window ever opened and rename the lot.
+            .Bind(() => Result.FailureIf(RenamePattern.PatternOf(input).Length == 0,
+                "There is nothing to match: put the pattern before the arrow, as in \"*taskspace* => TaskSpace\"."))
             .Bind(() => AddRule(new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(input), RenamePattern.ShortNameOf(input))));
 
     // Petre: "i've renamed remote desktop manager to RDP yesterday, today it's still the
@@ -2400,7 +2406,7 @@ public sealed class WorkspaceManager(
     // events AND adopts persisted renames after a restart. App calls it on a ~5s timer.
     public void ReapplyRenames()
     {
-        // 0. Windows named after the folder they have open (#134). First, and over ALL known windows
+        // 0. Windows named after the folder they have open (#136). First, and over ALL known windows
         //    rather than only over the ledger, because two things here are not true of a rule-based
         //    rename: the wanted name changes when the folder changes, and a window that has never been
         //    renamed can acquire a name the moment its folder becomes readable. The event path handles
