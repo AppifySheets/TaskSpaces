@@ -2983,7 +2983,7 @@ public partial class FloatingBar : Window
         if (hoverDwell.Tag is null)
         {
             hoverDwell.Tag = "wired"; // Tick attached once, however many times this is armed
-            hoverDwell.Tick += (_, _) => DwellElapsed();
+            hoverDwell.Tick += (_, _) => Guarded(DwellElapsed, "dwell");
         }
         hoverDwell.Start();
     }
@@ -3050,9 +3050,24 @@ public partial class FloatingBar : Window
         hoverWatch ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
         if (!hoverWatch.IsEnabled)
         {
-            hoverWatch.Tick += (_, _) => WatchHover();
+            hoverWatch.Tick += (_, _) => Guarded(WatchHover, "hover watch");
             hoverWatch.Start();
         }
+    }
+
+    // A timer tick that cannot take the app down with it. Petre, minutes after the dwell shipped:
+    // "TaskSpaces hit an unexpected error and must close: 'System.Windows.Documents.Run' is not a Visual
+    // or Visual3D." That specific bug is fixed in IconAncestorOf, but the SHAPE of the failure is worth
+    // guarding against for good: an exception in a DispatcherTimer tick reaches the dispatcher's unhandled
+    // handler, which this app turns into a fatal dialog, so a hover -- the most incidental thing a pointer
+    // can do -- was able to close a program holding renamed titles.
+    //
+    // The 5s sweep already runs each of its jobs this way and for the same reason. Written down when it
+    // happens rather than swallowed, because a hover that silently stops working is its own kind of bug.
+    static void Guarded(Action tick, string what)
+    {
+        try { tick(); }
+        catch (Exception e) { ClickTrace.Write($"{what} threw {e.GetType().Name}: {e.Message}"); }
     }
 
     // What closes the card. Asked of the POINTER rather than of an event, because the events that would
@@ -3077,10 +3092,29 @@ public partial class FloatingBar : Window
 
     // The icon a hit-tested element belongs to, or null. Walks up because the pointer is usually over the
     // Image inside the button rather than over the button itself.
-    static Button? IconAncestorOf(DependencyObject element)
+    //
+    // THREE WAYS UP, and the first version knew only one. Petre hit the consequence within minutes:
+    // "TaskSpaces hit an unexpected error and must close: 'System.Windows.Documents.Run' is not a Visual
+    // or Visual3D." VisualTreeHelper.GetParent THROWS for anything that is not a Visual, and
+    // Mouse.DirectlyOver reports whatever is under the pointer -- including a Run, because the footer line
+    // and the row labels are built from Inlines. So resting the pointer on text took the whole app down.
+    //
+    // A Run is a FrameworkContentElement, whose Parent leads back to the TextBlock hosting it, and that IS
+    // a Visual, so the walk continues from there. The final branch covers anything that is neither, where
+    // the logical tree is the only route.
+    internal static Button? IconAncestorOf(DependencyObject? element)
     {
-        for (var node = element; node is not null; node = VisualTreeHelper.GetParent(node))
+        for (var node = element; node is not null;)
+        {
             if (node is Button { Tag: string tag } button && tag == IconTag) return button;
+
+            node = node switch
+            {
+                Visual or System.Windows.Media.Media3D.Visual3D => VisualTreeHelper.GetParent(node),
+                FrameworkContentElement content => content.Parent,
+                _ => LogicalTreeHelper.GetParent(node),
+            };
+        }
         return null;
     }
 
