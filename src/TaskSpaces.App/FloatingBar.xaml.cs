@@ -2851,13 +2851,32 @@ public partial class FloatingBar : Window
     // browser window got noticed in the first place. Renamed windows also show the
     // original title, since our own short name is precisely what makes a window hard to
     // identify from the icon alone.
+    // #135. Petre: "when hovering over an icon, show its title as a tooltip, rather than show it in the
+    // footer. that footer is quite bad. also, floating window keeps refreshing, so if i float over an
+    // icon, it shows me the title in the lower titlebar for a second and disappears after it."
+    //
+    // Both halves of that are answered by the tooltip rather than by patching this line, and the second
+    // half is why patching it was never going to work. A rebuild destroys the hovered button and builds a
+    // new one under a pointer that has not moved: the old button raises MouseLeave, which cleared this
+    // line, and the new button raises no MouseEnter until the mouse moves. Rebuilds arrive constantly
+    // (every window event, plus the 5s sweep), so the title was gone within a second, every time.
+    //
+    // A WPF tooltip does not have that problem in the same way. It is opened by the pointer being over an
+    // element rather than by an event we have to keep, and WPF re-evaluates that on the new element after
+    // the rebuild without needing the mouse to move. Deferring rebuilds while hovering was the other
+    // candidate and it was rejected: the pointer rests on this bar for minutes at a time, and starving
+    // rebuilds for that long would freeze the very rows being read.
+    //
+    // The title itself is GONE from here. Two places showing the same string is how the "quite bad"
+    // footer earned its reputation: 150 DIPs with an ellipsis, far from the pointer, on a surface where
+    // the pointer is already on the thing it describes. What survives is the process name and the
+    // workspace, which the tooltip cannot repeat without becoming a paragraph.
     void ShowInfo(string groupLabel, WindowRow row)
     {
         Info.Inlines.Clear();
-        Info.Inlines.Add(new Run(row.Window.Title));
         var detail = row.OriginalTitle.HasValue
-            ? $"  ·  {row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
-            : $"  ·  {row.Window.ProcessName} · {groupLabel}";
+            ? $"{row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
+            : $"{row.Window.ProcessName} · {groupLabel}";
         Info.Inlines.Add(new Run(detail) { Foreground = DimForeground });
     }
 
@@ -2874,6 +2893,65 @@ public partial class FloatingBar : Window
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
+
+    // The hover card's own colours: near-opaque, because a preview seen through the bar's own translucency
+    // is a picture of two things at once.
+    static readonly Brush CardBackground = Frozen(0xF2, 0x1E, 0x1E, 0x1E);
+    static readonly Brush CardBorder = Frozen(0x59, 0xFF, 0xFF, 0xFF);
+
+    // How big a preview may get, in DIPs. Petre: "large is the point." Wide enough to read a window's
+    // layout and tell two editors apart, short of a card that covers the screen it is describing.
+    const int PreviewWidth = 520;
+    const int PreviewHeight = 340;
+
+    // #134 and #135, answered by one surface. Petre asked for two things on the same gesture: "when
+    // hovering over an icon, show its title as a tooltip, rather than show it in the footer", and "show a
+    // large preview of the window in another workspace when i hover over its icon."
+    //
+    // Both in the tooltip rather than a tooltip plus a preview popup plus the footer line, because three
+    // surfaces describing one icon is what made the footer "quite bad" in the first place.
+    //
+    // The preview is a SNAPSHOT, not a live thumbnail, and WindowPreview's header carries the measurement
+    // that settled it. A minimised window has no picture at all, so the card is text alone -- which is
+    // also the honest answer, since there is nothing to show.
+    static StackPanel HoverCard(string groupLabel, WindowRow row)
+    {
+        var card = new StackPanel { MaxWidth = PreviewWidth };
+
+        card.Children.Add(new TextBlock
+        {
+            Text = row.Window.Title,
+            TextWrapping = TextWrapping.Wrap,
+            FontWeight = FontWeights.SemiBold,
+            MaxWidth = PreviewWidth,
+        });
+
+        // What the title cannot say: which app it is, which workspace it is in, and what it was called
+        // before we renamed it.
+        card.Children.Add(new TextBlock
+        {
+            Text = row.OriginalTitle.HasValue
+                ? $"{row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
+                : $"{row.Window.ProcessName} · {groupLabel}",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = DimForeground,
+            Margin = new Thickness(0, 2, 0, 0),
+            MaxWidth = PreviewWidth,
+        });
+
+        WindowPreview.Of(row.Window.Handle, PreviewWidth, PreviewHeight)
+            .Tap(picture => card.Children.Add(new Image
+            {
+                Source = picture,
+                Stretch = Stretch.None, // already scaled in GDI, and scaling twice softens text
+                Margin = new Thickness(0, 8, 0, 0),
+                // A hairline around the picture, so a window with a pale background does not bleed into
+                // the card and look like part of it.
+                Clip = null,
+            }));
+
+        return card;
+    }
 
     // Petre: "show the ctrl+ thing in the notification pane when over an empty area of workspace."
     //
@@ -3163,14 +3241,55 @@ public partial class FloatingBar : Window
             // stock template's hover layer would sit on top of the active-window fill and the
             // landing-spot outline, muddying the two states this icon exists to show.
             Template = BareButton,
-            ToolTip = $"{groupLabel} · {row.Window.Title}",
             Tag = IconTag, // marks this as an icon: press-drag moves the WINDOW, not the bar
         };
 
-        // Hover -> identify (the info line above). MouseEnter/Leave rather than the
-        // ToolTip alone: the tooltip stays (harmless, and it survives a hover that starts
-        // outside the window), but it needs a dwell delay, disappears on its own timer,
-        // and lives in a separate HWND -- see the Info panel comment in FloatingBar.xaml.
+        // The hover card (#134 and #135 together, because they are one surface): the title, and a picture
+        // of the window itself. Built in ToolTipOpening rather than here, so the capture happens when the
+        // card is actually shown -- it costs about 40ms, which is fine once per hover and absurd for every
+        // icon on every rebuild.
+        var card = new ToolTip
+        {
+            Background = CardBackground,
+            BorderBrush = CardBorder,
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8),
+            Foreground = Brushes.White,
+            // WPF's default tooltip drop shadow is a second window's worth of work for a surface that
+            // appears on every icon; the border does the separating.
+            HasDropShadow = false,
+        };
+        button.ToolTip = card;
+        button.ToolTipOpening += (_, _) => card.Content = HoverCard(groupLabel, row);
+
+        // The window's title as the automation name. Two jobs, both real: a screen reader announces the
+        // icon as the window it stands for rather than as "button", and it is how a test can tell which
+        // icon is which now that the tooltip is a lazily-built card rather than a string.
+        System.Windows.Automation.AutomationProperties.SetName(button, row.Window.Title);
+
+        // #135, and Petre on it twice: "when hovering over an icon, show its title as a tooltip, rather
+        // than show it in the footer. that footer is quite bad", then "those window tooltips should come
+        // up immediately, no delay".
+        //
+        // The tooltip was always here; what made it useless was WPF's defaults. InitialShowDelay is
+        // ~400ms out of the box, BetweenShowDelay suppresses the next one for seconds after the last, and
+        // ShowDuration hides it after five. On a strip of icons you sweep across to read, all three are
+        // wrong: the answer arrives after you have moved on, then refuses to come back.
+        //
+        // So: no delay at all, and it stays as long as the pointer does. The tooltip is also the reason
+        // the footer no longer carries the title (ShowInfo, below), rather than both showing it -- the
+        // footer is 150 DIPs wide with an ellipsis and sits far from the pointer.
+        ToolTipService.SetInitialShowDelay(button, 0);
+        ToolTipService.SetBetweenShowDelay(button, 0);
+        // ShowDuration takes milliseconds and has no "forever": int.MaxValue is 24 days, which is the
+        // idiomatic way to say never time out.
+        ToolTipService.SetShowDuration(button, int.MaxValue);
+        // Follows the pointer's own position rather than the icon's corner, so it reads as belonging to
+        // what is under the cursor -- and cannot be drawn under the bar itself, which is Topmost.
+        ToolTipService.SetPlacement(button, System.Windows.Controls.Primitives.PlacementMode.Bottom);
+        ToolTipService.SetVerticalOffset(button, 4);
+
+        // Hover -> the ring, and no longer the footer text (#135).
         button.MouseEnter += (_, _) => ShowInfo(groupLabel, row);
         button.MouseLeave += (_, _) => ClearInfo();
 

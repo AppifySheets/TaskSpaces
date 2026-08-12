@@ -197,9 +197,11 @@ public class FloatingBarRebuildTests
         var overview = harness.Manager.WindowsByWorkspace().Value;
         Assert.Contains(overview.Workspaces.SelectMany(g => g.Running), row => row.IsActive);
 
+        // By automation name rather than by tooltip text: the tooltip is now a hover CARD whose content
+        // is built when it opens (#134), so there is no string to read until someone hovers.
         var icons = IconButtons(bar.Rows);
-        var active = icons.Single(b => ((string)b.ToolTip).Contains(harness.First.Title));
-        var inactive = icons.Single(b => ((string)b.ToolTip).Contains(harness.Second.Title));
+        var active = icons.Single(b => System.Windows.Automation.AutomationProperties.GetName(b) == harness.First.Title);
+        var inactive = icons.Single(b => System.Windows.Automation.AutomationProperties.GetName(b) == harness.Second.Title);
 
         Assert.NotEqual(Brushes.Transparent, active.BorderBrush);
         Assert.Equal(Brushes.Transparent, inactive.BorderBrush);
