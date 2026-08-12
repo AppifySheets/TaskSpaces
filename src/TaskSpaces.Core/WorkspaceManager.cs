@@ -147,6 +147,12 @@ public sealed class WorkspaceManager(
                 // rewrites them ("VSC"), and the folder each window has open is unreadable from then on
                 // (#132).
                 monitor.Snapshot().ToList().ForEach(w => { knownWindows[w.Handle] = w; NoteContainer(w); });
+                // A file written before folder naming existed can hold exact-title renames for an app that
+                // is now named by its folder, and those two records can only argue (#136). Dropped once, on
+                // load, so state.json stops carrying the contradiction rather than the app having to skip
+                // past it for ever. NameWindowsByFolder does the same at the moment the setting is turned
+                // on; this is for the files where the setting was turned on first.
+                ForgetRenamesSupersededByFolders();
                 // Before anything else looks at where windows are: a crash while standing inside a
                 // nested workspace leaves the parent's windows pinned to every desktop, and every
                 // sweep and overview after that would be reading a machine we left in a borrowed
@@ -1916,6 +1922,15 @@ public sealed class WorkspaceManager(
     public bool NamesByFolder(string processName) =>
         State.NameByFolder.Any(p => p.Equals(processName, StringComparison.OrdinalIgnoreCase));
 
+    // Exact-title renames belonging to an app that is now named by its folder. One record per app is the
+    // most that can be true, and these are the ones that cannot be.
+    void ForgetRenamesSupersededByFolders()
+    {
+        var remaining = State.PersistedRenames.Where(r => !NamesByFolder(r.ProcessName)).ToList();
+        if (remaining.Count != State.PersistedRenames.Count)
+            Persist(State with { PersistedRenames = remaining });
+    }
+
     static bool IsHomeFor(ContainerHome home, string processName, string container) =>
         home.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase)
         && home.Token.Equals(container, StringComparison.OrdinalIgnoreCase);
@@ -2455,8 +2470,18 @@ public sealed class WorkspaceManager(
 
         // 2. Persisted renames not yet active this session (the restart case): adopt any
         //    window whose process + current title exactly match a recorded rename.
+        //
+        //    NOT for an app named by its folder (#136). Petre: "i still see 'SPS' for vscode windows,
+        //    why?" -- with folder naming on and every window called SPS. This is the step that did it, and
+        //    the chain is worth writing down because it only shows up after a HARD kill. His file holds
+        //    {Code, OriginalTitle "VSC", ShortName "SPS"}, a rename made while our own short name was on
+        //    screen. Killing the app leaves that short name on the window instead of restoring it, so on
+        //    the next start there is no ledger entry, the window's CURRENT title is literally "VSC", and
+        //    this step matches it and applies "SPS" to an app that is supposed to be named after its
+        //    folder. A clean exit never reaches that state, since RestoreAllTitles puts the real titles
+        //    back first.
         knownWindows.Values
-            .Where(w => ledger.AppliedName(w.Handle).HasNoValue)
+            .Where(w => ledger.AppliedName(w.Handle).HasNoValue && !NamesByFolder(w.ProcessName))
             .ToList()
             .ForEach(w => State.PersistedRenames
                 .TryFirst(r => r.ProcessName.Equals(w.ProcessName, StringComparison.OrdinalIgnoreCase) && r.OriginalTitle == w.Title)

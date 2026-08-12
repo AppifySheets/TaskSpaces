@@ -249,6 +249,54 @@ public class NameByFolderTests
         Assert.Equal("TaskSpaces", TitleOf(0xA13));
     }
 
+    // Petre: "i still see 'SPS' for vscode windows, why?" -- with folder naming already on.
+    //
+    // Because the setting was turned on before the code that clears those records existed, so his file
+    // still held {Code, "VSC" -> "SPS"}. The sweep adopts a persisted rename for any window whose CURRENT
+    // title matches, and after the app is KILLED rather than closed its own short name is still on the
+    // window: so "VSC" on screen matched the record and became "SPS" again on the next start. A clean exit
+    // never reaches that state, because RestoreAllTitles puts the real titles back first.
+    //
+    // Two guards, and this pins both: a file loaded with the contradiction has it removed, and the sweep
+    // would not act on it even if it were somehow still there.
+    [Fact]
+    public void A_file_that_already_had_folder_naming_on_loses_the_renames_it_supersedes()
+    {
+        store.Stored = store.Stored with
+        {
+            NameByFolder = ["Code"],
+            PersistedRenames =
+            [
+                new PersistedRename("Code", "VSC", "SPS"),
+                new PersistedRename("Beeper", "Beeper | HRIS", "Beeper"),
+            ],
+        };
+
+        var manager = new WorkspaceManager(desktops, monitor, titles, store, ownProcessId: 4242);
+        Assert.True(manager.Start().IsSuccess);
+
+        // The contradiction is gone; another app's record is untouched.
+        Assert.Equal("Beeper", Assert.Single(store.Stored.PersistedRenames).ProcessName);
+    }
+
+    // The same situation, with the record still present: the sweep must not act on it. Belt and braces on
+    // purpose, because the load-time purge only helps a file that gets loaded, and the sweep runs every
+    // five seconds for the whole session.
+    [Fact]
+    public void The_sweep_never_adopts_a_rename_for_an_app_named_by_folder()
+    {
+        var manager = Started();
+        Appears(monitor, Code(0xA16, "VSC")); // our own short name left on screen by a hard kill
+        Assert.True(manager.NameWindowsByFolder(new WindowHandle(0xA16), on: true).IsSuccess);
+
+        // Re-add the record behind the app's back, the way a hand-edited state.json could.
+        store.Stored = store.Stored with { PersistedRenames = [new PersistedRename("Code", "VSC", "SPS")] };
+
+        manager.ReapplyRenames();
+
+        Assert.NotEqual("SPS", TitleOf(0xA16));
+    }
+
     // Another app's records are none of this app's business.
     [Fact]
     public void Turning_it_on_leaves_other_apps_renames_alone()
