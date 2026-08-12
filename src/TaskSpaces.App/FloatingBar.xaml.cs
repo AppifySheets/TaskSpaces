@@ -12,6 +12,7 @@ using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Geometry;
 using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
+using TaskSpaces.Core.Rules;
 using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Dialogs;
 using TaskSpaces.Windows.Monitoring;
@@ -4077,6 +4078,30 @@ public partial class FloatingBar : Window
                 row.Window.ProcessName, owner: this)
             .Tap(shortName => Report(manager.RenameApp(row.Window.Handle, shortName)));
         menu.Items.Add(renameApp);
+
+        // #134. Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in
+        // folders." One name for every window of an app is the wrong shape for an editor -- seven VS
+        // Code windows all reading "VSC" say nothing about which is which -- so this names each window
+        // after the folder it has open instead.
+        //
+        // OFFERED ONLY where the title shape is known (TitleToken.Knows): VS Code and its forks, Visual
+        // Studio, the JetBrains IDEs, Remote Desktop Manager. On anything else the item would be a
+        // control that silently does nothing, which is worse than an absent one. Browsers are excluded
+        // on purpose and it is not an omission: a tab title is the page, not a container.
+        if (TitleToken.Knows(row.Window.ProcessName))
+        {
+            var byFolder = new MenuItem
+            {
+                Header = $"Name {row.Window.ProcessName} windows by folder",
+                IsCheckable = true,
+                IsChecked = manager.NamesByFolder(row.Window.ProcessName),
+                Icon = MenuGlyph("🗀"),
+            };
+            // Click rather than Checked/Unchecked: those fire while the menu is being BUILT, when
+            // IsChecked is assigned above, which would toggle the setting every time the menu opened.
+            byFolder.Click += (_, _) => Report(manager.NameWindowsByFolder(row.Window.Handle, byFolder.IsChecked));
+            menu.Items.Add(byFolder);
+        }
 
         var restore = new MenuItem { Header = "Restore title", IsEnabled = row.OriginalTitle.HasValue, Icon = MenuGlyph("↺") };
         restore.Click += (_, _) => Report(manager.RestoreTitle(row.Window.Handle));

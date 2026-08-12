@@ -315,8 +315,10 @@ public sealed class WorkspaceManager(
                 .Or(() => RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(id => new Decision(Placement.In(id), Roster: true)))
                 .Tap(decided => ApplyPlacement(window, decided.Placement, decided.Roster));
 
-        // Fire-and-forget for the same reason as above.
-        RulesEngine.MatchRename(window, State.RenameRules)
+        // Fire-and-forget for the same reason as above. WantedName rather than the rules directly, so an
+        // app named by its folder (#134) gets that name here too -- which for a window that opens with a
+        // folder already loaded is the only chance before it is on screen.
+        WantedName(window)
             .Tap(shortName => { ApplyRename(window, shortName); });
 
         // Fix wave (reviewer, Important): pulse unconditionally, even when neither branch
@@ -463,8 +465,23 @@ public sealed class WorkspaceManager(
         knownWindows[window.Handle] = window;
         if (previouslyUnknown) { OnAppeared(window); return; } // became taskbar-worthy late
 
+        // The container this window has loaded, read BEFORE anything renames it: the folder is only
+        // visible in the title the app itself just wrote, and the next few lines overwrite that title.
+        NoteContainer(window);
+
         // Fire-and-forget: same rationale as OnAppeared -- no caller awaits this path.
-        if (ledger.NeedsReapply(window.Handle, window.Title))
+        //
+        // The folder branch comes first and is not conditioned on the ledger, unlike the two below it,
+        // because a folder name is not fixed: opening another folder in the same window is a DIFFERENT
+        // name, so "we already renamed this window" is not a reason to leave it alone (#134). Comparing
+        // against the observed title covers both cases at once -- the app rewrote our name, or the name
+        // we want has changed -- and it is what stops our own echo from looping, since after we set the
+        // title the observed title IS the wanted name.
+        if (FolderName(window) is { HasValue: true } wanted)
+        {
+            if (window.Title != wanted.Value) ApplyRename(window, wanted.Value);
+        }
+        else if (ledger.NeedsReapply(window.Handle, window.Title))
             ledger.AppliedName(window.Handle).Tap(name => { titles.Set(window.Handle, name); });
         else if (ledger.AppliedName(window.Handle).HasNoValue)
             // Not renamed yet -- but the new title may now match a rename rule.
@@ -484,12 +501,6 @@ public sealed class WorkspaceManager(
         // renamed this window and the observed title IS our applied name, skip late
         // placement entirely (no rename recorded, or observed title differs from what we
         // set, both fall through to the normal rule match).
-        // The container this window has loaded, from the title the APP wrote. Read on every title
-        // change and BEFORE the eligibility test below, because knowing what a window has open is
-        // worth recording even for a window that is already placed: he may drag it somewhere later,
-        // and that drag is what teaches the folder its home.
-        NoteContainer(window);
-
         // Only titles the APP wrote are legitimate signals, for either tier below.
         var appsOwnTitle = ledger.AppliedName(window.Handle).Map(applied => applied != window.Title).GetValueOrDefault(true);
 
@@ -1840,6 +1851,58 @@ public sealed class WorkspaceManager(
         return new Decision(Placement.In(home), Roster: false);
     }
 
+    // --- naming a window after what it has open (#134) -------------------------------------------
+    //
+    // Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
+    //
+    // The name a window WANTS, or None when nothing here has an opinion and the rename rules should
+    // answer instead. Asked from all three places a name gets applied -- Appeared, TitleChanged and the
+    // 5s sweep -- because unlike a rule's name this one CHANGES: loading another folder in the same
+    // window is a new name, and the sweep is what catches a change whose event went missing.
+    Maybe<string> FolderName(WindowInfo window) =>
+        State.NameByFolder.Any(p => p.Equals(window.ProcessName, StringComparison.OrdinalIgnoreCase))
+        && containerOf.TryGetValue(window.Handle, out var container)
+            ? TitleToken.LastPart(container)
+            : Maybe<string>.None;
+
+    // What to call this window, container first and the rules behind it. The fallback matters as much
+    // as the container does: a freshly opened editor with no folder yet has no container, and it should
+    // still get the app's short name rather than sitting there with a full title until you open
+    // something.
+    Maybe<string> WantedName(WindowInfo window) =>
+        FolderName(window).Or(() => RulesEngine.MatchRename(window, State.RenameRules));
+
+    // Petre turning it on or off for an app, from a window's icon menu. Applied at once to every window
+    // of that app, for the same reason AddRule does it: a rename that only appears the next time a
+    // title happens to change looks like a menu item that did nothing.
+    //
+    // Turning it OFF falls back to whatever the rules say, and restores the original title when they
+    // say nothing. Leaving the folder name in place would be worse than either: a name nothing in the
+    // app's settings could explain.
+    public Result NameWindowsByFolder(WindowHandle window, bool on) =>
+        knownWindows.TryGetValue(window, out var info)
+            ? Result.Success()
+                .Tap(() => Persist(State with
+                {
+                    NameByFolder = on
+                        ? [.. Without(State.NameByFolder, info.ProcessName), info.ProcessName]
+                        : Without(State.NameByFolder, info.ProcessName),
+                }))
+                .Tap(() => knownWindows.Values
+                    .Where(w => w.ProcessName.Equals(info.ProcessName, StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+                    .ForEach(w => WantedName(w).Match(
+                        name => { ApplyRename(w, name); },
+                        () => { if (!on) RestoreTitleOnly(w.Handle); })))
+            : Result.Failure("Window no longer exists.");
+
+    static IReadOnlyList<string> Without(IReadOnlyList<string> names, string name) =>
+        names.Where(n => !n.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    // For the menu's check mark, and for deciding whether to offer the item at all.
+    public bool NamesByFolder(string processName) =>
+        State.NameByFolder.Any(p => p.Equals(processName, StringComparison.OrdinalIgnoreCase));
+
     static bool IsHomeFor(ContainerHome home, string processName, string container) =>
         home.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase)
         && home.Token.Equals(container, StringComparison.OrdinalIgnoreCase);
@@ -2337,6 +2400,18 @@ public sealed class WorkspaceManager(
     // events AND adopts persisted renames after a restart. App calls it on a ~5s timer.
     public void ReapplyRenames()
     {
+        // 0. Windows named after the folder they have open (#134). First, and over ALL known windows
+        //    rather than only over the ledger, because two things here are not true of a rule-based
+        //    rename: the wanted name changes when the folder changes, and a window that has never been
+        //    renamed can acquire a name the moment its folder becomes readable. The event path handles
+        //    both immediately; this is the safety net for the events that get dropped under load, which
+        //    is the same reason this whole sweep exists.
+        knownWindows.Values.ToList().ForEach(window => FolderName(window)
+            .Tap(name =>
+            {
+                if (titles.Get(window.Handle).GetValueOrDefault("") != name) ApplyRename(window, name);
+            }));
+
         // 1. Active renames whose on-screen title drifted without us hearing about it.
         //    Fire-and-forget Sets: a hung/closed window just misses this sweep round.
         ledger.Handles.ToList().ForEach(h =>

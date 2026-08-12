@@ -85,6 +85,18 @@ public sealed record AppState(
     // migration -- same pattern as everything above it.
     public IReadOnlyList<ContainerHome> ContainerHomes { get; init; } = [];
 
+    // Apps whose windows are named after the CONTAINER each one has open (#134), by process name.
+    // Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
+    //
+    // It replaces what a rename rule can do for these apps rather than extending it. A rule gives one
+    // name to every window of an app, which is exactly the wrong shape for an editor: seven VS Code
+    // windows all reading "VSC" tell you nothing about which is which, and the "SPS" in his file was a
+    // second rename stacked on top of the first, keyed on the title the first one had already written.
+    //
+    // Process names, and only ones TitleToken.Knows: an app whose title shape is unknown has no
+    // container to be named after.
+    public IReadOnlyList<string> NameByFolder { get; init; } = [];
+
     // Petre: "i want it configurable" -- the Alt+Tab-style workspace switcher's chord.
     //
     // Stored as the TEXT the user typed, not as a parsed Chord: state.json stays readable

@@ -109,6 +109,26 @@ public static class TitleToken
     static Maybe<string> Clean(string container) =>
         container.Trim() is { Length: > 1 } cleaned ? cleaned : Maybe<string>.None;
 
+    // Whether this app's title shape is known at all, which is what decides where "Name by folder"
+    // is offered (#134). An app not on the list has no container to name a window after, so offering
+    // it would be a menu item that silently does nothing.
+    public static bool Knows(string processName) => Apps.ContainsKey(processName);
+
+    // The container as a NAME, for a taskbar button. Petre: "folder name, but only the last part."
+    //
+    // A no-op for the ordinary case, which is why it is safe: VS Code shows the folder name alone, so
+    // "TaskSpaces" is already the last part of itself. It earns its keep when the title carries a PATH
+    // instead -- a window.title setting that includes the folder path, a JetBrains project shown with
+    // its location -- where "C:\repos\bitcoin\dice-to-seed" should name the window "dice-to-seed"
+    // rather than filling the taskbar with a path.
+    //
+    // Both separators, because a WSL or SSH remote in the title uses forward slashes. A trailing
+    // separator is dropped first, or a path written "C:\repos\dice\" would come out as nothing.
+    public static string LastPart(string container) =>
+        container.TrimEnd('\\', '/').Split('\\', '/') is { Length: > 0 } parts && parts[^1].Length > 0
+            ? parts[^1]
+            : container;
+
     // Does this window's current content match a token we learned earlier? Case-insensitive
     // containment rather than equality: VS Code shows the folder name verbatim, but other
     // apps decorate it (a trailing "[Administrator]", a branch suffix), and a learned token
