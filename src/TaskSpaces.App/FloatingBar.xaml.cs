@@ -2938,6 +2938,69 @@ public partial class FloatingBar : Window
     WindowHandle hoverShowing;
     int hoverMisses;
 
+    // --- the dwell -------------------------------------------------------------------------------
+    //
+    // Petre: "i want to go over the taskspaces window with my mouse, if i'm not meaning to do anything with
+    // it, and it should not show me those cards", then "is 300ms enough?"
+    //
+    // This looks like a reversal of "those window tooltips should come up immediately, no delay" and is not.
+    // That was about WPF's tooltip manners on a strip of icons you sweep across to READ: ~400ms to appear,
+    // then a between-show delay that suppressed the next one, then a five second timeout. The card is a
+    // different object now -- it carries a picture a quarter the size of the window -- and a surface that
+    // large has to be asked for rather than triggered by the pointer passing through on its way somewhere
+    // else.
+    //
+    // WINDOWS' OWN NUMBER rather than one I pick. SystemParameters.MouseHoverTime is the OS's definition of
+    // "resting rather than passing", it is what the taskbar's own thumbnails wait for, and it is a setting a
+    // user can tune. It reads 400ms on his machine, which answers "is 300ms enough?" better than an opinion
+    // would: 300 is defensible, and 400 is the number every other hover on his desktop already uses.
+    //
+    // Clamped, because this is read from the OS and a hand-set registry value could be zero (every sweep
+    // shows a card) or ten seconds (the feature appears broken).
+    static TimeSpan HoverDwell =>
+        TimeSpan.FromMilliseconds(Math.Clamp(SystemParameters.MouseHoverTime.TotalMilliseconds, 250, 1000));
+
+    System.Windows.Threading.DispatcherTimer? hoverDwell;
+    WindowHandle dwellFor;
+    (string Label, WindowRow Row, FrameworkElement Anchor)? dwelling;
+
+    // What MouseEnter calls. Nothing is captured and nothing is shown until the pointer has held still.
+    void ArmHoverCard(string groupLabel, WindowRow row, FrameworkElement anchor)
+    {
+        // Already showing this window, or already waiting on it: leave both alone. Both guards exist for
+        // the same reason -- a rebuild re-runs MouseEnter for the icon under an unmoved pointer -- and the
+        // second one matters more than it looks: restarting the timer on every rebuild would mean a busy
+        // moment could postpone the card for ever while he sat there waiting for it.
+        if (hoverPopup is { IsOpen: true } && hoverShowing.Equals(row.Window.Handle)) return;
+        if (hoverDwell is { IsEnabled: true } && dwellFor.Equals(row.Window.Handle)) return;
+
+        dwellFor = row.Window.Handle;
+        dwelling = (groupLabel, row, anchor);
+
+        hoverDwell ??= new System.Windows.Threading.DispatcherTimer();
+        hoverDwell.Stop(); // moving to another icon restarts the wait, so a sweep never completes one
+        hoverDwell.Interval = HoverDwell;
+        if (hoverDwell.Tag is null)
+        {
+            hoverDwell.Tag = "wired"; // Tick attached once, however many times this is armed
+            hoverDwell.Tick += (_, _) => DwellElapsed();
+        }
+        hoverDwell.Start();
+    }
+
+    // The pointer held still long enough. Confirmed against the POINTER rather than trusted, because
+    // MouseLeave cannot be relied on here: a rebuild raises it for a pointer that has not moved, so this
+    // path never subscribes to it and asks what is actually under the cursor instead.
+    void DwellElapsed()
+    {
+        hoverDwell?.Stop();
+        if (dwelling is not { } waiting) return;
+
+        var stillThere = Mouse.DirectlyOver is DependencyObject over && IconAncestorOf(over) is { } icon
+                         && icon.DataContext is WindowRow row && row.Window.Handle.Equals(dwellFor);
+        if (stillThere) ShowHoverCard(waiting.Label, waiting.Row, waiting.Anchor);
+    }
+
     void ShowHoverCard(string groupLabel, WindowRow row, FrameworkElement anchor)
     {
         // Already showing this window: do NOTHING. This is the line that stops the blinking, because a
@@ -2966,9 +3029,18 @@ public partial class FloatingBar : Window
             StaysOpen = true,
         };
 
+        // TIMED, when tracing is on. Petre: "is there a 300ms delay?" There is no delay in this path -- no
+        // dwell timer, no ToolTipService -- but "no delay" and "feels instant" are different claims, and the
+        // capture is real work: PrintWindow renders the whole window, measured at 26-49ms for a full-screen
+        // one. This is the line that says which of the two a slow hover was.
+        var clock = ClickTrace.On ? System.Diagnostics.Stopwatch.StartNew() : null;
+
         hoverBody.Child = HoverCard(groupLabel, row);
         hoverShowing = row.Window.Handle;
         hoverMisses = 0;
+
+        if (clock is not null)
+            ClickTrace.Write($"hover card {row.Window.ProcessName} built in {clock.Elapsed.TotalMilliseconds:F0}ms");
 
         // Level with the icon being hovered, in the bar's own coordinates, so the card appears beside what
         // it describes rather than at the bar's top corner.
@@ -3364,7 +3436,7 @@ public partial class FloatingBar : Window
         button.DataContext = row;
 
         // Hover -> the card, and the footer no longer carries the title (#135).
-        button.MouseEnter += (_, _) => { ShowInfo(groupLabel, row); ShowHoverCard(groupLabel, row, button); };
+        button.MouseEnter += (_, _) => { ShowInfo(groupLabel, row); ArmHoverCard(groupLabel, row, button); };
         button.MouseLeave += (_, _) => ClearInfo();
 
         // ...and hover -> ring (#67). The pointer resting on an icon makes THAT window the thing a
