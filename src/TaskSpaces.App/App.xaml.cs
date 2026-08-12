@@ -118,6 +118,20 @@ public partial class App : Application
 
         var release = latest.Value.Value;
 
+        // NOT YET DOWNLOADABLE, so not yet news. Petre, seconds after a release was published: "when
+        // checking for new version, if there's no exe attached to the release, don't say there's a new
+        // version and suggest that the user goes and downloads it manually, wait for the exe."
+        //
+        // Publishing a release is what STARTS the build that attaches its executable, so for the two or
+        // three minutes that takes, the release exists with nothing on it. A check every five minutes
+        // lands in that window routinely -- it did on the very first release after the interval changed.
+        // Saying nothing and asking again on the next tick is the whole fix: by then the exe is there.
+        if (!UpdateCheck.CanDownload(release))
+        {
+            ClickTrace.Write($"update {release.Version} has no executable yet, waiting for the next check");
+            return;
+        }
+
         // Already announced this exact version. The daily tick would otherwise re-balloon the same
         // release every day for as long as the user chooses not to update, which is nagging.
         if (availableUpdate?.Version == release.Version)
@@ -220,6 +234,18 @@ public partial class App : Application
         }
 
         var release = latest.Value.Value;
+
+        // Asked by hand, so this one ANSWERS rather than staying silent -- but it still does not send
+        // anybody to a release page with nothing on it. The wait is short and knowing that is the useful
+        // part (#144).
+        if (!UpdateCheck.CanDownload(release))
+        {
+            MessageBox.Show(
+                $"TaskSpaces {release.Version} has just been published, but its download is still being built.\n\n" +
+                "It is usually ready a few minutes later, and TaskSpaces will offer it on its own.",
+                "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
 
         // Announced as well as offered, so declining the dialog leaves the news on the tray menu
         // rather than throwing it away. The version guard the background check uses is deliberately

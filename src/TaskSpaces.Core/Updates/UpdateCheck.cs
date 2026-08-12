@@ -152,6 +152,19 @@ public static class UpdateCheck
     // it came from here unmodified.
     public static bool IsDownloadable(string? url) => url is not null && IsGitHubDownload(url);
 
+    // Whether this release can actually be installed, which is not the same question as whether it
+    // exists (#144's aftermath). Petre, seconds after a release was published: "when checking for new
+    // version, if there's no exe attached to the release, don't say there's a new version and suggest
+    // that the user goes and downloads it manually, wait for the exe."
+    //
+    // The gap is REAL and routine rather than a freak case: publishing a release is what STARTS the
+    // build that attaches its executable, so for the two or three minutes that build takes, the release
+    // is on GitHub with nothing on it. With a check every five minutes, landing in that window is
+    // ordinary. A release still building is not a release you can take, so the honest answer is to say
+    // nothing and ask again on the next tick, by which time the exe is there.
+    public static bool CanDownload(ReleaseInfo release) =>
+        release.AssetName is not null && IsDownloadable(release.AssetUrl);
+
     // A name and nothing else: no directory part, no drive, no traversal. The download lands
     // BESIDE the running exe, so a name carrying "..\..\" would choose where.
     static bool IsBareFileName(string name) =>

@@ -121,6 +121,51 @@ public class UpdateCheckTests
     public void Github_and_its_redirect_target_are_both_downloadable(string url) =>
         Assert.True(UpdateCheck.IsDownloadable(url));
 
+    // Petre, seconds after a release was published: "when checking for new version, if there's no exe
+    // attached to the release, don't say there's a new version and suggest that the user goes and
+    // downloads it manually, wait for the exe."
+    //
+    // The gap is routine rather than freakish, which is why this is a rule and not a guard: PUBLISHING a
+    // release is what starts the build that attaches its executable, so for the two or three minutes that
+    // build takes the release is live with nothing on it. A check every five minutes lands there sooner
+    // or later, and it did on the very first release after the interval changed.
+    [Fact]
+    public void A_release_whose_build_has_not_attached_the_exe_yet_cannot_be_downloaded()
+    {
+        var release = UpdateCheck.ReadRelease("""
+            {
+              "tag_name": "v1.10.5",
+              "html_url": "https://github.com/AppifySheets/TaskSpaces/releases/tag/v1.10.5",
+              "assets": []
+            }
+            """);
+
+        Assert.True(release.IsSuccess);          // the release itself is perfectly well-formed
+        Assert.Equal("v1.10.5", release.Value.Version);
+        Assert.False(UpdateCheck.CanDownload(release.Value)); // ...it just cannot be taken yet
+    }
+
+    [Fact]
+    public void A_release_with_its_exe_attached_can_be_downloaded() =>
+        Assert.True(UpdateCheck.CanDownload(UpdateCheck.ReadRelease(Payload).Value));
+
+    // An asset that exists but is hosted somewhere this app will not fetch from is the same answer as no
+    // asset at all: not installable. Otherwise the offer would lead to a download that is then refused.
+    [Fact]
+    public void A_release_whose_asset_is_hosted_elsewhere_cannot_be_downloaded()
+    {
+        var release = UpdateCheck.ReadRelease("""
+            {
+              "tag_name": "v1.7.0",
+              "html_url": "https://github.com/AppifySheets/TaskSpaces/releases/tag/v1.7.0",
+              "assets": [ { "name": "TaskSpaces.exe", "browser_download_url": "https://example.invalid/x.exe" } ]
+            }
+            """);
+
+        Assert.True(release.IsSuccess);
+        Assert.False(UpdateCheck.CanDownload(release.Value));
+    }
+
     [Fact]
     public void A_release_yields_its_version_page_and_exe()
     {
