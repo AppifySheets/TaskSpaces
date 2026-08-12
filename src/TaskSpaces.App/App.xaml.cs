@@ -163,7 +163,7 @@ public partial class App : Application
         {
             trayIcon.ShowNotification(
                 title: $"TaskSpaces {release.Version} is available",
-                message: $"You are running {UpdateService.RunningVersion}. Click here to update.");
+                message: $"You are running {UpdateService.DisplayVersion}. Click here to update.");
             ClickTrace.Write($"update {release.Version} announced: menu item set, balloon requested");
         }
         catch (Exception e)
@@ -263,8 +263,13 @@ public partial class App : Application
             return;
         }
 
+        // DisplayVersion, not RunningVersion. Petre, reading the dialog: "that sha next to the version is
+        // strange, get rid of it in the notification." A build from source carries a "+f3fe1779b7e0f..."
+        // suffix in its InformationalVersion, which is the right thing to COMPARE and the wrong thing to
+        // read. UpdateCheck.ForDisplay trims it. The traces keep the full string deliberately -- there,
+        // knowing exactly which build asked is the entire point.
         var answer = MessageBox.Show(
-            $"TaskSpaces {release.Version} is available. You are running {UpdateService.RunningVersion}.\n\n" +
+            $"TaskSpaces {release.Version} is available. You are running {UpdateService.DisplayVersion}.\n\n" +
             $"Download it next to the current program and restart into it?\n\n" +
             $"The version you are running now is kept, not replaced.",
             "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Question);
@@ -278,19 +283,27 @@ public partial class App : Application
     // caller to hand a Task to.
     async void DownloadAndRestart(ReleaseInfo release)
     {
-        // The only progress there is room for. A ~75 MB download takes long enough that a tray icon
-        // saying nothing looks like a click that did nothing -- which is the exact complaint that
-        // started this. A real progress window would need cancellation, a percentage and a place to
-        // live, and this is a once-a-release wait.
-        var wasTip = trayIcon!.ToolTipText;
-        trayIcon.ToolTipText = $"TaskSpaces — downloading {release.Version}…";
+        // A WINDOW, not the tray tooltip this used to set. Petre: "add a notification to downloading,
+        // then restarting, so the user knows what's happening." A tooltip exists only while the pointer
+        // rests on the tray icon, which nobody does while waiting for something they just asked for, so
+        // the old version was silent in practice for the entire download.
+        //
+        // Not a balloon either, and that is settled rather than preference: this app cannot deliver one
+        // (#123). No AppUserModelID and no Start-menu shortcut, so Windows has nothing to attribute a
+        // toast to and drops it. The announcement became a dialog for that reason; progress follows it.
+        var progress = new UpdateProgress(release.Version);
+        progress.Show();
 
-        var downloaded = await UpdateService.DownloadAsync(release).ConfigureAwait(true);
-
-        trayIcon.ToolTipText = wasTip;
+        // Marshalled, because the copy loop reports from whichever thread the stream continuation lands
+        // on, and these are WPF controls.
+        var downloaded = await UpdateService.DownloadAsync(
+                release,
+                (bytes, total) => progress.Dispatcher.BeginInvoke(() => progress.Downloaded(bytes, total)))
+            .ConfigureAwait(true);
 
         if (downloaded.IsFailure)
         {
+            progress.Close();
             // Told, not swallowed: unlike the background check, the user asked for this and is
             // waiting on it. The page is the way through -- the commonest cause is a folder this
             // process cannot write to, and downloading by hand works fine.
@@ -314,6 +327,10 @@ public partial class App : Application
         // The gap where nobody holds it is a few milliseconds during which a third copy could
         // start. That needs someone to double-click the exe inside that window, and the cost is the
         // "already running" dialog they would have got anyway.
+        // Said out loud before it happens: the bar and this window are both about to vanish and be
+        // replaced, and an app that disappears without a word looks like a crash rather than a handover.
+        progress.HandingOver(release.Version);
+
         if (singleInstance is { } held)
         {
             held.ReleaseMutex();

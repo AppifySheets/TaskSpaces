@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using CSharpFunctionalExtensions;
@@ -103,7 +103,12 @@ public static class UpdateService
     // anyway, and a user who dislikes the new version still has the old one sitting beside it.
     //
     // Returns the path of the downloaded file.
-    public static async Task<Result<string>> DownloadAsync(ReleaseInfo release, CancellationToken cancel = default)
+    /// <param name="onProgress">
+    /// Bytes so far and the total, or zero for the total when the server did not say. Called on the
+    /// thread the copy happens on, so a UI caller has to marshal (see App.DownloadAndRestart).
+    /// </param>
+    public static async Task<Result<string>> DownloadAsync(
+        ReleaseInfo release, Action<long, long>? onProgress = null, CancellationToken cancel = default)
     {
         if (release.AssetName is null || !UpdateCheck.IsDownloadable(release.AssetUrl))
             return Result.Failure<string>("this release has no downloadable executable");
