@@ -68,6 +68,23 @@ public sealed record AppState(
     public IReadOnlyList<InventoryEntry> PinnedApps { get; init; } = [];
     public IReadOnlyList<InventoryEntry> DetachedApps { get; init; } = [];
 
+    // Which workspace each CONTAINER lives in (#132): the folder a VS Code window has open, the
+    // project a JetBrains IDE has loaded, the session Remote Desktop Manager is showing.
+    //
+    // The Inventory above cannot express this and never could. It keys on exe path plus arguments, so
+    // seven VS Code windows started with no arguments are ONE identity: whatever it remembers is
+    // remembered for all of them, which is why placement memory deliberately stands down when two
+    // live windows share an identity. That left the reboot case with no answer at all, which is #132.
+    //
+    // Written ONLY when Petre moves a window by hand, never from where a window is found sitting.
+    // That was his ruling and the reason is concrete: when he reported this, every VS Code window was
+    // sitting in one workspace after a restart, so learning from position would have memorised the
+    // very mess being fixed. See WorkspaceManager.LearnContainer.
+    //
+    // Init property with an empty default, so a state.json written before this key loads with no
+    // migration -- same pattern as everything above it.
+    public IReadOnlyList<ContainerHome> ContainerHomes { get; init; } = [];
+
     // Petre: "i want it configurable" -- the Alt+Tab-style workspace switcher's chord.
     //
     // Stored as the TEXT the user typed, not as a parsed Chord: state.json stays readable

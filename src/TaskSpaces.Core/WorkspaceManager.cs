@@ -142,7 +142,11 @@ public sealed class WorkspaceManager(
             .Bind(Reconcile)
             .Tap(() =>
             {
-                monitor.Snapshot().ToList().ForEach(w => knownWindows[w.Handle] = w);
+                // NoteContainer as well as knownWindows, and the ordering matters: the ledger is empty
+                // at this point, so every title here is the app's OWN. A moment later the rename sweep
+                // rewrites them ("VSC"), and the folder each window has open is unreadable from then on
+                // (#132).
+                monitor.Snapshot().ToList().ForEach(w => { knownWindows[w.Handle] = w; NoteContainer(w); });
                 // Before anything else looks at where windows are: a crash while standing inside a
                 // nested workspace leaves the parent's windows pinned to every desktop, and every
                 // sweep and overview after that would be reading a machine we left in a borrowed
@@ -269,11 +273,21 @@ public sealed class WorkspaceManager(
     {
         knownWindows[window.Handle] = window;
 
+        // Before any tier runs: a window that arrives with a folder already loaded (an editor
+        // relaunched by hand, a window that became taskbar-worthy late) has its container read now.
+        NoteContainer(window);
+
         // Fire-and-forget: the event pipeline has no caller waiting on a Result, and a
         // failed auto-placement (e.g. stale workspace, desktop move rejected) has
         // nowhere to surface here -- it's silently skipped, unlike the UI-facing
         // AssignWindow, which must propagate the same failure to the caller.
         // Precedence (Petre: "last placement beats rules, last placement IS the rule"):
+        //   0. container       -- this window has a FOLDER open, and he has told the app by hand where
+        //                        that folder lives (#132). Top of the list because it is the most
+        //                        specific answer available: it names this window's content, where the
+        //                        tiers below it name the app or the process that started it. It is
+        //                        also the only tier that can distinguish seven windows of one
+        //                        argument-less process, which is the whole reason it exists.
         //   1. launched by     -- another app started this one and its window lives in a workspace
         //                        (#94). Above memory, and the issue guessed why: it is the fresher
         //                        intent, and it is about THIS window rather than about the app in
@@ -295,7 +309,8 @@ public sealed class WorkspaceManager(
         // that ever launched anything. Note the difference from #94's tier, which is the opposite
         // direction: nothing here launches anything, it recognises that something else did.
         if (AutoPlaceable(window.Handle))
-            LaunchedByWorkspace(window)
+            ContainerPlacement(window)
+                .Or(() => LaunchedByWorkspace(window))
                 .Or(() => Remembered(window).Map(placement => new Decision(placement, Roster: true)))
                 .Or(() => RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(id => new Decision(Placement.In(id), Roster: true)))
                 .Tap(decided => ApplyPlacement(window, decided.Placement, decided.Roster));
@@ -469,8 +484,36 @@ public sealed class WorkspaceManager(
         // renamed this window and the observed title IS our applied name, skip late
         // placement entirely (no rename recorded, or observed title differs from what we
         // set, both fall through to the normal rule match).
-        if (AutoPlaceable(window.Handle)
-            && ledger.AppliedName(window.Handle).Map(applied => applied != window.Title).GetValueOrDefault(true))
+        // The container this window has loaded, from the title the APP wrote. Read on every title
+        // change and BEFORE the eligibility test below, because knowing what a window has open is
+        // worth recording even for a window that is already placed: he may drag it somewhere later,
+        // and that drag is what teaches the folder its home.
+        NoteContainer(window);
+
+        // Only titles the APP wrote are legitimate signals, for either tier below.
+        var appsOwnTitle = ledger.AppliedName(window.Handle).Map(applied => applied != window.Title).GetValueOrDefault(true);
+
+        // #132, and Petre's original ask for TitleToken: "so i open vscode, then i load a folder in it,
+        // that should take it to the correct workspace."
+        //
+        // This tier IGNORES AN EXISTING MEMBERSHIP, which every other tier here refuses to do, and the
+        // difference is the point rather than an oversight. His sequence is: open the editor, which has
+        // no folder yet, so the ROSTER places it (VS Code lives in framework); load the folder a second
+        // later, which is when the app first learns what the window actually is. If a membership blocked
+        // this, the answer would always arrive too late to be used, and the feature would only ever work
+        // for a window that opened with its folder already loaded.
+        //
+        // What keeps that from becoming a window that gets dragged around: the tier gets ONE look per
+        // window-and-container pair, and a by-hand move both teaches the home and spends that look (see
+        // LearnContainer). So the app can correct its own guess, and cannot argue with Petre.
+        if (appsOwnTitle && !IsOurs(window.Handle) && !detached.Contains(window.Handle)
+            && !desktops.IsPinned(window.Handle).GetValueOrDefault(false))
+            ContainerPlacement(window)
+                .Tap(decided => { ApplyPlacement(window, decided.Placement, decided.Roster); }); // fire-and-forget, as above
+
+        // Rules keep the eligibility they always had: a placed window is never re-placed by a rule,
+        // because browsers rewrite their titles on every tab switch.
+        if (appsOwnTitle && AutoPlaceable(window.Handle))
             RulesEngine.MatchWorkspace(window, State.WorkspaceRules)
                 .Tap(workspaceId => { Place(window, workspaceId); }); // fire-and-forget, as above
     }
@@ -507,6 +550,14 @@ public sealed class WorkspaceManager(
         // window later; a stale "detached" entry would silently exempt that new window
         // from rules. Cleared here for the same reason memberships is.
         detached.Remove(window.Handle);
+
+        // Both container facts are about a LIVE window, and hwnd recycling is the reason they go here
+        // rather than on Hidden: a recycled handle inheriting "this window has TaskSpaces open" would
+        // send an unrelated window across the machine. Hidden deliberately keeps them, because a window
+        // minimised to the tray has not forgotten what it has loaded, and the persisted home is what
+        // carries the answer across restarts anyway.
+        containerOf.Remove(window.Handle);
+        tookHome.RemoveWhere(pair => pair.Window == window.Handle);
 
         // Fix wave (reviewer, Important): same rationale as OnHidden above -- a closed
         // window's running-row must disappear from any open panel/Windows tab, and a
@@ -1432,6 +1483,10 @@ public sealed class WorkspaceManager(
                     Workspaces = tidied.Workspaces.Where(x => x.Id != id).ToList(),
                     WorkspaceRules = tidied.WorkspaceRules.Where(r => r.WorkspaceId != id).ToList(),
                     Inventory = tidied.Inventory.Where(kv => kv.Key != id).ToDictionary(kv => kv.Key, kv => kv.Value),
+                    // A container home naming a workspace that is gone would move a window to a desktop
+                    // nothing draws (#132). Forgotten in the same breath as the roster and the rules,
+                    // for the same reason all three are.
+                    ContainerHomes = tidied.ContainerHomes.Where(h => h.WorkspaceId != id).ToList(),
                 });
             });
 
@@ -1504,6 +1559,10 @@ public sealed class WorkspaceManager(
             ? desktops.IsPinned(window)
                 .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
                 .Bind(() => Place(info, workspaceId))
+                // The one place a container learns its home (#132), because this is the one door every
+                // by-hand move comes through: dragging an icon between rows, and Manage's row menu.
+                // After the move rather than before, so a refused move teaches nothing.
+                .Tap(() => LearnContainer(info, workspaceId))
                 .Bind(() => monitor is { } screen ? MoveWindowToMonitor(window, screen) : Result.Success())
             : Result.Failure("Window no longer exists.");
 
@@ -1691,6 +1750,125 @@ public sealed class WorkspaceManager(
     // Windows the launched-by tier has already had its one look at (#94). Never cleared while a window
     // lives: see LaunchedByWorkspace for why one look is the whole point.
     readonly HashSet<WindowHandle> launchedBy = [];
+
+    // --- containers: the folder a window has loaded (#132) --------------------------------------
+    //
+    // Petre, after a reboot: "now i have all vscode windows in one of the workspaces", and then "for
+    // vscode, take TaskSpaces for the current one... attribute TaskSpaces to the correct workspace".
+    //
+    // Seven VS Code windows are one process with no arguments, so RosterIdentity is identical for all
+    // of them and placement memory stands down on purpose (see Remembered). The container in the title
+    // is the only per-window signal there is, and TitleToken already extracts it.
+    //
+    // KEPT PER WINDOW IN MEMORY rather than read from the title on demand, and that is not an
+    // optimisation, it is the only way this can work on his machine. He has a rename rule
+    // `ProcessName Code -> VSC`, so the live title of every VS Code window IS "VSC" and the folder is
+    // nowhere to be read. The container is therefore captured at the one moment it exists: when the
+    // app itself writes its title, before we overwrite it. The rename ledger is no help either -- it
+    // records the original title from the FIRST rename, which is the bare "Visual Studio Code" a
+    // window has before its folder has finished loading.
+    readonly Dictionary<WindowHandle, string> containerOf = [];
+
+    // Window plus container this tier has already acted on. Keyed on the PAIR, not on the handle,
+    // because loading a different folder in the same window is a new answer and must be allowed to
+    // move it, while every other title change must not.
+    //
+    // Why a guard at all: opening a file rewrites a VS Code title, so this tier is offered the same
+    // window many times a minute. A placement MOVES a window between desktops, and moving a window
+    // that has focus takes Windows to that desktop, so a tier that can re-fire is a tier that can
+    // drag Petre's desktop around with no input from him. #94's launchedBy guard exists for exactly
+    // this, after he reported it happening.
+    readonly HashSet<(WindowHandle Window, string Container)> tookHome = [];
+
+    // Record what a window has loaded, from a title the APP wrote.
+    //
+    // The echo guard is the whole subtlety. ApplyRename's titles.Set produces a genuine NAMECHANGE
+    // that arrives back here carrying OUR short name, and "VSC" is not a folder. Skipping any title
+    // that equals what we applied is the same test late placement already uses, and for the same
+    // reason: only titles the app itself wrote are legitimate signals.
+    //
+    // Never REMOVES a container. A window whose title we no longer recognise has not forgotten which
+    // folder it has open -- VS Code rewrites its title constantly, and one uninformative rewrite must
+    // not lose an answer that was correct. Same principle as never caching a lookup failure.
+    void NoteContainer(WindowInfo window)
+    {
+        if (ledger.AppliedName(window.Handle).Map(applied => applied == window.Title).GetValueOrDefault(false))
+            return;
+
+        TitleToken.For(window.ProcessName, window.Title)
+            .Tap(container => containerOf[window.Handle] = container);
+    }
+
+    // The placement a window's container asks for, or None.
+    //
+    // Roster: false, which is load-bearing. RosterAdd strips an identity from every OTHER workspace so
+    // exactly one can claim it, and this window's identity is shared with every other window of the
+    // app. Claiming the roster here would therefore rewrite where Petre says VS CODE lives on the
+    // evidence of one folder -- which is precisely the mechanism behind "i'm starting the edge browser
+    // and it immediately goes to personal". The container places one window; the roster keeps
+    // answering for the app.
+    //
+    // A home whose workspace has since been deleted is ignored rather than obeyed. RemoveWorkspace
+    // prunes these, so the only way to hold one is a hand-edited state.json, and moving a window to a
+    // desktop nothing draws is worse than leaving it alone.
+    Maybe<Decision> ContainerPlacement(WindowInfo window) =>
+        containerOf.TryGetValue(window.Handle, out var container)
+        && !tookHome.Contains((window.Handle, container))
+        && State.ContainerHomes.FirstOrDefault(h =>
+               h.ProcessName.Equals(window.ProcessName, StringComparison.OrdinalIgnoreCase)
+               && h.Token.Equals(container, StringComparison.OrdinalIgnoreCase)) is { } home
+        && State.Workspaces.Any(w => w.Id == home.WorkspaceId)
+            ? TakeHome(window, container, home.WorkspaceId)
+            : Maybe<Decision>.None;
+
+    // The tier's one look at this window-and-container pair, spent here whichever way it goes.
+    //
+    // A window ALREADY in its home workspace is the common case, not an edge one: every file you open
+    // rewrites a VS Code title. It gets no move at all, and that is not merely an optimisation. Place()
+    // is unconditional, so re-issuing it would un-cloak and re-cloak a window on another desktop, and
+    // for a window that has focus that means taking Windows to that desktop -- the app moving Petre
+    // somewhere he already was.
+    //
+    // WorkspaceHolding rather than memberships, because "already there" is a question about the DESKTOP
+    // the window sits on. A window this app never placed still sits somewhere, and a startup that
+    // adopted it has no membership recorded for it.
+    Maybe<Decision> TakeHome(WindowInfo window, string container, Guid home)
+    {
+        tookHome.Add((window.Handle, container));
+
+        if (WorkspaceHolding(window) == home) return Maybe<Decision>.None;
+
+        trace?.Invoke($"container {window.ProcessName}/{container} -> {Workspace(home).GetValueOrDefault()?.Name ?? "?"}");
+        return new Decision(Placement.In(home), Roster: false);
+    }
+
+    // Learning, and ONLY from a move Petre made by hand. His ruling, and the reason is concrete: when
+    // he reported #132 every VS Code window was sitting in one workspace after a restart, so learning
+    // from where a window is FOUND would have recorded all seven folders as living there -- memorising
+    // the mess instead of fixing it. AssignWindow is the single door every by-hand move comes through:
+    // dragging an icon between rows on the bar, and Manage's row menu.
+    //
+    // One home per container, replaced rather than appended: a folder lives in one place, and a second
+    // answer for the same token would be a coin toss.
+    void LearnContainer(WindowInfo window, Guid workspaceId)
+    {
+        if (!containerOf.TryGetValue(window.Handle, out var container)) return;
+
+        Persist(State with
+        {
+            ContainerHomes =
+            [
+                .. State.ContainerHomes.Where(h =>
+                    !(h.ProcessName.Equals(window.ProcessName, StringComparison.OrdinalIgnoreCase)
+                      && h.Token.Equals(container, StringComparison.OrdinalIgnoreCase))),
+                new ContainerHome(window.ProcessName, container, workspaceId),
+            ],
+        });
+
+        // The window is where he just put it, so this tier has nothing left to say about this pair.
+        // Without it, the next title change would "take it home" to the place it already is.
+        tookHome.Add((window.Handle, container));
+    }
 
     // Screen moves waiting for their window to be reachable (#89). Live-only: a drop is a statement
     // about now, and one that never got applied because the app was closed is not worth re-applying
@@ -2397,10 +2575,17 @@ public sealed class WorkspaceManager(
             // knows one workspace for all four -- so applying it would herd every one of them
             // into that workspace. Leaving them where the session restored them is the lesser
             // wrong, and the only honest answer when the key cannot tell them apart.
-            .ForEach(window => Remembered(window)
-                .Or(RulesEngine.MatchWorkspace(window, State.WorkspaceRules).Map(Placement.In))
-                .Where(remembered => SafeToRestore(window, remembered))
-                .Tap(remembered => ApplyPlacement(window, remembered)));
+            // The container tier joins in here too (#132), and SafeToRestore below is what makes that
+            // safe: a window already sitting in a workspace is left alone, so this can only place one
+            // the OS could not account for. It is also why the reboot case does NOT depend on this path
+            // -- TaskSpaces starts with Windows, so the editor's windows arrive later, through
+            // OnAppeared. This is the other order: TaskSpaces restarting with the editor already open.
+            .ForEach(window => ContainerPlacement(window)
+                .Or(() => Remembered(window).Map(placement => new Decision(placement, Roster: true)))
+                .Or(() => RulesEngine.MatchWorkspace(window, State.WorkspaceRules)
+                    .Map(id => new Decision(Placement.In(id), Roster: true)))
+                .Where(decided => SafeToRestore(window, decided.Placement))
+                .Tap(decided => ApplyPlacement(window, decided.Placement, decided.Roster)));
 
     // A pin is ADDITIVE (it makes a window appear everywhere; it does not move it) and
     // detaching is just a flag, so both are always safe to re-apply. A WORKSPACE placement is
