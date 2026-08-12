@@ -1814,9 +1814,7 @@ public sealed class WorkspaceManager(
     Maybe<Decision> ContainerPlacement(WindowInfo window) =>
         containerOf.TryGetValue(window.Handle, out var container)
         && !tookHome.Contains((window.Handle, container))
-        && State.ContainerHomes.FirstOrDefault(h =>
-               h.ProcessName.Equals(window.ProcessName, StringComparison.OrdinalIgnoreCase)
-               && h.Token.Equals(container, StringComparison.OrdinalIgnoreCase)) is { } home
+        && State.ContainerHomes.FirstOrDefault(h => IsHomeFor(h, window.ProcessName, container)) is { } home
         && State.Workspaces.Any(w => w.Id == home.WorkspaceId)
             ? TakeHome(window, container, home.WorkspaceId)
             : Maybe<Decision>.None;
@@ -1842,11 +1840,12 @@ public sealed class WorkspaceManager(
         return new Decision(Placement.In(home), Roster: false);
     }
 
-    // Learning, and ONLY from a move Petre made by hand. His ruling, and the reason is concrete: when
-    // he reported #132 every VS Code window was sitting in one workspace after a restart, so learning
-    // from where a window is FOUND would have recorded all seven folders as living there -- memorising
-    // the mess instead of fixing it. AssignWindow is the single door every by-hand move comes through:
-    // dragging an icon between rows on the bar, and Manage's row menu.
+    static bool IsHomeFor(ContainerHome home, string processName, string container) =>
+        home.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase)
+        && home.Token.Equals(container, StringComparison.OrdinalIgnoreCase);
+
+    // Learning from a move Petre made by hand, which is immediate: a drag is unambiguous, so it needs
+    // no corroboration. The snapshot below covers the moves the app never sees.
     //
     // One home per container, replaced rather than appended: a folder lives in one place, and a second
     // answer for the same token would be a coin toss.
@@ -1854,20 +1853,81 @@ public sealed class WorkspaceManager(
     {
         if (!containerOf.TryGetValue(window.Handle, out var container)) return;
 
-        Persist(State with
-        {
-            ContainerHomes =
-            [
-                .. State.ContainerHomes.Where(h =>
-                    !(h.ProcessName.Equals(window.ProcessName, StringComparison.OrdinalIgnoreCase)
-                      && h.Token.Equals(container, StringComparison.OrdinalIgnoreCase))),
-                new ContainerHome(window.ProcessName, container, workspaceId),
-            ],
-        });
+        RecordHomes([(window.ProcessName, container, workspaceId)]);
 
         // The window is where he just put it, so this tier has nothing left to say about this pair.
         // Without it, the next title change would "take it home" to the place it already is.
         tookHome.Add((window.Handle, container));
+    }
+
+    void RecordHomes(IReadOnlyList<(string ProcessName, string Container, Guid WorkspaceId)> homes) =>
+        Persist(State with
+        {
+            ContainerHomes =
+            [
+                .. State.ContainerHomes.Where(existing =>
+                    !homes.Any(h => IsHomeFor(existing, h.ProcessName, h.Container))),
+                .. homes.Select(h => new ContainerHome(h.ProcessName, h.Container, h.WorkspaceId)),
+            ],
+        });
+
+    // Where each container was seen on the PREVIOUS sweep. A position has to hold still to be believed.
+    readonly Dictionary<WindowHandle, Guid> containerSeenIn = [];
+
+    // Learning from where windows ARE, on the 5s sweep. Petre: "why not learn their positions from where
+    // they are, not when they're moved. they are in the correct places now", and then "it should take a
+    // snapshot of where windows are, rather than where they're moved".
+    //
+    // I argued against this and was wrong about the reason. The objection was that after a reboot every
+    // editor window sits in one workspace, so a snapshot would memorise the mess -- and it would, if a
+    // snapshot were the only thing running. It is not. ORDERING is what makes this safe: the container
+    // tier corrects a window the moment it appears, in milliseconds, while learning requires a position
+    // to survive two sweeps. Correction therefore always wins the race, and the snapshot sees the
+    // corrected state. What the snapshot then adds is the case a by-hand rule cannot reach at all --
+    // moves made with Task View or Win+Ctrl+arrows, and the very first teaching pass, where his windows
+    // are already in the right places and the app has never been told.
+    //
+    // THREE things it refuses to learn, each for its own reason:
+    //
+    //   * A position that changed since the last sweep. A window mid-drag, or parked somewhere for a
+    //     minute, is not a statement about where its folder lives.
+    //   * A folder open in TWO workspaces at once. There is no single answer, and this codebase does not
+    //     toss coins: the same reasoning already governs placement memory and the launched-by tier.
+    //   * A window on a desktop no workspace owns. That is not a home, it is somewhere else.
+    public void SnapshotContainerHomes()
+    {
+        var facts = knownWindows.Values
+            .Where(window => !IsOurs(window.Handle) && containerOf.ContainsKey(window.Handle))
+            .Select(window => (Window: window, Container: containerOf[window.Handle], Holder: WorkspaceHolding(window)))
+            .Where(fact => fact.Holder is { } id && State.Workspaces.Any(w => w.Id == id))
+            .Select(fact => (fact.Window, fact.Container, Workspace: fact.Holder!.Value))
+            .ToList();
+
+        // Read BEFORE this sweep's positions overwrite it, and written for every window whether or not
+        // it is settled, so the next sweep can ask the same question.
+        var settled = facts
+            .Where(fact => containerSeenIn.TryGetValue(fact.Window.Handle, out var before) && before == fact.Workspace)
+            .ToList();
+        facts.ForEach(fact => containerSeenIn[fact.Window.Handle] = fact.Workspace);
+        containerSeenIn.Keys.Except(facts.Select(fact => fact.Window.Handle)).ToList()
+            .ForEach(handle => containerSeenIn.Remove(handle));
+
+        var learned = settled
+            .GroupBy(fact => (fact.Window.ProcessName.ToLowerInvariant(), fact.Container.ToLowerInvariant()))
+            // Windows of one folder that disagree about where they live teach nothing at all.
+            .Where(group => group.Select(fact => fact.Workspace).Distinct().Count() == 1)
+            .Select(group => (group.First().Window.ProcessName, group.First().Container, group.First().Workspace))
+            // Already what we hold, which is the overwhelmingly common case: no write, no pulse.
+            .Where(home => !State.ContainerHomes.Any(existing =>
+                IsHomeFor(existing, home.ProcessName, home.Container) && existing.WorkspaceId == home.Workspace))
+            .ToList();
+
+        if (learned.Count == 0) return;
+
+        learned.ForEach(home => trace?.Invoke(
+            $"container learned {home.ProcessName}/{home.Container} lives in " +
+            $"{Workspace(home.Workspace).GetValueOrDefault()?.Name ?? "?"}"));
+        RecordHomes(learned);
     }
 
     // Screen moves waiting for their window to be reachable (#89). Live-only: a drop is a statement
@@ -2575,16 +2635,22 @@ public sealed class WorkspaceManager(
             // knows one workspace for all four -- so applying it would herd every one of them
             // into that workspace. Leaving them where the session restored them is the lesser
             // wrong, and the only honest answer when the key cannot tell them apart.
-            // The container tier joins in here too (#132), and SafeToRestore below is what makes that
-            // safe: a window already sitting in a workspace is left alone, so this can only place one
-            // the OS could not account for. It is also why the reboot case does NOT depend on this path
-            // -- TaskSpaces starts with Windows, so the editor's windows arrive later, through
-            // OnAppeared. This is the other order: TaskSpaces restarting with the editor already open.
+            // The container tier joins in here (#132) and is deliberately NOT subject to SafeToRestore,
+            // which every tier below it is. The two tiers are answering different questions. SafeToRestore
+            // exists because a window sitting in a workspace may have been put there with Windows' own
+            // Task View, which the app never sees, and a restart must not undo that -- and the roster
+            // cannot tell the difference, because its answer covers every window of the app. A container
+            // home is a fact about THIS folder, and taking a window home is exactly what it is for.
+            //
+            // This is also what keeps the snapshot in SnapshotContainerHomes honest: a pile left by a
+            // reboot is corrected HERE, before any sweep has had two chances to believe it. Without the
+            // exemption, TaskSpaces restarting into a pile would learn the pile as the answer.
             .ForEach(window => ContainerPlacement(window)
-                .Or(() => Remembered(window).Map(placement => new Decision(placement, Roster: true)))
+                .Or(() => Remembered(window).Map(placement => new Decision(placement, Roster: true))
+                    .Where(decided => SafeToRestore(window, decided.Placement)))
                 .Or(() => RulesEngine.MatchWorkspace(window, State.WorkspaceRules)
-                    .Map(id => new Decision(Placement.In(id), Roster: true)))
-                .Where(decided => SafeToRestore(window, decided.Placement))
+                    .Map(id => new Decision(Placement.In(id), Roster: true))
+                    .Where(decided => SafeToRestore(window, decided.Placement)))
                 .Tap(decided => ApplyPlacement(window, decided.Placement, decided.Roster)));
 
     // A pin is ADDITIVE (it makes a window appear everywhere; it does not move it) and

@@ -83,20 +83,134 @@ public class ContainerPlacementTests
         Assert.Equal(taskSpaces.Id, home.WorkspaceId);
     }
 
-    // Petre's ruling, and the reason for it: every VS Code window was sitting in `framework` when he
-    // reported this, so learning from position would have recorded all seven folders as living there.
+    // Petre, overruling the by-hand-only rule I argued for: "why not learn their positions from where
+    // they are, not when they're moved. they are in the correct places now", then "it should take a
+    // snapshot of where windows are, rather than where they're moved."
+    //
+    // He is right, and the objection I raised is answered by ORDERING rather than abandoned. A snapshot
+    // on its own would memorise a reboot pile; a snapshot that needs a position to survive two sweeps
+    // cannot, because the container tier corrects a window the moment it appears. The test below
+    // (Correcting_a_pile_beats_learning_it) is the one that holds that race in place.
     [Fact]
-    public void A_window_merely_sitting_somewhere_teaches_nothing()
+    public void A_window_that_stays_put_teaches_where_its_folder_lives()
     {
         var manager = Started();
 
-        // On framework's desktop, seen, known, drawn in that row. Not moved there by him.
+        // Sitting in framework, seen, known, drawn in that row. Nobody dragged it through the bar.
         desktops.WindowPlacements[new WindowHandle(0x902)] = framework.DesktopId!.Value;
         Appears(monitor, Code(0x902, LoadedTaskSpaces));
-        Retitled(monitor, Code(0x902, LoadedTaskSpaces));
+
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+
+        var home = Assert.Single(store.Stored.ContainerHomes);
+        Assert.Equal("TaskSpaces", home.Token);
+        Assert.Equal(framework.Id, home.WorkspaceId);
+    }
+
+    // One sweep is a glance, not an answer: a window mid-drag, or parked somewhere for a minute, would
+    // otherwise rewrite where its folder lives.
+    [Fact]
+    public void One_sweep_is_not_enough_for_a_position_to_be_believed()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x903)] = framework.DesktopId!.Value;
+        Appears(monitor, Code(0x903, LoadedTaskSpaces));
+
+        manager.SnapshotContainerHomes();
+        Assert.Empty(store.Stored.ContainerHomes);
+
+        // ...and a position that moved in between starts its two sweeps over.
+        desktops.WindowPlacements[new WindowHandle(0x903)] = taskSpaces.DesktopId!.Value;
+        manager.SnapshotContainerHomes();
+        Assert.Empty(store.Stored.ContainerHomes);
+
+        manager.SnapshotContainerHomes();
+        Assert.Equal(taskSpaces.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
+    }
+
+    // Two windows with the same folder open in different workspaces have no single answer, so the
+    // snapshot declines rather than picking one. Same reasoning that governs placement memory and the
+    // launched-by tier: nothing happens rather than a coin toss.
+    [Fact]
+    public void A_folder_open_in_two_workspaces_at_once_teaches_nothing()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x904)] = framework.DesktopId!.Value;
+        desktops.WindowPlacements[new WindowHandle(0x905)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Code(0x904, LoadedTaskSpaces));
+        Appears(monitor, Code(0x905, LoadedTaskSpaces));
+
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
 
         Assert.Empty(store.Stored.ContainerHomes);
-        Assert.NotNull(manager);
+    }
+
+    // A window on a desktop no workspace owns is somewhere else, not at home.
+    [Fact]
+    public void A_window_outside_every_workspace_teaches_nothing()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x906)] = Guid.NewGuid(); // a plain, unnamed desktop
+        Appears(monitor, Code(0x906, LoadedTaskSpaces));
+
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+
+        Assert.Empty(store.Stored.ContainerHomes);
+    }
+
+    // THE RACE, and the reason a snapshot is safe at all. A reboot puts every window in one workspace;
+    // the container tier corrects them as they appear; the snapshot only ever sees the corrected state.
+    // If this ever fails, the snapshot has started memorising exactly the mess #132 was about.
+    [Fact]
+    public void Correcting_a_pile_beats_learning_it()
+    {
+        var manager = Started();
+
+        // Taught, however that happened: this folder lives in TaskSpace.
+        desktops.WindowPlacements[new WindowHandle(0x907)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Code(0x907, LoadedTaskSpaces));
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+        Assert.Equal(taskSpaces.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
+        Closed(monitor, Code(0x907, LoadedTaskSpaces));
+
+        // The reboot: a new window, dumped on whatever desktop was current.
+        desktops.WindowPlacements[new WindowHandle(0x917)] = framework.DesktopId!.Value;
+        Appears(monitor, Code(0x917, LoadedTaskSpaces));
+
+        // Corrected on arrival, so both sweeps agree on TaskSpace and the home survives.
+        Assert.Equal(taskSpaces.DesktopId, desktops.WindowPlacements[new WindowHandle(0x917)]);
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+
+        Assert.Equal(taskSpaces.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
+    }
+
+    // The same race in the other order: TaskSpaces restarting into a pile, where the windows never pass
+    // through OnAppeared at all. RestorePlacements has to correct them, which is why the container tier
+    // is exempt from SafeToRestore -- otherwise a window sitting in a workspace would be left there and
+    // the next two sweeps would learn it.
+    [Fact]
+    public void Restarting_into_a_pile_takes_the_windows_home()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x908)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Code(0x908, LoadedTaskSpaces));
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+        Closed(monitor, Code(0x908, LoadedTaskSpaces));
+
+        // Restart, with the editor already open and its window piled in framework.
+        var reopened = new FakeMonitor();
+        reopened.InitialWindows.Add(Code(0x918, LoadedTaskSpaces));
+        desktops.WindowPlacements[new WindowHandle(0x918)] = framework.DesktopId!.Value;
+        var restarted = new WorkspaceManager(desktops, reopened, new FakeTitles(), store, ownProcessId: 4242);
+        Assert.True(restarted.Start().IsSuccess);
+
+        Assert.Equal(taskSpaces.DesktopId, desktops.WindowPlacements[new WindowHandle(0x918)]);
     }
 
     // Moving the same folder somewhere else replaces the answer rather than adding a second one. A

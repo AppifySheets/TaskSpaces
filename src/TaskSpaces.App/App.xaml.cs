@@ -770,6 +770,14 @@ public partial class App : Application
                 try { manager.ReapplyRenames(); }
                 catch (Exception e) { ClickTrace.Write($"sweep: ReapplyRenames threw {e.GetType().Name}: {e.Message}"); }
 
+                // Where each open folder is sitting (#132). Rides this timer rather than owning one
+                // because it asks the same question the sweep already exists to ask -- where windows
+                // ARE -- and because a position has to survive two ticks to be believed, which makes
+                // the sweep's own interval the unit of patience. Writes only when an answer changes,
+                // so the steady state is one dictionary lookup per window with a folder open.
+                try { manager.SnapshotContainerHomes(); }
+                catch (Exception e) { ClickTrace.Write($"sweep: SnapshotContainerHomes threw {e.GetType().Name}: {e.Message}"); }
+
                 // A heartbeat, rare enough to be free: one line on the first tick and one every five
                 // minutes after. A stalled timer is otherwise indistinguishable from a timer whose
                 // work does nothing, and telling those apart is what cost this afternoon.
