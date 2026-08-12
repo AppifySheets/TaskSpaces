@@ -221,6 +221,49 @@ public class NameByFolderTests
         Assert.False(TitleToken.Knows("Beeper"));
     }
 
+    // Petre: "when i restart those vscode windows, will they have correct names?"
+    //
+    // They will, and this is the record that would otherwise have said otherwise. His state holds
+    // {Code, OriginalTitle "VSC", ShortName "SPS"} -- a rename keyed on a title the app had already
+    // rewritten. ReapplyRenames adopts a persisted rename for any window whose CURRENT title matches, so
+    // after TaskSpaces is killed with "VSC" left on screen, the next start would put "SPS" back on a
+    // window that is supposed to be named after its folder. Turning folder naming on supersedes those
+    // entries, exactly as RenameApp already does.
+    [Fact]
+    public void Turning_it_on_drops_the_exact_title_renames_it_supersedes()
+    {
+        var manager = Started();
+        Appears(monitor, Code(0xA13, "Visual Studio Code"));
+        Assert.True(manager.RenameApp(new WindowHandle(0xA13), "VSC").IsSuccess);
+        // ...and then the rename he actually made, on top of our own short name. This is his file.
+        Assert.True(manager.RenameWindow(new WindowHandle(0xA13), "SPS").IsSuccess);
+        Assert.Single(store.Stored.PersistedRenames);
+
+        Assert.True(manager.NameWindowsByFolder(new WindowHandle(0xA13), on: true).IsSuccess);
+
+        Assert.Empty(store.Stored.PersistedRenames);
+
+        // ...so the window that comes back after a restart is named by its folder, not "SPS".
+        Retitled(monitor, Code(0xA13, "index.ts - TaskSpaces - Visual Studio Code"));
+        manager.ReapplyRenames();
+        Assert.Equal("TaskSpaces", TitleOf(0xA13));
+    }
+
+    // Another app's records are none of this app's business.
+    [Fact]
+    public void Turning_it_on_leaves_other_apps_renames_alone()
+    {
+        var manager = Started();
+        var beeper = new WindowInfo(new WindowHandle(0xA14), 950, "Beeper", @"C:\Beeper.exe", "Beeper | HRIS", null);
+        Appears(monitor, beeper);
+        Assert.True(manager.RenameWindow(new WindowHandle(0xA14), "Beeper").IsSuccess);
+        Appears(monitor, Code(0xA15, "index.ts - TaskSpaces - Visual Studio Code"));
+
+        Assert.True(manager.NameWindowsByFolder(new WindowHandle(0xA15), on: true).IsSuccess);
+
+        Assert.Single(store.Stored.PersistedRenames);
+    }
+
     // The sweep is the safety net for a dropped NAMECHANGE, and it has one more job here than it does
     // for a rule: the wanted name can have CHANGED, so re-applying the ledger's name is not enough.
     [Fact]

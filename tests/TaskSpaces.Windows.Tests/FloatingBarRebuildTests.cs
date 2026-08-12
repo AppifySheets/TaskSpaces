@@ -152,12 +152,17 @@ public class FloatingBarRebuildTests
     // "Pin / Unpin" here as redundant with drag, so this test fails if either creeps back in --
     // the exact list is the assertion, not incidental detail.
     //
-    // Now three entries rather than two. "Rename all <app> windows…" was added after Petre's
-    // "i've renamed remote desktop manager to RDP yesterday, today it's still the original
-    // name, why?": renaming THIS window records the exact title it had, which RDM rewrites with
-    // its current session, so the record can never match again. The app-wide entry writes a
-    // rule keyed on the process name instead. Both are naming, so the rule this menu follows --
-    // drag expresses movement and pinning, right-click expresses naming -- still holds.
+    // Now four entries. "Rename all <app> windows…" was added after Petre's "i've renamed remote
+    // desktop manager to RDP yesterday, today it's still the original name, why?": renaming THIS
+    // window records the exact title it had, which RDM rewrites with its current session, so the
+    // record can never match again. The app-wide entry writes a rule keyed on the process name
+    // instead. "Rename by title pattern…" came later (#136): "i want two separate boxes - one for
+    // the title wildcard, another for the new name." All of them are naming, so the rule this menu
+    // follows -- drag expresses movement and pinning, right-click expresses naming -- still holds.
+    //
+    // "Name <app> windows by folder" is deliberately absent HERE and its own test covers why: the
+    // harness window's process is "rdm", which is not a name TitleToken knows, and an app whose
+    // title shape cannot be read has no folder to be named after.
     [Fact]
     public void Icon_right_click_menu_offers_naming_only() => StaThread.Run(() =>
     {
@@ -168,7 +173,7 @@ public class FloatingBarRebuildTests
 
         Assert.NotNull(menu);
         Assert.Equal(
-            ["Rename this window…", "Rename all rdm windows…", "Restore title"],
+            ["Rename this window…", "Rename by title pattern…", "Rename all rdm windows…", "Restore title"],
             menu.Items.OfType<MenuItem>().Select(item => (string)item.Header));
         // Never renamed, so Restore title is visible-but-unavailable rather than absent
         // (mirrors WindowGroupsView.RunningMenu; a menu whose shape shifts per icon is

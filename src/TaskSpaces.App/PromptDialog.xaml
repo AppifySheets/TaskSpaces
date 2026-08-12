@@ -7,6 +7,13 @@
     <StackPanel Margin="12">
         <TextBlock x:Name="PromptText" TextWrapping="Wrap" Margin="0,0,0,8"/>
         <TextBox x:Name="Input" />
+        <!-- The second field, collapsed unless AskTwo is used (#136). Petre, having tried the one-box
+             form with an arrow in it: "not the arrow. i want two separate boxes - one for the title
+             wildcard, another for the new name." Two boxes rather than one input with syntax in it, so
+             nothing has to be parsed out of what he types and a title containing the separator cannot
+             be misread as a rule. -->
+        <TextBlock x:Name="SecondPromptText" TextWrapping="Wrap" Margin="0,10,0,8" Visibility="Collapsed"/>
+        <TextBox x:Name="SecondInput" Visibility="Collapsed"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="OK" Padding="16,4" IsDefault="True" Click="OnOk"/>
             <Button Content="Cancel" Padding="12,4" Margin="8,0,0,0" IsCancel="True"/>

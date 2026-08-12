@@ -1887,6 +1887,19 @@ public sealed class WorkspaceManager(
                     NameByFolder = on
                         ? [.. Without(State.NameByFolder, info.ProcessName), info.ProcessName]
                         : Without(State.NameByFolder, info.ProcessName),
+                    // Turning it ON supersedes every exact-title rename for this app, and they are
+                    // dropped rather than left to argue with it -- the same thing RenameApp does, for the
+                    // same reason. His file is what makes this concrete: it holds
+                    // {Code, OriginalTitle "VSC", ShortName "SPS"}, a rename keyed on a title the app had
+                    // already written itself. That entry can still fire, because ReapplyRenames adopts a
+                    // persisted rename for any window whose CURRENT title matches -- so after TaskSpaces
+                    // is killed, leaving "VSC" on screen, the next start would put "SPS" back on windows
+                    // that are supposed to be named after their folders.
+                    PersistedRenames = on
+                        ? State.PersistedRenames
+                            .Where(r => !r.ProcessName.Equals(info.ProcessName, StringComparison.OrdinalIgnoreCase))
+                            .ToList()
+                        : State.PersistedRenames,
                 }))
                 .Tap(() => knownWindows.Values
                     .Where(w => w.ProcessName.Equals(info.ProcessName, StringComparison.OrdinalIgnoreCase))
@@ -2269,21 +2282,34 @@ public sealed class WorkspaceManager(
     // renaming, so it lapses as soon as the app rewrites its title (Beeper carries the current
     // chat, RDM the session), whereas a rule keeps matching. Everything downstream already
     // applies rename rules on Appeared and on TitleChanged, so nothing else needed changing.
-    // IsRule rather than IsWildcard (#136): "*taskspace* => TaskSpace" is a rule too, and the arrow is
-    // the whole reason it can exist. Deriving the name from the pattern cannot say "match loosely, name
-    // precisely" -- "*taskspace*" would put "taskspace" on the taskbar, and he wants "TaskSpace".
     public Result RenameWindow(WindowHandle window, string input) =>
-        RenamePattern.IsRule(input)
+        RenamePattern.IsWildcard(input)
             ? AddRenameRule(input)
             : RenameExactly(window, input);
 
     public Result AddRenameRule(string input) =>
         Result.FailureIf(RenamePattern.ShortNameOf(input).Length == 0,
                 "A wildcard rename still needs a name: \"*\" on its own matches everything and names it nothing.")
-            // An arrow with nothing on its left would match every window ever opened and rename the lot.
-            .Bind(() => Result.FailureIf(RenamePattern.PatternOf(input).Length == 0,
-                "There is nothing to match: put the pattern before the arrow, as in \"*taskspace* => TaskSpace\"."))
             .Bind(() => AddRule(new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(input), RenamePattern.ShortNameOf(input))));
+
+    // The two-box form (#136). Petre: "i want two separate boxes - one for the title wildcard, another
+    // for the new name."
+    //
+    // Two arguments rather than one string to be parsed, which is the point: nothing has to guess where
+    // the pattern ends, and a title containing whatever separator we might have chosen cannot be
+    // misread. The pattern still goes through ToRegex, so a '*' means what it always did and every other
+    // character is escaped.
+    //
+    // A pattern with NO wildcard is still accepted and still becomes a rule. It matches that exact title
+    // and keeps matching it, including for a window opened tomorrow, which is strictly more than the
+    // one-off rename can promise.
+    public Result RenameByPattern(string pattern, string shortName) =>
+        Result.FailureIf(string.IsNullOrWhiteSpace(pattern),
+                "There is nothing to match. A pattern of \"*\" on its own would rename every window on the machine.")
+            .Bind(() => Result.FailureIf(pattern.Trim() == "*",
+                "\"*\" on its own matches every window on the machine. Narrow it, as in \"*taskspaces*\"."))
+            .Bind(() => Result.FailureIf(string.IsNullOrWhiteSpace(shortName), "A name is required."))
+            .Bind(() => AddRule(new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(pattern), shortName.Trim())));
 
     // Petre: "i've renamed remote desktop manager to RDP yesterday, today it's still the
     // original name, why?"

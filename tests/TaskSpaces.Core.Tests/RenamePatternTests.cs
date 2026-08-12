@@ -43,35 +43,16 @@ public class RenamePatternTests
         Assert.DoesNotMatch(pattern, "TaskSpaces - Rider");
     }
 
-    // #136. Petre, once folder naming existed: "i think it would be better to rename windows by
-    // wildcard, so i'd say *taskspace* => TaskSpace, only when I don't have a way to automatically
-    // assign the correct name to the app."
+    // #136. Petre: "i want two separate boxes - one for the title wildcard, another for the new name."
     //
-    // The arrow is what the single-field design cannot express: match loosely, name precisely. Without
-    // it "*taskspace*" puts "taskspace" on the taskbar, and the name he wants is "TaskSpace".
-    [Theory]
-    [InlineData("*taskspace* => TaskSpace", "TaskSpace")]
-    [InlineData("*visual studio code*=>VSC", "VSC")]              // no spaces around the arrow
-    [InlineData("* - Remote Desktop Manager => RDP", "RDP")]
-    [InlineData("beeper *", "beeper")]                            // no arrow: unchanged
-    public void An_arrow_names_the_match_instead_of_deriving_it(string input, string expected) =>
-        Assert.Equal(expected, RenamePattern.ShortNameOf(input));
-
-    [Theory]
-    [InlineData("*taskspace* => TaskSpace", "*taskspace*")]
-    [InlineData("beeper *", "beeper *")]
-    public void The_pattern_is_only_what_is_left_of_the_arrow(string input, string expected) =>
-        Assert.Equal(expected, RenamePattern.PatternOf(input));
-
     // Through the ENGINE rather than through xUnit's matcher, and that is the point of the test rather
     // than a detail: RulesEngine matches with RegexOptions.IgnoreCase, so a lower-case "*taskspace*"
     // matches "TaskSpaces" and the casing of the pattern costs nothing. Asserting with Assert.Matches
     // would have been testing xUnit's default options, which are case-SENSITIVE.
     [Fact]
-    public void The_named_form_matches_the_titles_it_was_written_for()
+    public void A_pattern_matches_the_titles_it_was_written_for_whatever_its_casing()
     {
-        const string input = "*taskspace* => TaskSpace";
-        var rule = new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex(input), RenamePattern.ShortNameOf(input));
+        var rule = new RenameRule(RuleMatchKind.TitleRegex, RenamePattern.ToRegex("*taskspace*"), "TaskSpace");
         static WindowInfo Window(string title) =>
             new(new WindowHandle(0x1), 1, "Code", @"C:\Code.exe", title, null);
 
@@ -79,16 +60,6 @@ public class RenamePatternTests
         Assert.Equal("TaskSpace", RulesEngine.MatchRename(Window("TaskSpaces – Program.cs"), [rule]).GetValueOrDefault(""));
         Assert.Equal("", RulesEngine.MatchRename(Window("dice-to-seed - Visual Studio Code"), [rule]).GetValueOrDefault(""));
     }
-
-    // An arrow makes it a rule even with no star in it, because naming a match is a statement about
-    // every window that matches rather than about the one in front of you.
-    [Theory]
-    [InlineData("*taskspace* => TaskSpace", true)]
-    [InlineData("Visual Studio Code => VSC", true)]
-    [InlineData("beeper *", true)]
-    [InlineData("RDP", false)]
-    public void An_arrow_or_a_star_makes_it_a_rule(string input, bool expected) =>
-        Assert.Equal(expected, RenamePattern.IsRule(input));
 
     // A title made almost entirely of regex metacharacters must not become an accidental
     // pattern, or crash the engine. Petre's real RDM title is exactly this shape.
@@ -187,31 +158,59 @@ public class WildcardRenameTests
         Assert.Empty(store.Stored.RenameRules);
     }
 
-    // #136, the named form, end to end: the pattern matches and the NAME is what he typed after the
-    // arrow rather than anything derived from the title.
+    // #136, the two-box form: the pattern matches, and the name is the one he typed in the other box
+    // rather than anything derived from the pattern.
     [Fact]
-    public void A_named_pattern_uses_the_name_after_the_arrow()
+    public void A_pattern_and_a_name_given_separately_are_both_used()
     {
         var manager = Started();
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
 
-        Assert.True(manager.RenameWindow(new WindowHandle(0x1), "*work chat* => Chat").IsSuccess);
+        Assert.True(manager.RenameByPattern("*work chat*", "Chat").IsSuccess);
 
         Assert.Equal("Chat", titles.Titles[new WindowHandle(0x1)]);
         Assert.Equal("Chat", Assert.Single(store.Stored.RenameRules).ShortName);
-        Assert.Empty(store.Stored.PersistedRenames);
+        Assert.Empty(store.Stored.PersistedRenames); // a rule, not a record keyed to one title
     }
 
-    // An arrow with nothing to its left would match every window ever opened and rename the lot.
+    // A later window whose title the pattern matches gets the name too, which is the whole reason this
+    // is a rule rather than a rename.
     [Fact]
-    public void An_arrow_with_no_pattern_is_rejected()
+    public void A_pattern_names_windows_that_did_not_exist_when_it_was_written()
+    {
+        var manager = Started();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
+        Assert.True(manager.RenameByPattern("beeper *", "Chat").IsSuccess);
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x2, "beeper | someone else")));
+
+        Assert.Equal("Chat", titles.Titles[new WindowHandle(0x2)]);
+    }
+
+    // A pattern with no wildcard is a rule matching that exact title, which is more than the one-off
+    // rename promises: it also names the window that opens with that title tomorrow.
+    [Fact]
+    public void A_pattern_with_no_wildcard_still_becomes_a_rule()
     {
         var manager = Started();
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
 
-        var result = manager.RenameWindow(new WindowHandle(0x1), "=> Chat");
+        Assert.True(manager.RenameByPattern("beeper | work chat", "Chat").IsSuccess);
 
-        Assert.True(result.IsFailure);
+        Assert.Equal("Chat", titles.Titles[new WindowHandle(0x1)]);
+        Assert.Single(store.Stored.RenameRules);
+    }
+
+    [Theory]
+    [InlineData("", "Chat")]     // nothing to match
+    [InlineData("*", "Chat")]    // matches every window on the machine
+    [InlineData("beeper *", "")] // nothing to call it
+    public void A_pattern_that_would_rename_everything_or_nothing_is_rejected(string pattern, string name)
+    {
+        var manager = Started();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper(0x1, "beeper | work chat")));
+
+        Assert.True(manager.RenameByPattern(pattern, name).IsFailure);
         Assert.Empty(store.Stored.RenameRules);
     }
 }

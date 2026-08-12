@@ -4058,13 +4058,24 @@ public partial class FloatingBar : Window
 
 
         var rename = new MenuItem { Header = "Rename this window…", Icon = MenuGlyph("✏") };
-        // The hint carries the two forms, because neither is discoverable from an empty box: a bare name
-        // renames this window only, and either a wildcard or an arrow makes it a durable rule (#136).
-        rename.Click += (_, _) => PromptDialog.Ask("Rename window",
-                "Short name to show on the taskbar, or a rule: \"beeper *\", \"*taskspace* => TaskSpace\"",
+        rename.Click += (_, _) => PromptDialog.Ask("Rename window", "Short name to show on the taskbar:",
                 row.Window.Title, owner: this)
             .Tap(shortName => Report(manager.RenameWindow(row.Window.Handle, shortName)));
         menu.Items.Add(rename);
+
+        // #136. Petre: "i want two separate boxes - one for the title wildcard, another for the new
+        // name", for the case where nothing can work the name out automatically. Two boxes rather than
+        // one input with a separator in it, so nothing is parsed out of what he types.
+        //
+        // The pattern box starts as the window's CURRENT TITLE rather than empty, because that is the
+        // thing being generalised: put stars around the part that identifies it and delete the rest. The
+        // name box starts at the process name, which is right more often than blank is.
+        var renamePattern = new MenuItem { Header = "Rename by title pattern…", Icon = MenuGlyph("✳") };
+        renamePattern.Click += (_, _) => PromptDialog.AskTwo("Rename by title pattern",
+                "Titles matching this pattern ( * matches anything ):", row.Window.Title,
+                "get this name on the taskbar:", row.Window.ProcessName, owner: this)
+            .Tap(both => Report(manager.RenameByPattern(both.First, both.Second)));
+        menu.Items.Add(renamePattern);
 
         // Petre: "i've renamed remote desktop manager to RDP yesterday, today it's still the
         // original name, why?" Because renaming THIS WINDOW records the exact title it had at

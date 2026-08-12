@@ -46,5 +46,32 @@ public partial class PromptDialog : Window
             : Maybe<string>.None;
     }
 
+    // Two fields, for a rename that matches on one thing and names another (#136). Petre: "i want two
+    // separate boxes - one for the title wildcard, another for the new name."
+    //
+    // Both must be filled: this form exists to say two things, and a half-filled one has no sensible
+    // reading. The first box takes focus, since it is the one that usually needs editing (the second is
+    // pre-filled with a sensible name and is often right as it stands).
+    public static Maybe<(string First, string Second)> AskTwo(
+        string title, string prompt, string initial, string secondPrompt, string secondInitial, Window? owner = null)
+    {
+        var dialog = new PromptDialog { Title = title };
+        if (owner is not null) dialog.Owner = owner;
+        dialog.PromptText.Text = prompt;
+        dialog.Input.Text = initial;
+        dialog.SecondPromptText.Text = secondPrompt;
+        dialog.SecondInput.Text = secondInitial;
+        dialog.SecondPromptText.Visibility = Visibility.Visible;
+        dialog.SecondInput.Visibility = Visibility.Visible;
+        dialog.Input.SelectAll();
+        dialog.Input.Focus();
+
+        return dialog.ShowDialog() == true
+               && !string.IsNullOrWhiteSpace(dialog.Input.Text)
+               && !string.IsNullOrWhiteSpace(dialog.SecondInput.Text)
+            ? (dialog.Input.Text.Trim(), dialog.SecondInput.Text.Trim())
+            : Maybe<(string, string)>.None;
+    }
+
     void OnOk(object s, RoutedEventArgs e) => DialogResult = true;
 }
