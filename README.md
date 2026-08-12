@@ -31,7 +31,7 @@
        read differently again in light mode. Masked to a rounded rectangle after capture, the
        page shows through instead. Recaptures must do the same. The radius is 12px at this
        machine's 150% scaling, which is the XAML's 8px in physical pixels. -->
-  <img src="docs/images/floating-bar-1.6.0.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. The current workspace's whole row is boxed in white. Icons are grouped by monitor behind hairline markers, faded when covered or minimised, and windows of the same app carry different coloured bars along the bottom. A pinned row sits at the top and a hint line at the bottom." />
+  <img src="docs/images/floating-bar-1.10.5.png" alt="The floating bar: one row per workspace, each tinted its own colour, with the icons of every window in it starting from the left edge and the workspace name in a right-hand gutter. The current workspace's whole row is boxed in white and another is ringed in amber as the one a switch would land on. Icons are grouped by monitor behind hairline markers and faded when covered or minimised. Three workspaces are bracketed together as a named group, and a hint line sits at the bottom." />
 </p>
 
 <p align="center"><em>Everything you have open, grouped by workspace: one row each, the current
@@ -77,8 +77,10 @@ nothing to rebuild. Workspaces survive reboots.
 **Requirements:** Windows 11 (build 22000 or newer) on x64. Nothing else: the
 download bundles the .NET runtime, so there is no framework to install first.
 
-1. Download `TaskSpaces-1.5.0-win-x64.exe` from the
-   [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest).
+1. Download the `TaskSpaces-…-win-x64.exe` attached to the
+   [latest release](https://github.com/AppifySheets/TaskSpaces/releases/latest). The file
+   carries its version in the name, which is deliberate: two of them can sit side by side
+   and you can always tell which one you are running.
 2. Put it somewhere permanent. `C:\Users\<you>\Programs\TaskSpaces\` is a good
    choice. **Not** your Downloads folder: see the note below.
 3. Double-click it. Nothing appears to happen, because TaskSpaces opens no window at
@@ -136,7 +138,8 @@ single ~74 MB exe in `artifacts/publish`.
   the surface you will actually live in. Click an icon to jump to that window wherever
   it lives, **click it again to minimise it** once you are in it, drag icons between rows
   to move windows between workspaces, click **anywhere on a row** to switch to that
-  workspace, right-click an icon to rename it, hover to see what an icon actually is.
+  workspace, right-click an icon to rename it, rest on an icon to **see the window
+  itself**.
   Every workspace label is bold, with the current one ringed. Always on: it is the only
   surface that lists your windows, so there is nothing to switch off.
 
@@ -150,6 +153,14 @@ single ~74 MB exe in `artifacts/publish`.
   when minimised. An amber dot means that app is asking for you: someone messaged, or it
   wants attention. Several windows of one app each get a coloured bar along the bottom, so
   you can tell three browsers apart and watch one drop back as you use another.
+
+  **Resting on an icon shows you the window.** A card appears with the window's title, the
+  app and workspace it belongs to, and a picture of the window at a quarter of its own size.
+  It works for windows on workspaces you are not looking at, which is the point: you can see
+  what is waiting on another workspace without going there. Passing over the bar on your way
+  somewhere else shows nothing, because the card waits for the pointer to settle first, using
+  the same delay Windows' own taskbar thumbnails use. A minimised window has no picture to
+  show, so its card is text alone.
 
   **The order means something.** Within each row, icons sit in the order the windows are
   stacked on screen: front-most first, the one you are looking at leftmost, whatever is
@@ -205,9 +216,25 @@ single ~74 MB exe in `artifacts/publish`.
   Manager), because a single-window rename is keyed to the exact title it had at the
   time and lapses the moment the app changes it. App-wide renames are keyed to the
   process and never lapse. Names persist across restarts.
+
+  **Or name windows after what they have open.** One name for every window of an app is the
+  wrong shape for an editor: seven VS Code windows all reading `VSC` tell you nothing about
+  which is which. Right-click an icon and pick **Name *app* windows by folder** to name each
+  one after the folder, project or session it currently holds, following the window when you
+  open something else. Offered for the apps whose titles say so: VS Code and its forks,
+  Visual Studio, the JetBrains IDEs and Remote Desktop Manager. Browsers are deliberately
+  left out, because a tab title is the page rather than a container. Anything else can take
+  a **title pattern** instead, matching `*taskspaces*` and naming it whatever you like.
 - **Rosters.** A workspace remembers which apps belong to it even when they are closed.
   That memory is what puts a window back where you last had it, rather than wherever it
   happens to open. TaskSpaces does not relaunch anything for you.
+
+  **Folders get their own memory.** Several windows of one app are a single app as far as
+  the roster is concerned, so a reboot used to pile every editor window into whichever
+  workspace the editor was launched from. Where a window's *folder* lives is remembered
+  separately: open that folder again, anywhere, and the window goes to its own workspace.
+  You never have to set this up. It learns from where your windows actually sit, once a
+  position has held still, and from anything you drag by hand.
 
 ## Why this matters
 
