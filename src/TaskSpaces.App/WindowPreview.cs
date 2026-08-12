@@ -49,8 +49,22 @@ public static class WindowPreview
         nint dst, int x, int y, int w, int h, nint src, int sx, int sy, int sw, int sh, uint rop);
     [DllImport("gdi32.dll")] static extern int SetStretchBltMode(nint dc, int mode);
 
+    [DllImport("gdi32.dll")] static extern int GetDIBits(
+        nint dc, nint bitmap, uint start, uint lines, byte[]? bits, ref BITMAPINFO info, uint usage);
+
     [StructLayout(LayoutKind.Sequential)]
     struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BITMAPINFOHEADER
+    {
+        public int Size, Width, Height;
+        public short Planes, BitCount;
+        public int Compression, SizeImage, XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BITMAPINFO { public BITMAPINFOHEADER Header; public int Colors; }
 
     const uint PW_RENDERFULLCONTENT = 0x2;
     const uint SRCCOPY = 0x00CC0020;
@@ -93,8 +107,30 @@ public static class WindowPreview
             if (!StretchBlt(smallDc, 0, 0, shrunkWidth, shrunkHeight, fullDc, 0, 0, width, height, SRCCOPY))
                 return Maybe<BitmapSource>.None;
 
-            var source = Imaging.CreateBitmapSourceFromHBitmap(
-                small, 0, System.Windows.Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            // READ THE BYTES OURSELVES, as Bgr32, and that is a correction rather than a preference.
+            // Petre, on the first version: "previews don't work" -- with a screenshot showing the card at
+            // full preview size and nothing but the card's own background inside it. The capture was
+            // working the whole time; it was being drawn INVISIBLE.
+            //
+            // Imaging.CreateBitmapSourceFromHBitmap hands back a format with an alpha channel, and
+            // PrintWindow leaves alpha at zero across the opaque parts of a window. WPF then honours that
+            // faithfully and composites a fully transparent image, which on a dark card looks exactly like
+            // an empty rectangle. Bgr32 has no alpha channel to misread, so every pixel is opaque by
+            // construction -- and this is the same call the probe made, which is why its PNGs looked right
+            // while the app's card looked blank.
+            var bi = new BITMAPINFO();
+            bi.Header.Size = Marshal.SizeOf<BITMAPINFOHEADER>();
+            bi.Header.Width = shrunkWidth;
+            bi.Header.Height = -shrunkHeight; // negative: top-down, matching WPF's row order
+            bi.Header.Planes = 1;
+            bi.Header.BitCount = 32;
+            var stride = shrunkWidth * 4;
+            var pixels = new byte[stride * shrunkHeight];
+            if (GetDIBits(smallDc, small, 0, (uint)shrunkHeight, pixels, ref bi, 0) == 0)
+                return Maybe<BitmapSource>.None;
+
+            var source = BitmapSource.Create(
+                shrunkWidth, shrunkHeight, 96, 96, System.Windows.Media.PixelFormats.Bgr32, null, pixels, stride);
             // Frozen for the reason every static brush in this app is frozen: an unfrozen WPF object takes
             // thread affinity, and this one is built on whichever thread the hover happened on.
             source.Freeze();

@@ -121,6 +121,39 @@ public class WindowPreviewTests
         window.Close();
     });
 
+    // THE TEST THAT WAS MISSING, and the reason this file's other assertions were not enough. Petre, on
+    // the first build: "previews don't work" -- with a screenshot showing the card at full preview size and
+    // nothing but the card's own background inside it. The capture had been working all along; the image
+    // was being drawn fully TRANSPARENT, because PrintWindow leaves alpha at zero over the opaque parts of
+    // a window and the bitmap was being handed to WPF in a format that has an alpha channel.
+    //
+    // Size and frozen-ness were both correct throughout, which is exactly why neither caught it. So this
+    // asserts the PIXELS: the three stripes have to be in there, and every pixel has to be opaque.
+    [Fact]
+    public void A_capture_carries_the_windows_own_colours_and_is_opaque() => StaThread.Run(() =>
+    {
+        var window = Striped(300, 240);
+
+        var picture = WindowPreview.Of(HandleOf(window), 520, 340);
+
+        Assert.True(picture.HasValue);
+        var pixels = new byte[picture.Value.PixelWidth * picture.Value.PixelHeight * 4];
+        picture.Value.CopyPixels(pixels, picture.Value.PixelWidth * 4, 0);
+
+        var colours = new HashSet<int>();
+        for (var i = 0; i < pixels.Length; i += 4)
+            colours.Add(pixels[i] | (pixels[i + 1] << 8) | (pixels[i + 2] << 16));
+
+        // Red, green and blue bands, so a real capture cannot come back as one flat colour.
+        Assert.True(colours.Count >= 3, $"only {colours.Count} distinct colours: the capture is blank");
+
+        // Bgr32 has no alpha channel to misread, which is the whole fix: the format itself is the
+        // guarantee, so the assertion is on the format rather than on a sample of bytes.
+        Assert.Equal(System.Windows.Media.PixelFormats.Bgr32, picture.Value.Format);
+
+        window.Close();
+    });
+
     // The frozen requirement is not cosmetic: an unfrozen WPF bitmap takes thread affinity, and this one
     // is built on whichever thread the hover happened on. The same rule the bar's static brushes follow.
     [Fact]
