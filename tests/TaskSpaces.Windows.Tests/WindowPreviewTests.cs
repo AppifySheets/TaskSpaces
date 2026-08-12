@@ -50,7 +50,7 @@ public class WindowPreviewTests
     {
         var window = Striped(300, 240);
 
-        var picture = WindowPreview.Of(HandleOf(window), 520, 340);
+        var picture = WindowPreview.Of(HandleOf(window), 1.0, 520, 340);
 
         Assert.True(picture.HasValue);
         Assert.True(picture.Value.PixelWidth > 1);
@@ -66,7 +66,7 @@ public class WindowPreviewTests
     {
         var window = Striped(900, 700);
 
-        var picture = WindowPreview.Of(HandleOf(window), 200, 200);
+        var picture = WindowPreview.Of(HandleOf(window), 1.0, 200, 200);
 
         Assert.True(picture.HasValue);
         Assert.True(picture.Value.PixelWidth <= 200, $"width was {picture.Value.PixelWidth}");
@@ -87,9 +87,9 @@ public class WindowPreviewTests
     {
         var window = Striped(180, 120);
 
-        var natural = WindowPreview.Of(HandleOf(window), 5000, 5000);
-        var roomier = WindowPreview.Of(HandleOf(window), 9000, 9000);
-        var boxed = WindowPreview.Of(HandleOf(window), natural.Value.PixelWidth / 2, 5000);
+        var natural = WindowPreview.Of(HandleOf(window), 1.0, 5000, 5000);
+        var roomier = WindowPreview.Of(HandleOf(window), 1.0, 9000, 9000);
+        var boxed = WindowPreview.Of(HandleOf(window), 1.0, natural.Value.PixelWidth / 2, 5000);
 
         Assert.True(natural.HasValue && roomier.HasValue && boxed.HasValue);
         // A bigger box than the window needs: same picture, not a stretched one.
@@ -101,11 +101,46 @@ public class WindowPreviewTests
         window.Close();
     });
 
+    // Petre: "make it 1/4 the actual size, make it large." A quarter of the width and a quarter of the
+    // height, which is also what keeps the proportions without any arithmetic that could get them wrong.
+    [Fact]
+    public void A_quarter_scale_capture_is_a_quarter_of_the_window_on_both_axes() => StaThread.Run(() =>
+    {
+        var window = Striped(800, 600);
+
+        var full = WindowPreview.Of(HandleOf(window), 1.0, 9000, 9000);
+        var quarter = WindowPreview.Of(HandleOf(window), 0.25, 9000, 9000);
+
+        Assert.True(full.HasValue && quarter.HasValue);
+        // Within a pixel, since the scaled size is truncated to whole pixels.
+        Assert.InRange(quarter.Value.PixelWidth, full.Value.PixelWidth / 4 - 1, full.Value.PixelWidth / 4 + 1);
+        Assert.InRange(quarter.Value.PixelHeight, full.Value.PixelHeight / 4 - 1, full.Value.PixelHeight / 4 + 1);
+
+        window.Close();
+    });
+
+    // "of the same proportions as the window itself." One factor is applied to both axes, so this holds by
+    // construction -- which is the reason to assert it, since a future change to the fitting arithmetic
+    // could quietly break it.
+    [Fact]
+    public void A_capture_keeps_the_windows_proportions() => StaThread.Run(() =>
+    {
+        var window = Striped(800, 400); // deliberately 2:1, so a squashed capture is obvious
+
+        var picture = WindowPreview.Of(HandleOf(window), 0.25, 9000, 9000);
+
+        Assert.True(picture.HasValue);
+        var ratio = picture.Value.PixelWidth / (double)picture.Value.PixelHeight;
+        Assert.InRange(ratio, 1.9, 2.1);
+
+        window.Close();
+    });
+
     // A window that has gone has no picture, and asking must not throw: the hover that asks arrives
     // milliseconds after a rebuild, and a window can close in between.
     [Fact]
     public void A_window_that_does_not_exist_yields_nothing() => StaThread.Run(() =>
-        Assert.False(WindowPreview.Of(new WindowHandle(0x1), 520, 340).HasValue));
+        Assert.False(WindowPreview.Of(new WindowHandle(0x1), 1.0, 520, 340).HasValue));
 
     // MEASURED, not assumed: a minimised window's PrintWindow returns true and gives back one flat
     // colour, and its rectangle is the iconic nonsense at -32000 (#107). Declining is the honest answer.
@@ -116,7 +151,7 @@ public class WindowPreviewTests
         window.WindowState = WindowState.Minimized;
         System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
 
-        Assert.False(WindowPreview.Of(HandleOf(window), 520, 340).HasValue);
+        Assert.False(WindowPreview.Of(HandleOf(window), 1.0, 520, 340).HasValue);
 
         window.Close();
     });
@@ -134,7 +169,7 @@ public class WindowPreviewTests
     {
         var window = Striped(300, 240);
 
-        var picture = WindowPreview.Of(HandleOf(window), 520, 340);
+        var picture = WindowPreview.Of(HandleOf(window), 1.0, 520, 340);
 
         Assert.True(picture.HasValue);
         var pixels = new byte[picture.Value.PixelWidth * picture.Value.PixelHeight * 4];
@@ -161,7 +196,7 @@ public class WindowPreviewTests
     {
         var window = Striped(300, 240);
 
-        var picture = WindowPreview.Of(HandleOf(window), 520, 340);
+        var picture = WindowPreview.Of(HandleOf(window), 1.0, 520, 340);
 
         Assert.True(picture.HasValue);
         Assert.True(picture.Value.IsFrozen);

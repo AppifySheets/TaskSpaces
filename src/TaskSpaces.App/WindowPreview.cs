@@ -71,10 +71,17 @@ public static class WindowPreview
     const int HALFTONE = 4; // smooth downscale; COLORONCOLOR drops rows and turns text to noise
 
     /// <summary>
-    /// A snapshot of <paramref name="window"/>, scaled to fit inside the given box, or None when there
-    /// is nothing to show (a minimised window, a window that has gone, a refused capture).
+    /// A snapshot of <paramref name="window"/> at <paramref name="scale"/> of its own size, never larger
+    /// than the given box, or None when there is nothing to show (a minimised window, a window that has
+    /// gone, a refused capture).
     /// </summary>
-    public static Maybe<BitmapSource> Of(WindowHandle window, int boxWidth, int boxHeight)
+    /// <remarks>
+    /// A scale rather than a target size, because Petre asked for one: "make it 1/4 the actual size, make
+    /// it large." One factor on both axes is also what keeps the window's own proportions without any
+    /// arithmetic to get wrong. The box is a ceiling for the case a scaled window still would not fit on
+    /// screen.
+    /// </remarks>
+    public static Maybe<BitmapSource> Of(WindowHandle window, double scale, int boxWidth, int boxHeight)
     {
         // Minimised: measured blank, so declining is honest rather than cautious.
         if (IsIconic(window.Value) || !GetWindowRect(window.Value, out var rect)) return Maybe<BitmapSource>.None;
@@ -82,10 +89,11 @@ public static class WindowPreview
         int width = rect.Right - rect.Left, height = rect.Bottom - rect.Top;
         if (width <= 1 || height <= 1) return Maybe<BitmapSource>.None;
 
-        // Fit inside the box, never enlarging: a small window is shown at its own size rather than
-        // stretched into a blur.
-        var scale = Math.Min(1.0, Math.Min(boxWidth / (double)width, boxHeight / (double)height));
-        int shrunkWidth = Math.Max(1, (int)(width * scale)), shrunkHeight = Math.Max(1, (int)(height * scale));
+        // The asked-for scale, tightened only if the result would still not fit the box, and never
+        // enlarging: a small window shown at four times its size is a blur, and a preview exists to be
+        // recognised rather than to fill a rectangle.
+        var fitted = Math.Min(Math.Min(scale, 1.0), Math.Min(boxWidth / (double)width, boxHeight / (double)height));
+        int shrunkWidth = Math.Max(1, (int)(width * fitted)), shrunkHeight = Math.Max(1, (int)(height * fitted));
 
         var screen = GetDC(0);
         var fullDc = CreateCompatibleDC(screen);

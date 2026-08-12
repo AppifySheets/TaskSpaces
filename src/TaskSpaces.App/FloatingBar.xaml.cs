@@ -2899,31 +2899,146 @@ public partial class FloatingBar : Window
     static readonly Brush CardBackground = Frozen(0xF2, 0x1E, 0x1E, 0x1E);
     static readonly Brush CardBorder = Frozen(0x59, 0xFF, 0xFF, 0xFF);
 
-    // How big a preview may get, in DIPs. Petre: "large is the point." Wide enough to read a window's
-    // layout and tell two editors apart, short of a card that covers the screen it is describing.
-    const int PreviewWidth = 520;
-    const int PreviewHeight = 340;
+    // How big a preview is. Petre: "make it much larger and of the same proportions as the window itself",
+    // then "make it 1/4 the actual size, make it large."
+    //
+    // So the rule is the window's own size divided by four, linear -- a quarter of the width and a quarter
+    // of the height. On his 3747x2182 editor that is 937x546, which is large, and the ratio needs no
+    // arithmetic to preserve because one factor is applied to both axes. Nothing stretches to fill, and the
+    // Image draws with Stretch.None so WPF cannot undo it either.
+    //
+    // The work area is a CEILING rather than the rule: a window bigger than the screen (spanning two
+    // monitors, say) would otherwise produce a card that could not be shown on one.
+    const double PreviewScale = 0.25;
+
+    static (int Width, int Height) PreviewCeiling()
+    {
+        var work = SystemParameters.WorkArea;
+        return ((int)(work.Width * 0.9), (int)(work.Height * 0.9));
+    }
+
+    // --- the hover card (#134, #135) -------------------------------------------------------------
+    //
+    // ONE popup, owned by the bar and reused, rather than a tooltip on each icon. That is a rewrite of the
+    // first attempt and Petre named the reason: "there's the blinking i mentioned earlier, the popup is
+    // blinking."
+    //
+    // A tooltip belongs to the element that declares it, and a rebuild destroys every icon: the tooltip
+    // goes with the button, then WPF opens a new one for the new button under the pointer. Rebuilds arrive
+    // on every window event plus the 5s sweep, so what should be a still picture flickers several times a
+    // second. I claimed WPF would ride that out and it does not.
+    //
+    // So the card's lifetime is decoupled from the buttons entirely. It is opened by MouseEnter, positioned
+    // against the BAR (which never dies), and closed by a watch timer that asks what is under the pointer
+    // -- never by MouseLeave, because a rebuild raises MouseLeave for a pointer that has not moved, which
+    // is the same mechanism that used to wipe the footer mid-hover.
+    System.Windows.Controls.Primitives.Popup? hoverPopup;
+    Border? hoverBody;
+    System.Windows.Threading.DispatcherTimer? hoverWatch;
+    WindowHandle hoverShowing;
+    int hoverMisses;
+
+    void ShowHoverCard(string groupLabel, WindowRow row, FrameworkElement anchor)
+    {
+        // Already showing this window: do NOTHING. This is the line that stops the blinking, because a
+        // rebuild re-runs MouseEnter for the icon under the pointer and re-capturing would rebuild the
+        // popup's content forty milliseconds at a time.
+        if (hoverPopup is { IsOpen: true } && hoverShowing.Equals(row.Window.Handle)) return;
+
+        hoverBody ??= new Border
+        {
+            Background = CardBackground,
+            BorderBrush = CardBorder,
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8),
+        };
+        hoverPopup ??= new System.Windows.Controls.Primitives.Popup
+        {
+            Child = hoverBody,
+            // Against the bar rather than the icon: a PlacementTarget that a rebuild deletes leaves the
+            // popup pointing at nothing. Left, because the bar lives at the right-hand edge.
+            PlacementTarget = this,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Left,
+            AllowsTransparency = true,
+            PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.None,
+            // StaysOpen: nothing about a click elsewhere should close it, and everything about closing it
+            // is the watch timer's job.
+            StaysOpen = true,
+        };
+
+        hoverBody.Child = HoverCard(groupLabel, row);
+        hoverShowing = row.Window.Handle;
+        hoverMisses = 0;
+
+        // Level with the icon being hovered, in the bar's own coordinates, so the card appears beside what
+        // it describes rather than at the bar's top corner.
+        hoverPopup.VerticalOffset = anchor.TranslatePoint(new Point(0, 0), this).Y;
+        hoverPopup.IsOpen = true;
+
+        hoverWatch ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        if (!hoverWatch.IsEnabled)
+        {
+            hoverWatch.Tick += (_, _) => WatchHover();
+            hoverWatch.Start();
+        }
+    }
+
+    // What closes the card. Asked of the POINTER rather than of an event, because the events that would
+    // otherwise say "the hover ended" are indistinguishable from a rebuild.
+    //
+    // Two consecutive misses rather than one, and that tolerance is the point: during a rebuild there is an
+    // instant where the old icon is gone and the new one is not yet hit-testable, and a single miss there
+    // would close the card exactly as often as the old tooltip blinked.
+    void WatchHover()
+    {
+        if (hoverPopup is not { IsOpen: true }) { hoverWatch?.Stop(); return; }
+
+        var overIcon = Mouse.DirectlyOver is DependencyObject over && IconAncestorOf(over) is { } icon
+                       && icon.DataContext is WindowRow row && row.Window.Handle.Equals(hoverShowing);
+
+        if (overIcon) { hoverMisses = 0; return; }
+        if (++hoverMisses < 2) return;
+
+        hoverPopup.IsOpen = false;
+        hoverWatch?.Stop();
+    }
+
+    // The icon a hit-tested element belongs to, or null. Walks up because the pointer is usually over the
+    // Image inside the button rather than over the button itself.
+    static Button? IconAncestorOf(DependencyObject element)
+    {
+        for (var node = element; node is not null; node = VisualTreeHelper.GetParent(node))
+            if (node is Button { Tag: string tag } button && tag == IconTag) return button;
+        return null;
+    }
 
     // #134 and #135, answered by one surface. Petre asked for two things on the same gesture: "when
     // hovering over an icon, show its title as a tooltip, rather than show it in the footer", and "show a
     // large preview of the window in another workspace when i hover over its icon."
     //
-    // Both in the tooltip rather than a tooltip plus a preview popup plus the footer line, because three
-    // surfaces describing one icon is what made the footer "quite bad" in the first place.
+    // One card rather than a tooltip plus a preview popup plus the footer line, because three surfaces
+    // describing one icon is what made the footer "quite bad" in the first place.
     //
     // The preview is a SNAPSHOT, not a live thumbnail, and WindowPreview's header carries the measurement
     // that settled it. A minimised window has no picture at all, so the card is text alone -- which is
     // also the honest answer, since there is nothing to show.
     static StackPanel HoverCard(string groupLabel, WindowRow row)
     {
-        var card = new StackPanel { MaxWidth = PreviewWidth };
+        var (ceilingWidth, ceilingHeight) = PreviewCeiling();
+        var picture = WindowPreview.Of(row.Window.Handle, PreviewScale, ceilingWidth, ceilingHeight);
+
+        // The card is as wide as the picture it holds, so the text wraps to the preview rather than the
+        // preview sitting in a column sized for the text. Text-only cards (a minimised window) keep a
+        // sensible reading width instead of stretching to a quarter of the screen.
+        var width = picture.Map(p => (double)p.PixelWidth).GetValueOrDefault(420);
+        var card = new StackPanel { MaxWidth = width };
 
         card.Children.Add(new TextBlock
         {
             Text = row.Window.Title,
             TextWrapping = TextWrapping.Wrap,
             FontWeight = FontWeights.SemiBold,
-            MaxWidth = PreviewWidth,
+            MaxWidth = width,
         });
 
         // What the title cannot say: which app it is, which workspace it is in, and what it was called
@@ -2936,19 +3051,15 @@ public partial class FloatingBar : Window
             TextWrapping = TextWrapping.Wrap,
             Foreground = DimForeground,
             Margin = new Thickness(0, 2, 0, 0),
-            MaxWidth = PreviewWidth,
+            MaxWidth = width,
         });
 
-        WindowPreview.Of(row.Window.Handle, PreviewWidth, PreviewHeight)
-            .Tap(picture => card.Children.Add(new Image
-            {
-                Source = picture,
-                Stretch = Stretch.None, // already scaled in GDI, and scaling twice softens text
-                Margin = new Thickness(0, 8, 0, 0),
-                // A hairline around the picture, so a window with a pale background does not bleed into
-                // the card and look like part of it.
-                Clip = null,
-            }));
+        picture.Tap(bitmap => card.Children.Add(new Image
+        {
+            Source = bitmap,
+            Stretch = Stretch.None, // already scaled in GDI, and scaling twice softens text
+            Margin = new Thickness(0, 8, 0, 0),
+        }));
 
         return card;
     }
@@ -3244,53 +3355,16 @@ public partial class FloatingBar : Window
             Tag = IconTag, // marks this as an icon: press-drag moves the WINDOW, not the bar
         };
 
-        // The hover card (#134 and #135 together, because they are one surface): the title, and a picture
-        // of the window itself. Built in ToolTipOpening rather than here, so the capture happens when the
-        // card is actually shown -- it costs about 40ms, which is fine once per hover and absurd for every
-        // icon on every rebuild.
-        var card = new ToolTip
-        {
-            Background = CardBackground,
-            BorderBrush = CardBorder,
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8),
-            Foreground = Brushes.White,
-            // WPF's default tooltip drop shadow is a second window's worth of work for a surface that
-            // appears on every icon; the border does the separating.
-            HasDropShadow = false,
-        };
-        button.ToolTip = card;
-        button.ToolTipOpening += (_, _) => card.Content = HoverCard(groupLabel, row);
-
         // The window's title as the automation name. Two jobs, both real: a screen reader announces the
-        // icon as the window it stands for rather than as "button", and it is how a test can tell which
-        // icon is which now that the tooltip is a lazily-built card rather than a string.
+        // icon as the window it stands for rather than as "button", and it is how a test tells which icon
+        // is which now that the hover card is not a string on the button.
         System.Windows.Automation.AutomationProperties.SetName(button, row.Window.Title);
+        // The row this icon stands for, so the hover watch can ask what is under the pointer without a
+        // lookup table keyed on buttons that rebuilds keep replacing.
+        button.DataContext = row;
 
-        // #135, and Petre on it twice: "when hovering over an icon, show its title as a tooltip, rather
-        // than show it in the footer. that footer is quite bad", then "those window tooltips should come
-        // up immediately, no delay".
-        //
-        // The tooltip was always here; what made it useless was WPF's defaults. InitialShowDelay is
-        // ~400ms out of the box, BetweenShowDelay suppresses the next one for seconds after the last, and
-        // ShowDuration hides it after five. On a strip of icons you sweep across to read, all three are
-        // wrong: the answer arrives after you have moved on, then refuses to come back.
-        //
-        // So: no delay at all, and it stays as long as the pointer does. The tooltip is also the reason
-        // the footer no longer carries the title (ShowInfo, below), rather than both showing it -- the
-        // footer is 150 DIPs wide with an ellipsis and sits far from the pointer.
-        ToolTipService.SetInitialShowDelay(button, 0);
-        ToolTipService.SetBetweenShowDelay(button, 0);
-        // ShowDuration takes milliseconds and has no "forever": int.MaxValue is 24 days, which is the
-        // idiomatic way to say never time out.
-        ToolTipService.SetShowDuration(button, int.MaxValue);
-        // Follows the pointer's own position rather than the icon's corner, so it reads as belonging to
-        // what is under the cursor -- and cannot be drawn under the bar itself, which is Topmost.
-        ToolTipService.SetPlacement(button, System.Windows.Controls.Primitives.PlacementMode.Bottom);
-        ToolTipService.SetVerticalOffset(button, 4);
-
-        // Hover -> the ring, and no longer the footer text (#135).
-        button.MouseEnter += (_, _) => ShowInfo(groupLabel, row);
+        // Hover -> the card, and the footer no longer carries the title (#135).
+        button.MouseEnter += (_, _) => { ShowInfo(groupLabel, row); ShowHoverCard(groupLabel, row, button); };
         button.MouseLeave += (_, _) => ClearInfo();
 
         // ...and hover -> ring (#67). The pointer resting on an icon makes THAT window the thing a
