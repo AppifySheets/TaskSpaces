@@ -66,15 +66,29 @@ public partial class App : Application
             return;
         }
 
-        // Daily, and the first one is on a delay rather than immediate. Startup is already the
-        // busiest moment this process has -- desktop enumeration, the placement sweep, the rename
-        // sweep -- and an update is never so urgent that it cannot wait half a minute for them.
+        // The first check is on a delay rather than immediate. Startup is already the busiest moment
+        // this process has -- desktop enumeration, the placement sweep, the rename sweep -- and an
+        // update is never so urgent that it cannot wait half a minute for them.
         updateTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         updateTimer.Tick += (_, _) =>
         {
-            // After the first tick this becomes the daily timer. Re-setting the interval on the
-            // running timer beats a second timer that would have to be kept alive too.
-            updateTimer!.Interval = TimeSpan.FromHours(24);
+            // Every FIVE MINUTES after the first tick. Petre: "check new version every 5 minutes, not
+            // every 24 hours."
+            //
+            // Daily was chosen when the check was the app's only phone-home and the announcement was a
+            // balloon nobody ever saw. Neither is true now: the announcement is a dialog, and it fires
+            // ONCE PER RELEASE (see the availableUpdate guard in CheckForUpdate), so a short interval
+            // makes the news arrive sooner without making the app any noisier. It also makes the whole
+            // path testable in a coffee break rather than overnight.
+            //
+            // The cost is twelve requests an hour to GitHub's unauthenticated releases endpoint, whose
+            // limit is sixty an hour PER IP. Fine for one machine, and worth knowing for a shared
+            // office address: five colleagues running this would sit exactly on the limit, and a
+            // rate-limited check is already handled as today's answer rather than as an error.
+            //
+            // Re-setting the interval on the running timer beats a second timer that would have to be
+            // kept alive too.
+            updateTimer!.Interval = TimeSpan.FromMinutes(5);
             CheckForUpdate();
         };
         updateTimer.Start();
