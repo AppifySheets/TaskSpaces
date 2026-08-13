@@ -294,10 +294,15 @@ public partial class App : Application
         // suffix in its InformationalVersion, which is the right thing to COMPARE and the wrong thing to
         // read. UpdateCheck.ForDisplay trims it. The traces keep the full string deliberately -- there,
         // knowing exactly which build asked is the entire point.
+        // ONE LINE. Petre, on what this used to say: "version you're running is kept not replaced. why
+        // does that matter? scrap that message", and then, of what was left, "too much information".
+        //
+        // Everything cut was true and none of it was the user's decision. That the old exe survives, that
+        // the download lands beside it, which version is running: facts about how the update is
+        // implemented, offered to somebody who is being asked one question. The progress window says what
+        // happens next, which is the job it was added for, so this dialog only has to ask.
         var answer = MessageBox.Show(
-            $"TaskSpaces {release.Version} is available. You are running {UpdateService.DisplayVersion}.\n\n" +
-            $"Download it next to the current program and restart into it?\n\n" +
-            $"The version you are running now is kept, not replaced.",
+            $"Update TaskSpaces to {release.Version}?",
             "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
         if (answer == MessageBoxResult.Yes) DownloadAndRestart(release);

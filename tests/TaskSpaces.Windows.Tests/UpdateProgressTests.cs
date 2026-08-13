@@ -1,4 +1,4 @@
-using System.Windows.Controls;
+﻿using System.Windows.Controls;
 using TaskSpaces.App;
 using TaskSpaces.Core.Updates;
 
@@ -69,7 +69,9 @@ public class UpdateProgressTests
         window.HandingOver("1.10.4");
 
         Assert.Contains(TextOf(window), text => text.Contains("Starting") && text.Contains("1.10.4"));
-        Assert.Contains(TextOf(window), text => text.Contains("close"));
+        // ...and nothing else. Petre, of the sentence that used to describe the windows closing: "too much
+        // information." The headline and a moving bar are the message.
+        Assert.DoesNotContain(TextOf(window), text => text.Contains("close"));
         Assert.True(BarOf(window).IsIndeterminate);
 
         window.Close();

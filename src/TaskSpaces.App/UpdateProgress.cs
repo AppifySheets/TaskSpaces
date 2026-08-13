@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
@@ -61,7 +61,7 @@ public sealed class UpdateProgress : Window
         Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
 
         headline.Text = $"Downloading TaskSpaces {version}…";
-        detail.Text = "Starting the download.";
+        detail.Text = "";
 
         var body = new StackPanel { Margin = new Thickness(16) };
         body.Children.Add(headline);
@@ -91,7 +91,10 @@ public sealed class UpdateProgress : Window
     {
         bar.IsIndeterminate = true;
         headline.Text = $"Starting TaskSpaces {version}…";
-        detail.Text = "This window and the bar will close, and the new version will open in their place.";
+        // Nothing more to say. A sentence about these windows closing and reopening described what the
+        // user is about to watch happen, which is the same note Petre made about the dialog: too much
+        // information. The headline and a moving bar are the whole message.
+        detail.Text = "";
     }
 
     static string Megabytes(long bytes) => (bytes / 1024.0 / 1024.0).ToString("F1");
