@@ -5,6 +5,7 @@ using System.Reactive.Subjects;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
+using TaskSpaces.Core.Geometry;
 using TaskSpaces.Core.Overview;
 using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Rehydration;
@@ -1032,6 +1033,42 @@ public sealed class WorkspaceManager(
                 Workspaces = State.Workspaces.Select(x => x.Id == id ? x with { Name = name } : x).ToList(),
             }));
 
+    // Names a virtual desktop that ALREADY EXISTS, which is the one thing the app could not do
+    // until now (#149). Petre: "right-clicking on the default desktop (desktop1) doesn't do
+    // anything, no context menu for it."
+    //
+    // The distinction against InsertWorkspace is the whole method: that one CREATES a desktop and
+    // names it, so it can never adopt Desktop 1, the desktop everybody starts on and the one most
+    // likely to be sitting there unnamed. This one binds a name to a desktop the shell already has.
+    // Without it, naming Desktop 1 meant creating a second desktop and moving every window over,
+    // which is not what "name this one" means.
+    //
+    // Appended, like AddWorkspace. Order in this list is the bar's row order and the source of the
+    // lane colour, and an unbound desktop's row is already drawn last, so appending keeps the row
+    // where it was when the menu was opened rather than making it jump.
+    //
+    // Refuses a desktop that is already bound rather than quietly renaming that workspace: the two
+    // are different intentions, and a bound desktop's row already carries the full menu with Rename
+    // on it. Existence is checked against the shell rather than assumed from the caller's row,
+    // because the menu was opened on a row built from an overview that is now some milliseconds old
+    // and a desktop can be closed in that time.
+    public Result<Workspace> NameDesktop(Guid desktopId, string name) =>
+        Result.FailureIf(string.IsNullOrWhiteSpace(name), "Workspace name required")
+            .Bind(() => Result.FailureIf(NameTaken(name, excluding: null), $"A workspace named '{name.Trim()}' already exists."))
+            .Bind(() => Result.FailureIf(
+                State.Workspaces.Any(w => w.DesktopId == desktopId),
+                "That desktop already belongs to a workspace."))
+            .Bind(() => desktops.GetDesktops())
+            .Bind(all => all.Any(d => d.Id == desktopId)
+                ? Result.Success()
+                : Result.Failure("That desktop no longer exists."))
+            // The shell's own name is set too, so Task View agrees with the bar. Same order as
+            // RenameWorkspace: tell Windows first, then persist, so a COM failure leaves nothing
+            // claiming a name the desktop does not have.
+            .Bind(() => desktops.Rename(desktopId, name.Trim()))
+            .Map(() => new Workspace(Guid.NewGuid(), name.Trim(), desktopId))
+            .Tap(w => Persist(State with { Workspaces = State.Workspaces.Append(w).ToList() }));
+
     // Petre: "i need to be able to move workspaces up or down in the manage window".
     // delta is -1 (up) or +1 (down). This one list drives the floating bar's row order and,
     // through WorkspacePalette, each workspace's lane colour -- so persisting it here is all
@@ -1547,11 +1584,51 @@ public sealed class WorkspaceManager(
     // Persist() already pulses StateChanged, which nothing here needs to react to
     // (the bar's own drag/toggle handlers already know their own new state), but any
     // future surface that reads FloatingBar gets live updates for free.
-    public Result SaveFloatingBar(FloatingBarState state)
+    // `layoutKey` is the monitor arrangement the position was chosen on (#150), a MonitorLayoutKey
+    // string. Both copies are written on every save: FloatingBar stays the last position on any
+    // layout, which is what an older build and the unknown-layout fallback both read, and the entry
+    // for this layout is replaced so returning to it restores what was actually chosen here.
+    //
+    // MonitorLayoutKey.Unknown (the default, and what a failed monitor query produces) writes only
+    // the single position. Storing under an empty key would be worse than storing nothing: two
+    // different unknown layouts would share one entry and hand each other's position back.
+    public Result SaveFloatingBar(FloatingBarState state, string layoutKey = MonitorLayoutKey.Unknown)
     {
-        Persist(State with { FloatingBar = state });
+        Persist(State with
+        {
+            FloatingBar = state,
+            BarPlacements = MonitorLayoutKey.IsKnown(layoutKey)
+                ? State.BarPlacements
+                    .Where(p => p.Layout != layoutKey)
+                    .Append(new BarPlacement(layoutKey, state))
+                    .TakeLast(RememberedLayouts)
+                    .ToList()
+                : State.BarPlacements,
+        });
         return Result.Success();
     }
+
+    // How many layouts are worth remembering, and it is a cap rather than a limit anyone will notice:
+    // a desk, a laptop, a docking station, a projector and a few resolutions is under a dozen.
+    //
+    // It is here because one case really does churn. An RDP session with dynamic resolution reshapes
+    // the desktop every time the client window is resized, so a single afternoon of dragging that
+    // window can mint dozens of layouts, each one a real arrangement and each one saved. Uncapped,
+    // state.json grows for ever with positions for desks that existed for four seconds.
+    //
+    // Oldest dropped, which is what makes the cap safe: the list is appended in the order layouts were
+    // last used, so what falls off the front is the arrangement longest unseen, and losing it costs one
+    // clamp the next time it comes back.
+    const int RememberedLayouts = 12;
+
+    // Where the bar sat the last time this exact arrangement of monitors was attached, if it has
+    // been seen before (#150). None for an unknown layout, which the bar reads as "clamp the last
+    // position into a screen that exists" -- the old behaviour, and the only honest answer for a
+    // layout nobody has parked the bar on yet.
+    public Maybe<FloatingBarState> BarPlacementFor(string layoutKey) =>
+        MonitorLayoutKey.IsKnown(layoutKey)
+            ? State.BarPlacements.FirstOrDefault(p => p.Layout == layoutKey)?.Bar ?? Maybe<FloatingBarState>.None
+            : Maybe<FloatingBarState>.None;
 
     // `monitor` is #89: the drop landed on a particular monitor's half of the row, so the window
     // gets moved to that screen as well as to that workspace. Null means the row had no split to

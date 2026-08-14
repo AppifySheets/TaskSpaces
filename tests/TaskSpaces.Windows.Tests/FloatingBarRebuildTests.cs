@@ -711,8 +711,14 @@ sealed class Harness
     // than a second fixture being written, so the two paths share every other detail.
     // busyWorkspace: five extra windows in Sparrow, so its row has something to WRAP. One window per
     // row is enough for every other test here and cannot exercise a line break at all.
+    // The desktop id an unnamed desktop gets when withUnnamedDesktop is set, so a test can name it
+    // and then assert against the workspace that appears.
+    public Guid UnnamedDesktop { get; init; }
+
+    // withUnnamedDesktop: a virtual desktop the shell has but no workspace claims -- Desktop 1, the one
+    // everybody starts on (#149) -- with a window on it, since OverviewBuilder drops empty ones.
     public static Harness Build(bool withUnresolvableWindow = false, bool singleWorkspace = false,
-        bool busyWorkspace = false)
+        bool busyWorkspace = false, bool withUnnamedDesktop = false)
     {
 
         // NO Application is created here, deliberately. An Application belongs to the thread
@@ -754,6 +760,16 @@ sealed class Harness
             // VirtualDesktop.FromHwnd does for "Windows Input Experience" on Petre's box.
             monitor.Initial.Add(new WindowInfo(new WindowHandle(303), 33, "textinputhost", @"C:\tih.exe", "Windows Input Experience", null));
 
+        var unnamed = Guid.Empty;
+        if (withUnnamedDesktop)
+        {
+            unnamed = Guid.NewGuid();
+            desktops.Desktops.Add(new DesktopInfo(unnamed, "Desktop 1"));
+            var stray = new WindowInfo(new WindowHandle(505), 55, "notepad", @"C:\notepad.exe", "Untitled", null);
+            desktops.Placements[stray.Handle] = unnamed;
+            monitor.Initial.Add(stray);
+        }
+
         var store = new StubStore
         {
             Stored = AppState.Empty with { Workspaces = singleWorkspace ? [gepha] : [gepha, sparrow] },
@@ -761,7 +777,11 @@ sealed class Harness
         var manager = new WorkspaceManager(desktops, monitor, new StubTitles(), store);
         Assert.True(manager.Start().IsSuccess);
 
-        return new Harness { Desktops = desktops, Monitor = monitor, Manager = manager, First = rdm, Second = beeper };
+        return new Harness
+        {
+            Desktops = desktops, Monitor = monitor, Manager = manager, First = rdm, Second = beeper,
+            UnnamedDesktop = unnamed,
+        };
     }
 
     // Parked far off the virtual screen so the suite never flashes a translucent topmost

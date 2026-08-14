@@ -392,7 +392,50 @@ public partial class App : Application
         // the ordinary exit path restores every renamed window title and disposes the tray icon,
         // and skipping it would leave the user's windows wearing names we gave them.
         Shutdown();
+        EndIfShutdownHangs();
     }
+
+    // #125, and it is evidence-driven rather than defensive: a plain process listing turned up
+    // `TaskSpaces-1.3.0-win-x64.exe`, started five days earlier, still running, with no window and no
+    // tray presence. It did not hold the single-instance mutex -- newer copies started fine -- so
+    // whatever went wrong released the mutex and then failed to exit, which points at the Shutdown()
+    // above rather than at the handover.
+    //
+    // An old instance surviving is not merely untidy. Its window monitor, rename ledger and placement
+    // sweep all keep running, so two versions write state.json and rename windows against ledgers
+    // neither knows about. And it is invisible: the only way to find one is a process list, which is
+    // why there could have been several nobody ever noticed.
+    //
+    // A THREADING timer rather than a DispatcherTimer, because the dispatcher is the suspect. All
+    // three candidate causes leave it either blocked or unable to finish -- something keeping it alive
+    // after Shutdown, a window mid-close, a modal dialog nobody answered -- and a timer that needs the
+    // dispatcher to fire cannot police the dispatcher.
+    //
+    // Kill rather than Environment.Exit, and the difference is the point: Exit runs finalizers and
+    // ProcessExit handlers, so it can block on a lock the stuck thread is holding -- a watchdog that
+    // can hang is not a watchdog. Kill needs nothing from managed code.
+    //
+    // What that skips is the ordinary exit path, which normally restores every renamed window title.
+    // The loss is acceptable HERE and nowhere else: this only ever runs when that path has already
+    // failed to complete, and the successor re-applies the same renames on its own start. A window
+    // wearing a name we gave it is a smaller problem than two instances fighting over it.
+    //
+    // Five seconds, not one. A working shutdown that is merely slow -- title restoration walks every
+    // renamed window, and each write goes to another process -- has to be allowed to finish, or this
+    // guard would cause the very thing it prevents.
+    //
+    // Held in a static field because a Timer nobody references is a Timer the GC may collect before it
+    // ever fires.
+    static System.Threading.Timer? shutdownWatchdog;
+
+    static void EndIfShutdownHangs() =>
+        shutdownWatchdog = new System.Threading.Timer(
+            _ =>
+            {
+                ClickTrace.Write("shutdown did not complete in 5s; ending the process (#125)");
+                System.Diagnostics.Process.GetCurrentProcess().Kill();
+            },
+            null, TimeSpan.FromSeconds(5), System.Threading.Timeout.InfiniteTimeSpan);
 
     // Passed by an updating instance to the version it starts. A switch rather than a file or an
     // environment variable because it has to survive exactly one process boundary and nothing else.

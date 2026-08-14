@@ -71,7 +71,14 @@ public partial class FloatingBar : Window
         //
         // Clamped on the way in rather than trusted: state.json is hand-editable, and a width
         // below the info line's own would clip it with no way to drag it back.
-        if (manager.State.FloatingBar?.Width is { } stored) ApplyWidth(Math.Max(MinimumWidth, stored));
+        // Through StoredPlacement rather than State.FloatingBar directly, so a width chosen on THIS
+        // monitor layout comes back with the position chosen on it (#150). A bar widened at the desk
+        // has no business being that wide on a laptop screen.
+        if (StoredPlacement()?.Width is { } stored) ApplyWidth(Math.Max(MinimumWidth, stored));
+
+        // Readjust when monitors are added, removed or resized (#150). Subscribed here, on the
+        // dispatcher thread that owns this window, and released when it closes.
+        WatchDisplayLayout();
 
         // Starts dim, because at startup the pointer is wherever the user left it and almost never
         // on a bar that has just appeared. Waiting for the first MouseLeave instead would show a
@@ -671,6 +678,13 @@ public partial class FloatingBar : Window
         // rebuild the rows out from under it and close it, which is precisely what the deferral in
         // Rebuild exists to prevent. Its own Closed handler flushes instead.
         if (openMenu?.IsOpen == true) return;
+        // And a drag in flight holds for the same reason (#147). Without this the new deferral
+        // would only bound the blinking at one second instead of stopping it: this heartbeat would
+        // cheerfully serve the pulse Rebuild just postponed, tearing the rows down mid-drag exactly
+        // as before. Note that the pressed check above does NOT cover it -- during a drag the OLE
+        // loop owns the mouse and Mouse.LeftButton reads whatever WPF last saw. onDragFinished
+        // flushes instead.
+        if (draggingWindow) return;
         FlushDeferredRebuild();
     }
 
@@ -1078,6 +1092,37 @@ public partial class FloatingBar : Window
             return;
         }
 
+        // ...and the same deferral while a WINDOW IS BEING DRAGGED between rows (#147). Petre:
+        // "blinking when dragging icons, blinking and resetting of the title at the bottom".
+        //
+        // The guard above cannot cover this, and the reason is the whole point: a drag runs inside
+        // DoDragDrop's modal OLE loop, which takes the mouse away from WPF. Both conditions that
+        // guard reads are then stale -- Mouse.LeftButton and IsMouseOver are whatever WPF last saw
+        // before OLE took over -- so a window event arriving mid-drag tore every row down and built
+        // new ones under the pointer. That is the blink.
+        //
+        // It is also the footer reset, from the same teardown: destroyed containers raise DragLeave,
+        // whose handler calls ClearInfo, so the "→ move to Work, screen 2" readout snapped back to
+        // the gesture hint while the drag was still in flight. And the drop highlight went with it,
+        // since the container that was painted no longer existed.
+        //
+        // draggingWindow is set and cleared by the drag source's own callbacks, which is a fact the
+        // OLE loop cannot make stale: they are raised by the loop starting and finishing, not read
+        // from an input device it owns. onDragFinished serves the deferred pulse, because a drag has
+        // no mouse-up to flush from.
+        if (draggingWindow)
+        {
+            // The measurement #147 asked for, and it costs one line. Every rebuild this guard swallows
+            // is one blink that used to happen, so the COUNT is the size of the bug -- and the two
+            // values printed are the old guard's own conditions, read during a real drag. They name
+            // which one was misreading: `mouse=Released` means the OLE loop had taken the button state
+            // away from WPF, `over=False` means it had taken the hit test. Reasoning could not settle
+            // that; a trace of one slow drag does.
+            if (ClickTrace.On) ClickTrace.Write($"rebuild deferred: drag in flight (mouse={Mouse.LeftButton} over={IsMouseOver})");
+            rebuildRequested = true;
+            return;
+        }
+
         // ...and the same deferral while a CONTEXT MENU is open (#77). Petre: the colour submenu
         // "sometimes disappears before the mouse can reach it".
         //
@@ -1446,7 +1491,10 @@ public partial class FloatingBar : Window
                     switchTo: g.DesktopId == Guid.Empty ? null : () => manager.SwitchToDesktop(g.DesktopId),
                     groupKey: DraggedWindow.DesktopGroupKey(g.DesktopId),
                     onDrop: g.DesktopId == Guid.Empty ? null : (h, _) => Report(manager.MoveToDesktop(h, g.DesktopId)),
-                    g.Windows)));
+                    g.Windows,
+                    // Same Guid.Empty rule a third time, and for the third reason: Unplaced is not a
+                    // desktop, so there is nothing to name (#149).
+                    desktopId: g.DesktopId == Guid.Empty ? null : g.DesktopId)));
 
             groupRows
                 .SelectMany((row, i) => i == 0 ? new[] { row } : new[] { Separator(), row })
@@ -2057,7 +2105,12 @@ public partial class FloatingBar : Window
     // ends where every other row does and the monitor alignment (#39) still lines up across rows.
     const double NestedIndent = SpineWidth + 1;
 
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null, bool pinned = false)
+    // `desktopId` is the UNBOUND desktop this row draws, and it is the mirror image of rowKey: one
+    // is set for a named workspace, the other for a desktop that has no workspace yet, and never
+    // both (#149). It exists so the row can offer to name that desktop, which is the only action an
+    // unbound row has. Null on every other kind of row, including the Unplaced catch-all, which is
+    // not a desktop at all.
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null, bool pinned = false, Guid? desktopId = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -2338,6 +2391,15 @@ public partial class FloatingBar : Window
         // right-clicking an icon is about that window, right-clicking anywhere else on the row is
         // about the workspace.
         if (rowKey is { } workspaceId) container.ContextMenu = WorkspaceMenu(workspaceId, visualLabel, minimized, nested);
+        // ...and an UNBOUND desktop's row gets a menu of its own (#149). Petre: "right-clicking on
+        // the default desktop (desktop1) doesn't do anything, no context menu for it."
+        //
+        // The reasoning above still holds for 📌 Pinned and Unplaced: neither is a workspace and
+        // neither ever will be, so there is nothing to put on a menu for them. An unbound desktop is
+        // different in kind. It is not a non-workspace, it is a workspace nobody has named yet, and
+        // the row under the cursor is where that intention actually occurs. Right-clicking it used to
+        // land on nothing at all, which reads as broken rather than as a decision.
+        else if (desktopId is { } desktop) container.ContextMenu = DesktopMenu(desktop, visualLabel);
 
         // Scaled down as a whole, everything included: a minimized row (#52) or the pinned row (#109).
         // Applied LAST, so nothing built above has to know it is being drawn small, and minimized wins
@@ -3592,6 +3654,12 @@ public partial class FloatingBar : Window
                 // instead.
                 dragJustFinished = true;
                 if (ClickTrace.On) ClickTrace.Write($"drag-end app={row.Window.ProcessName}");
+
+                // Serve whatever the drag deferral held back (#147), including the drop's own move.
+                // This is the flush a drag has no mouse-up for, and it is why deferring during a
+                // drag is safe rather than lossy: the news is remembered, not dropped, and it lands
+                // the instant the pointer is ours again.
+                FlushDeferredRebuild();
             });
         // The icon's half of the orphan-release repair. ButtonBase raises Click from a matched
         // press-and-release pair, so a release whose press never arrived produces no Click at all and the
@@ -3975,9 +4043,13 @@ public partial class FloatingBar : Window
     // with nothing else to advertise the feature, and a menu whose shape changes per icon
     // is harder to learn than one whose unavailable entry is visibly unavailable.
     //
-    // The bar's own background ContextMenu ("Hide floating bar", in XAML) is unaffected:
-    // ContextMenuService opens the menu of the INNERMOST element that has one, so an icon
-    // gets this menu and bare bar still gets Hide.
+    // Precedence, now that three kinds of menu overlap on this surface: ContextMenuService opens the
+    // menu of the INNERMOST element that has one, so an icon gets the icon menu, the rest of a
+    // workspace row gets WorkspaceMenu, and the rest of an unbound desktop's row gets DesktopMenu
+    // (#149). The bar's own background menu is gone -- it held "Hide floating bar", which went when
+    // the bar became the app's only surface -- so bare bar outside every row answers with nothing.
+    // That is correct rather than a gap: there is no action left that is about the bar itself. This
+    // comment said the opposite until #149, which is what a deleted feature leaves behind.
     // Petre: "ability to rename existing and add new workspaces from within the floating window,
     // on top or under the current workspace, something like a insert before/after, also move
     // workspaces up or down, in the right click."
@@ -4135,6 +4207,32 @@ public partial class FloatingBar : Window
             // has windows" arrives as a plain message rather than as a silent no-op.
             Report(manager.DeleteWorkspaceIfEmpty(workspaceId));
         });
+
+        return menu;
+    }
+
+    // The unbound desktop's menu (#149), and it is deliberately one item long.
+    //
+    // Everything else on WorkspaceMenu needs a workspace to act on: reorder positions a row in a
+    // list this desktop is not in, colour paints a lane whose colour comes from that list position,
+    // group membership is a property of a workspace record, delete would mean closing somebody's
+    // desktop from a right-click. Offering them greyed out would advertise five things that cannot
+    // work; naming is the one action that CAN, and doing it turns the row into a real workspace row
+    // with the full menu on it.
+    //
+    // The current desktop name is offered as the initial value rather than an empty box. "Desktop 1"
+    // is what the shell calls it, it is what the row says, and starting from it makes the dialog a
+    // correction rather than a blank to fill in.
+    ContextMenu DesktopMenu(Guid desktopId, string currentName)
+    {
+        var menu = new ContextMenu();
+        HoldFadeWhileOpen(menu);
+
+        var name = new MenuItem { Header = "Name this desktop…", Icon = MenuGlyph("✏") };
+        name.Click += (_, _) =>
+            PromptDialog.Ask("Name desktop", "Workspace name:", currentName, owner: this)
+                .Tap(chosen => Report(manager.NameDesktop(desktopId, chosen)));
+        menu.Items.Add(name);
 
         return menu;
     }
@@ -4450,7 +4548,14 @@ public partial class FloatingBar : Window
     // the window. A monitor-scoped query has no per-window negotiation state to race.
     void PositionFromState()
     {
-        var stored = manager.State.FloatingBar;
+        // The position remembered for THIS arrangement of monitors wins over the last position on any
+        // arrangement (#150). At the desk that is the same thing; after an RDP connect from the laptop
+        // it is the difference between the spot chosen on the laptop layout and a clamp of the desk
+        // position into whatever screen the laptop has.
+        //
+        // Falls back to the single stored position for a layout never parked on, which is every layout
+        // until this ships and the only honest answer for a new one.
+        var stored = StoredPlacement();
         if (MonitorBounds(stored?.Left ?? 0, stored?.Top ?? 0) is not { } work)
         {
             // Best-effort fallback if the API ever fails -- better than crashing the show.
@@ -4618,17 +4723,123 @@ public partial class FloatingBar : Window
         return (info.rcMonitor.Left / scaleX, info.rcMonitor.Top / scaleY, info.rcMonitor.Right / scaleX, info.rcMonitor.Bottom / scaleY);
     }
 
+    // --- the display layout (#150) ---------------------------------------------------------------
+    //
+    // Petre: "when changing screen resolution, when connecting from a laptop, floating window may not
+    // show", and on what it should do instead: "it needs to redraw, readjust, maybe have its own place
+    // for each layout, as windows already does i think."
+    //
+    // Why it disappeared: the position was forced inside a screen at exactly two moments, startup and
+    // the end of a drag, and nothing in the app listened for the display topology changing while it
+    // ran. An RDP connect reshapes the desktop, the bar keeps coordinates that were valid on the old
+    // layout, and there is no longer any glass at that position. It was running and drawn the whole
+    // time; there was simply nothing there to draw on.
+    //
+    // The lanes were wrong too, even when the bar happened to stay visible: every row is laid out over
+    // every known screen, so a stale monitor set describes screens that are no longer attached.
+
+    // Today's arrangement, as a MonitorLayoutKey. Physical rectangles, unconverted: this is an
+    // identity rather than a geometry, and mixing DPI scaling into it would make the same desk answer
+    // differently after a scale change that moved nothing.
+    static string LayoutKey()
+    {
+        var bounds = new List<Core.Domain.MonitorBounds>();
+        var ok = NativeMethods.EnumDisplayMonitors(0, 0, (nint monitor, nint _, ref NativeMethods.RECT _, nint _) =>
+        {
+            var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+            if (NativeMethods.GetMonitorInfo(monitor, ref info))
+                bounds.Add(new Core.Domain.MonitorBounds(
+                    info.rcMonitor.Left, info.rcMonitor.Top, info.rcMonitor.Right, info.rcMonitor.Bottom));
+            return true; // keep enumerating: one unreadable monitor must not truncate the layout
+        }, 0);
+
+        // A partial enumeration is NOT a layout. If the callback failed, or a monitor refused to
+        // describe itself, the key would name a smaller desk than the one attached and the bar would
+        // restore the wrong position with complete confidence. Unknown is the honest answer, and it
+        // costs only the per-layout memory for this session.
+        return ok && bounds.Count > 0 ? MonitorLayoutKey.Of(bounds) : MonitorLayoutKey.Unknown;
+    }
+
+    // The position to restore: this layout's if it has one, otherwise the last position on any layout.
+    FloatingBarState? StoredPlacement() =>
+        manager.BarPlacementFor(LayoutKey()).GetValueOrDefault() ?? manager.State.FloatingBar;
+
+    // DEBOUNCED, and the interval is the substance of it. A topology change arrives as a burst --
+    // several DisplaySettingsChanged events over a couple of seconds -- and the monitors enumerate in
+    // intermediate states along the way: during an RDP connect there is a moment with the session's
+    // screen at a provisional size, and a moment with no usable screen at all. Acting on the last
+    // event of the burst rather than the first is the difference between landing on the real layout
+    // and landing on a transient one.
+    //
+    // One-shot, restarted by every event, so the burst collapses into a single readjustment.
+    readonly System.Windows.Threading.DispatcherTimer layoutSettling =
+        new() { Interval = TimeSpan.FromMilliseconds(1200) };
+
+    // Subscribed in the constructor and released when the window closes. SystemEvents holds a STATIC
+    // event, so an unsubscribed handler outlives the window that owns it, and its handlers are raised
+    // on SystemEvents' own thread rather than ours -- hence the marshal, without which the first thing
+    // touched here would throw about thread affinity.
+    void WatchDisplayLayout()
+    {
+        void OnChanged(object? sender, EventArgs e) =>
+            Dispatcher.BeginInvoke(new Action(() => { layoutSettling.Stop(); layoutSettling.Start(); }));
+
+        layoutSettling.Tick += (_, _) =>
+        {
+            layoutSettling.Stop();
+            Guarded(ReadjustToDisplayLayout, "layout");
+        };
+
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnChanged;
+        Closed += (_, _) => Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnChanged;
+    }
+
+    // The same two steps startup does, in the same order and for the same reasons: rebuild so the rows
+    // describe the monitors that are actually attached, then put the bar somewhere that exists.
+    void ReadjustToDisplayLayout()
+    {
+        if (ClickTrace.On) ClickTrace.Write($"display layout settled key={LayoutKey()}");
+
+        Rebuild();
+
+        // Forces the measure pass, because positioning reads ActualWidth and ActualHeight and the bar
+        // is SizeToContent: without this the position would be computed from the size the bar had on
+        // the OLD monitor set, which is precisely the mistake being fixed. Startup gets this for free
+        // from Show(); here there is no Show() to do it.
+        UpdateLayout();
+
+        // An explicit width chosen on a wider desk can exceed the whole screen now, which leaves the
+        // bar's right edge unreachable however well the position is clamped. Reduced to fit, and never
+        // grown: a width is a choice, and the narrower screen is the only reason to overrule it.
+        if (!double.IsNaN(Width) && MonitorBounds(Left, Top) is { } screen)
+        {
+            var fits = Math.Max(MinimumWidth, Math.Min(Width, screen.Right - screen.Left));
+            if (Math.Abs(fits - Width) > 0.5)
+            {
+                ApplyWidth(fits);
+                UpdateLayout();
+            }
+        }
+
+        PositionFromState();
+        // Records that the bar has been on this layout, so the next change away and back restores what
+        // is on screen now rather than falling back to another layout's position.
+        Save();
+    }
+
     // One place that writes the position, so Right can never be persisted out of step with
     // Left. Visible is always true here: both callers are showing or moving the bar.
     // double.NaN is what Width reads as while the bar is still SizeToContent, and it is the honest
     // "no width chosen" here too -- persisting it as a number would freeze the bar at whatever its
     // content happened to measure on the day, which is the opposite of following the content.
+    // The layout key rides along so the same position is remembered twice: once as "the last position"
+    // and once as "the position on this arrangement of monitors" (#150).
     void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)
     {
         Right = anchorRight,
         Bottom = anchorBottom,
         Width = double.IsNaN(Width) ? null : Width,
-    });
+    }, LayoutKey());
 
     // Owned by the bar for the same reason PromptDialog.Ask now takes an owner: this window
     // is Topmost, so an unowned message box can open behind it and strand the user with an

@@ -24,6 +24,22 @@ public sealed record AppState(
     // default bottom-right position (spec: "older files load with it hidden/default").
     public FloatingBarState? FloatingBar { get; init; }
 
+    // The same position, once per MONITOR LAYOUT (#150). Petre: "it needs to redraw, readjust, maybe
+    // have its own place for each layout, as windows already does i think."
+    //
+    // ADDITIVE, and that is the point rather than a detail. FloatingBar above stays exactly what it
+    // was -- the last position, whatever layout it was on -- so an older build reads the position it
+    // expects and a state.json written before this key loads with no migration. This list is the
+    // extra knowledge: the same position remembered per arrangement, so coming back to the desk
+    // restores where the bar WAS at the desk instead of a legal-but-wrong clamp derived from the
+    // laptop layout.
+    //
+    // A list rather than a dictionary, because the keys are long generated strings (see
+    // MonitorLayoutKey) and a hand-edited state.json is something this project actually relies on:
+    // a list of two-field objects stays readable and diffable, while a dictionary keyed by
+    // "0,0,2560,1440|2560,0,1920,1080" reads as line noise.
+    public IReadOnlyList<BarPlacement> BarPlacements { get; init; } = [];
+
     // Petre: "shrink by twenty percent", and he wanted it adjustable rather than baked in.
     // A uniform scale applied to the whole bar; read through BarScaling.Clamp, which supplies
     // the default and tolerates whatever a hand-edited file contains. Null means "never
@@ -257,6 +273,15 @@ public sealed record AppState(
 
     public static AppState Empty { get; } = new([], [], [], new Dictionary<Guid, IReadOnlyList<InventoryEntry>>());
 }
+
+// One remembered position, tagged with the monitor layout it was chosen on (#150).
+//
+// Layout is a MonitorLayoutKey string, and it is opaque on purpose: nothing reads it apart from
+// comparing it with today's, so nothing has to keep a parser in step with how the key is built.
+// The Bar half is the identical FloatingBarState the single position uses, so a remembered layout
+// carries the same anchors and explicit width as the live one, and restoring one is the same code
+// path rather than a second, thinner one that would drift.
+public sealed record BarPlacement(string Layout, FloatingBarState Bar);
 
 // Task 11: the floating bar's persisted position (DIPs, screen coordinates) and
 // whether it should be shown. Left/Top are the bar's own Window.Left/Top at the
