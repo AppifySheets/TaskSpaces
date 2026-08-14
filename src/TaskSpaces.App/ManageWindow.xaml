@@ -146,6 +146,73 @@
                     </DataGrid>
                 </DockPanel>
             </TabItem>
+            <!-- #151. Petre: "make things configurable, like dimming opacity, timeout, etc."
+                 Sliders rather than number boxes, and that is not a style choice: every value
+                 here is something you LOOK at rather than a number you know, so the control has
+                 to show you the answer while you are choosing it. Each one applies to the live
+                 bar as it moves, which is why nothing on this tab has a Save button.
+                 Four controls, and deliberately only four. The tab earns a control when a
+                 tuning need actually shows up, the way each of these did; a wall of options
+                 nobody asked for is its own bug. -->
+            <TabItem Header="Settings">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12"
+                               Text="The floating bar's appearance and timing. Every change applies at once, to the bar as it sits on screen — there is nothing to save and nothing to restart."/>
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
+                        <!-- The only way back from a number once chosen, which is why it is not
+                             optional: without it the tab is a one-way door. It clears the stored
+                             values rather than writing the defaults as numbers, so a default
+                             changed in a later build still reaches anyone who pressed this. -->
+                        <Button x:Name="ResetAppearanceButton" Content="Reset to defaults" Padding="12,2" Click="OnResetAppearance"/>
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Dimming" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,6"
+                                   Text="How faint the bar goes once the pointer is elsewhere. Fully opaque means it never dims. It never goes fully invisible: an unseeable bar still swallows the clicks aimed at whatever is behind it."/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="IdleOpacitySlider" Width="260" Minimum="0.05" Maximum="1"
+                                    SmallChange="0.05" LargeChange="0.1" TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                    ValueChanged="OnAppearanceChanged"/>
+                            <TextBlock x:Name="IdleOpacityValue" Margin="8,0,0,0" VerticalAlignment="Center" MinWidth="70"/>
+                        </StackPanel>
+
+                        <TextBlock Text="Before it starts dimming" FontWeight="Bold" Margin="0,16,0,0"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,6"
+                                   Text="The bar holds full strength for this long after the pointer leaves, because the moment just after you stop pointing at it is when you are still reading it. Zero starts the fade immediately."/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="FadeGraceSlider" Width="260" Minimum="0" Maximum="120"
+                                    SmallChange="1" LargeChange="5" TickFrequency="1" IsSnapToTickEnabled="True"
+                                    ValueChanged="OnAppearanceChanged"/>
+                            <TextBlock x:Name="FadeGraceValue" Margin="8,0,0,0" VerticalAlignment="Center" MinWidth="70"/>
+                        </StackPanel>
+
+                        <TextBlock Text="How long the dimming takes" FontWeight="Bold" Margin="0,16,0,0"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,6"
+                                   Text="Slow enough that the change is never what catches your eye. Brightening stays instant either way: reaching for the bar should feel like it was already there."/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="FadeDurationSlider" Width="260" Minimum="0.1" Maximum="20"
+                                    SmallChange="0.1" LargeChange="1" TickFrequency="0.1" IsSnapToTickEnabled="True"
+                                    ValueChanged="OnAppearanceChanged"/>
+                            <TextBlock x:Name="FadeDurationValue" Margin="8,0,0,0" VerticalAlignment="Center" MinWidth="70"/>
+                        </StackPanel>
+
+                        <TextBlock Text="Hover card delay" FontWeight="Bold" Margin="0,16,0,0"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,2,0,6"
+                                   Text="How long the pointer has to rest on an icon before its preview appears. The card carries a picture of the window, so it is asked for rather than triggered by a pointer passing through on its way somewhere else."/>
+                        <!-- The checkbox is how "inherit" is expressed, and inheriting is the default
+                             rather than a fallback: MouseHoverTime is what the taskbar's own thumbnails
+                             wait for, so the bar behaves like the rest of the desktop until told not to. -->
+                        <CheckBox x:Name="InheritHoverDwell" Margin="0,0,0,6"
+                                  Checked="OnAppearanceChanged" Unchecked="OnAppearanceChanged"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="HoverDwellSlider" Width="260" Minimum="0" Maximum="1500"
+                                    SmallChange="50" LargeChange="100" TickFrequency="50" IsSnapToTickEnabled="True"
+                                    ValueChanged="OnAppearanceChanged"/>
+                            <TextBlock x:Name="HoverDwellValue" Margin="8,0,0,0" VerticalAlignment="Center" MinWidth="70"/>
+                        </StackPanel>
+                    </StackPanel>
+                </DockPanel>
+            </TabItem>
             <TabItem Header="Rules">
                 <DockPanel Margin="8">
                     <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8"

@@ -1471,6 +1471,51 @@ public sealed class WorkspaceManager(
             ? Result.Success()
             : Result.Success().Tap(() => Persist(State with { CheckForUpdates = enabled }));
 
+    // The Settings tab's four dials (#151). Petre: "make things configurable, like dimming opacity,
+    // timeout, etc."
+    //
+    // ONE method rather than four setters, and the reason is the slider that drives it: a settings tab
+    // writes on every change, and four independent writers would persist four times and pulse four
+    // subscribers for one drag of one thumb. This takes the whole set, so a change is one write and one
+    // pulse however many controls moved.
+    //
+    // NULL means "back to the default" for each one independently, which is the only way back from a
+    // number once chosen -- and for the dwell it means something stronger still: inherit Windows' own
+    // MouseHoverTime (see HoverDwelling). Reset has to be expressible or the tab is a one-way door.
+    //
+    // Unchanged values write NOTHING, on the same principle as SetCheckForUpdates: the tab populates
+    // its controls from state when it opens, which raises ValueChanged on every slider, and without
+    // this merely opening Manage would rewrite state.json and rebuild the bar.
+    //
+    // Clamped on the way IN rather than trusted from the caller. The tab's sliders cannot produce an
+    // out-of-range value, but a slider is a UI, not a guarantee, and this is also the door a future
+    // surface comes through.
+    public Result SetBarAppearance(
+        double? idleOpacity, double? fadeGraceSeconds, double? fadeDurationMs, double? hoverDwellMs)
+    {
+        var next = State with
+        {
+            BarIdleOpacity = idleOpacity is { } opacity ? BarFading.Clamp(opacity) : null,
+            BarFadeGraceSeconds = fadeGraceSeconds is { } grace ? BarFading.ClampGraceSeconds(grace) : null,
+            BarFadeDurationMs = fadeDurationMs is { } duration ? BarFading.ClampDurationMs(duration) : null,
+            // Not clamped through HoverDwelling here, because that method's job is to answer "what
+            // dwell should the bar use", which needs the system value only the App layer can read. The
+            // range check is the part that belongs on the way in.
+            HoverDwellMs = hoverDwellMs is { } dwell && !double.IsNaN(dwell) && !double.IsInfinity(dwell)
+                ? Math.Clamp(dwell, HoverDwelling.MinimumMs, HoverDwelling.MaximumMs)
+                : null,
+        };
+
+        if (next.BarIdleOpacity == State.BarIdleOpacity
+            && next.BarFadeGraceSeconds == State.BarFadeGraceSeconds
+            && next.BarFadeDurationMs == State.BarFadeDurationMs
+            && next.HoverDwellMs == State.HoverDwellMs)
+            return Result.Success();
+
+        Persist(next);
+        return Result.Success();
+    }
+
     // The colour picker on the bar's right-click menu (#68). Petre: "add color picker in the right
     // click context menu."
     //

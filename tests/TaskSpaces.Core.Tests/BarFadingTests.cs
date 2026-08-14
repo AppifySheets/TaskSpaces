@@ -46,4 +46,58 @@ public class BarFadingTests
         Assert.Equal(BarFading.Minimum, BarFading.Clamp(BarFading.Minimum));
         Assert.Equal(BarFading.Maximum, BarFading.Clamp(BarFading.Maximum));
     }
+
+    // --- the two timings, settings since #151 --------------------------------------------------
+
+    [Fact]
+    public void An_unconfigured_grace_is_the_ten_seconds_the_issue_asked_for() =>
+        Assert.Equal(10, BarFading.ClampGraceSeconds(null));
+
+    [Fact]
+    public void A_chosen_grace_is_kept_as_written() =>
+        Assert.Equal(30, BarFading.ClampGraceSeconds(30));
+
+    // Zero is a real choice, not an error: it is the original #46 behaviour, dimming the moment the
+    // pointer leaves.
+    [Fact]
+    public void A_grace_of_zero_is_allowed() =>
+        Assert.Equal(0, BarFading.ClampGraceSeconds(0));
+
+    [Fact]
+    public void A_negative_grace_is_raised_to_zero() =>
+        Assert.Equal(BarFading.GraceMinimumSeconds, BarFading.ClampGraceSeconds(-5));
+
+    [Fact]
+    public void An_absurd_grace_is_capped() =>
+        Assert.Equal(BarFading.GraceMaximumSeconds, BarFading.ClampGraceSeconds(100000));
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void A_grace_that_is_not_a_real_number_falls_back_to_the_default(double value) =>
+        Assert.Equal(BarFading.GraceDefault, BarFading.ClampGraceSeconds(value));
+
+    [Fact]
+    public void An_unconfigured_duration_is_the_four_seconds_it_shipped_with() =>
+        Assert.Equal(4000, BarFading.ClampDurationMs(null));
+
+    [Fact]
+    public void A_chosen_duration_is_kept_as_written() =>
+        Assert.Equal(1500, BarFading.ClampDurationMs(1500));
+
+    // Below about a tenth of a second the fade is a jump, which is the shape #46 exists to remove --
+    // so zero is NOT allowed here, unlike the grace, and the difference is deliberate.
+    [Fact]
+    public void A_duration_of_zero_is_raised_to_the_floor() =>
+        Assert.Equal(BarFading.DurationMinimumMs, BarFading.ClampDurationMs(0));
+
+    [Fact]
+    public void An_absurd_duration_is_capped() =>
+        Assert.Equal(BarFading.DurationMaximumMs, BarFading.ClampDurationMs(600000));
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.NegativeInfinity)]
+    public void A_duration_that_is_not_a_real_number_falls_back_to_the_default(double value) =>
+        Assert.Equal(BarFading.DurationDefaultMs, BarFading.ClampDurationMs(value));
 }

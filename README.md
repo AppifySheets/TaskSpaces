@@ -182,8 +182,15 @@ single ~74 MB exe in `artifacts/publish`.
   space. **`Ctrl`+drag or middle-drag moves the bar**, from anywhere on it, rows and icons
   included, so a plain press is only ever the click of whatever is under it. Drop it wherever
   you like, including on top of a taskbar; it stays put.
-- **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, and naming
-  patterns. Opened by left-clicking the tray icon.
+- **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, naming patterns, and
+  settings. Opened by left-clicking the tray icon.
+
+  **Manage → Settings** holds the bar's four dials: how faint it goes once the pointer is
+  elsewhere, how long it waits before starting to dim, how long the dimming takes, and how
+  long the pointer has to rest on an icon before a preview appears. Every one applies to the
+  bar as you drag the slider, so you choose by looking rather than by guessing, and there is
+  nothing to save. Fully opaque means it never dims. The hover delay follows Windows' own
+  setting unless you untick the box and pick your own.
 - **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
   workspaces in **most-recently-used** order; release to switch. Add `Shift` to walk
   backwards. One tap therefore returns you to wherever you just were, however your list
@@ -330,6 +337,25 @@ memory outlive any single window), and **renaming** (`RDP` is
 parsed faster than `Remote Desktop Manager [server-01 - fhd]`, and retrieval cues work
 better when they are legible).
 
+### Agentic AI multiplies the contexts, it does not replace them
+
+One thing has changed the shape of a working day faster than any of the research above
+anticipated. Supervising coding agents is not one task in one editor. Each agent you have
+running wants its own editor window, its own terminal, its own browser tabs, often its own
+running copy of the thing under test, and each of those clusters is a context you step into
+while another agent works and step out of when it needs you. The agent does the typing; the
+supervising, reviewing and deciding still happen in your head, and they happen **several
+times over, concurrently**.
+
+That is the same working-sphere problem as before, at a count nobody used to reach. Three
+projects on the go was a busy day; three agents on one project plus two on another is an
+ordinary afternoon, and the windows do not stay tidy on their own. Virtual desktops are the
+right container for it, one per line of work, which is why this app puts effort where that
+count starts to hurt: every desktop's windows visible at once rather than one desktop at a
+time, most-recently-used switching for the two you are actually alternating between, groups
+for related lines of work, and memory of where each window belongs so a restart does not
+scatter them.
+
 ### Who it is for, and who it is not
 
 The benefit scales with **how many unrelated contexts you hold at once**, not with how
@@ -349,6 +375,9 @@ you do not have.
    this product.
 3. **Windows already provides the mechanism.** The claim is not that this invents context
    isolation, only that it makes it nameable, persistent and automatic.
+4. **The AI argument is an observation, not a finding.** Every other claim above rests on a
+   published study. That one rests on how this app's own author works, and it is new enough
+   that nobody has measured it. Read it as a description of a workload, not as evidence.
 
 ### Sources
 

@@ -83,15 +83,13 @@ public partial class FloatingBar : Window
         // Starts dim, because at startup the pointer is wherever the user left it and almost never
         // on a bar that has just appeared. Waiting for the first MouseLeave instead would show a
         // fully opaque bar until the pointer happened to cross it once.
-        idleOpacity = BarFading.Clamp(manager.State.BarIdleOpacity);
-        Opacity = idleOpacity;
+        Opacity = IdleOpacity;
         MouseEnter += (_, _) => UpdateFade();
         MouseLeave += (_, _) => UpdateFade();
 
-        // The ten-second grace, and then the slow fade (#46). One-shot: Stop() first, so a fade
-        // that is interrupted and later restarted always gets a full ten seconds rather than
-        // whatever was left of the last countdown.
-        fadeDelay.Interval = FadeDelay;
+        // The grace, and then the slow fade (#46). One-shot: Stop() first, so a fade that is
+        // interrupted and later restarted always gets the full grace rather than whatever was left of
+        // the last countdown.
         fadeDelay.Tick += (_, _) =>
         {
             fadeDelay.Stop();
@@ -102,14 +100,22 @@ public partial class FloatingBar : Window
             // Cleared when the fade actually lands, so `fading` means "on its way down" and never
             // outlives the animation. Nothing breaks if it did -- the brighten path clears it too
             // -- but a flag that says something untrue is how the next bug gets built on top.
-            Animate(idleOpacity, FadeMs, onCompleted: () => fading = false);
+            Animate(IdleOpacity, (int)BarFading.ClampDurationMs(manager.State.BarFadeDurationMs),
+                onCompleted: () => fading = false);
         };
 
         Rebuild();
         // Live-refresh while visible, same pattern as WindowGroupsView.Bind: windows
         // opening/closing (manual script item 36) must update the bar without Petre
         // having to toggle it off and on.
-        subscription = manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() => { if (IsVisible) Rebuild(); }));
+        subscription = manager.StateChanged.Subscribe(_ => Dispatcher.Invoke(() =>
+        {
+            // Settings first, and not only for tidiness: the appearance pulse from a Settings slider
+            // carries no window news at all, so if this came second a rebuild would run for nothing
+            // before the visible part happened.
+            ApplyAppearance();
+            if (IsVisible) Rebuild();
+        }));
 
         // Petre: "Same as before, edge icon shows up instead of [the] music icon, it never
         // changes. when you restarted the app, it seems that it picked up the correct
@@ -150,7 +156,14 @@ public partial class FloatingBar : Window
     // Unlike the row-order freeze, this needs none of that feature's hit-test discipline: rebuilds
     // destroy rows, but the window itself outlives every one of them, so its own MouseEnter and
     // MouseLeave cannot be raised by anything but a pointer genuinely arriving or leaving.
-    readonly double idleOpacity;
+    // READ FROM STATE on every use rather than captured once, which is what makes the Settings tab's
+    // slider take effect while you are dragging it (#151). It used to be a readonly field set in the
+    // constructor, so even a hand-edited state.json needed a restart to be seen.
+    //
+    // Costs a dictionary-free property read on a path that runs a few times a second at most. The
+    // alternative -- caching it and invalidating on StateChanged -- is a second copy of a value that
+    // has one home, for no measurable gain.
+    double IdleOpacity => BarFading.Clamp(manager.State.BarIdleOpacity);
 
     // Instant on the way in, gentle on the way out. Reaching for the bar should feel like it was
     // already there; leaving should not flicker as the pointer clips a corner on its way past.
@@ -165,11 +178,11 @@ public partial class FloatingBar : Window
     // for the bar should feel like it was already there.
     const int BrightenMs = 60;
 
-    // Ten seconds of grace, then four of fading. "Gradually" was left open in the issue -- these
-    // are a starting point chosen to be lived with, not a measurement, and they are consts rather
-    // than settings until Petre has an opinion about the numbers.
-    static readonly TimeSpan FadeDelay = TimeSpan.FromSeconds(10);
-    const int FadeMs = 4000;
+    // Ten seconds of grace, then four of fading. "Gradually" was left open in the issue, so these
+    // were a starting point chosen to be lived with rather than a measurement -- and consts, "until
+    // Petre has an opinion about the numbers". He has one now, which is that they are his to set, so
+    // both live in state.json and are read on every use (#151). BarFading holds the defaults and the
+    // rails; the values above them here are gone rather than duplicated.
 
     // Three cases where the bar is in use without being touched, and dimming any of them would
     // hide the very thing being looked at:
@@ -225,6 +238,25 @@ public partial class FloatingBar : Window
     // whatever grey it had reached, forever.
     bool fading;
 
+    // What makes the Settings tab's sliders worth having (#151). The issue named this as the actual
+    // work: "the bar reads its settings at construction, so a naive Settings tab would need 'restart
+    // to apply', which is unacceptable for an opacity slider."
+    //
+    // UpdateFade cannot do this job, and the reason is its own correctness. It returns early when the
+    // bar is "already dim" -- Opacity <= IdleOpacity -- which is exactly the state a slider leaves it
+    // in when the new value is BRIGHTER than the old one. So dragging towards opaque would do nothing
+    // until the pointer next crossed the bar.
+    //
+    // Only when the bar is settled and idle. Mid-fade, mid-hover or while something holds it bright,
+    // the value is already on its way somewhere and the next transition picks the new number up on its
+    // own. Brightening speed for the move, because this is a preview and it has to answer at once.
+    void ApplyAppearance()
+    {
+        if (fading || IsMouseOver || HoldsFullStrength || fadeDelay.IsEnabled) return;
+        if (Math.Abs(Opacity - IdleOpacity) < 0.001) return;
+        Animate(IdleOpacity, BrightenMs);
+    }
+
     void UpdateFade()
     {
         if (IsMouseOver || HoldsFullStrength)
@@ -241,7 +273,10 @@ public partial class FloatingBar : Window
 
         // Already dim, already fading, or already counting down: all three mean "there is nothing
         // new to start", and saying so here is what makes UpdateFade safe to call from anywhere.
-        if (fading || fadeDelay.IsEnabled || Opacity <= idleOpacity + 0.001) return;
+        if (fading || fadeDelay.IsEnabled || Opacity <= IdleOpacity + 0.001) return;
+        // Set here rather than once in the constructor, so a grace changed on the Settings tab applies
+        // to the next countdown instead of the next session (#151).
+        fadeDelay.Interval = TimeSpan.FromSeconds(BarFading.ClampGraceSeconds(manager.State.BarFadeGraceSeconds));
         fadeDelay.Start();
     }
 
@@ -3012,15 +3047,19 @@ public partial class FloatingBar : Window
     // large has to be asked for rather than triggered by the pointer passing through on its way somewhere
     // else.
     //
-    // WINDOWS' OWN NUMBER rather than one I pick. SystemParameters.MouseHoverTime is the OS's definition of
-    // "resting rather than passing", it is what the taskbar's own thumbnails wait for, and it is a setting a
-    // user can tune. It reads 400ms on his machine, which answers "is 300ms enough?" better than an opinion
-    // would: 300 is defensible, and 400 is the number every other hover on his desktop already uses.
+    // WINDOWS' OWN NUMBER when nothing is configured, rather than one I pick. SystemParameters.MouseHoverTime
+    // is the OS's definition of "resting rather than passing", it is what the taskbar's own thumbnails wait
+    // for, and it is already a setting a user can tune. It reads 400ms on his machine, which answered "is
+    // 300ms enough?" better than an opinion would: 300 is defensible, and 400 is the number every other hover
+    // on his desktop already uses.
     //
-    // Clamped, because this is read from the OS and a hand-set registry value could be zero (every sweep
-    // shows a card) or ten seconds (the feature appears broken).
-    static TimeSpan HoverDwell =>
-        TimeSpan.FromMilliseconds(Math.Clamp(SystemParameters.MouseHoverTime.TotalMilliseconds, 250, 1000));
+    // The Settings tab can now overrule it (#151), which is the honest end of that argument: the question had
+    // no answer derivable from anything, so it became his. Null still means inherit, so the bar goes on
+    // matching the rest of the desktop for anyone who never opens the tab. Both the clamp and the rails on
+    // what the registry is allowed to say live in HoverDwelling.
+    TimeSpan HoverDwell =>
+        TimeSpan.FromMilliseconds(HoverDwelling.ClampMs(
+            manager.State.HoverDwellMs, SystemParameters.MouseHoverTime.TotalMilliseconds));
 
     System.Windows.Threading.DispatcherTimer? hoverDwell;
     WindowHandle dwellFor;

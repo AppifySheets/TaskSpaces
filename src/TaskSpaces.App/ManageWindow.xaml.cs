@@ -57,6 +57,9 @@ public partial class ManageWindow : Window
         // side, and a number typed into the source would report the build it was written in rather
         // than the one running.
         AppVersion.Text = $"Version {UpdateService.DisplayVersion}";
+        // #151. Before Reload(), so the tab is populated whether or not the window is ever switched to
+        // it, and so the guard flag it sets is honoured from the first raise.
+        LoadAppearance();
         WorkspaceRulesGrid.ItemsSource = workspaceRules;
         RenameRulesGrid.ItemsSource = renameRules;
         // Task 10: the Windows tab is now the shared WindowGroupsView (same control the
@@ -323,6 +326,110 @@ public partial class ManageWindow : Window
     // composition root for no outcome anybody would notice.
     void OnCheckForUpdatesToggled(object s, RoutedEventArgs e) =>
         manager.SetCheckForUpdates(CheckForUpdates.IsChecked == true).TapError(err => MessageBox.Show(err));
+
+    // --- the Settings tab (#151) -----------------------------------------------------------------
+    //
+    // Petre: "make things configurable, like dimming opacity, timeout, etc."
+    //
+    // Set FROM state when the window opens, which raises ValueChanged on every slider -- exactly the
+    // situation SetBarAppearance's unchanged-value guard exists for, so merely opening Manage writes
+    // nothing and rebuilds nothing.
+    //
+    // `loading` closes the other half of that. The guard makes a no-change write harmless, and it
+    // cannot make the four raises ARRIVE ONE AT A TIME harmless: the first slider to be set would
+    // otherwise persist its own new value alongside the other three still holding their XAML defaults,
+    // which is a real change and would be saved as one.
+    //
+    // TRUE TO BEGIN WITH, and that is not belt and braces -- it is the fix for a crash the tests caught
+    // before Petre could. A Slider raises ValueChanged while its XAML is being PARSED: setting Minimum
+    // coerces Value, which fires the handler from inside InitializeComponent, at which point the other
+    // named controls are still null and the readout line threw NullReferenceException. Opening Manage
+    // would have died. A field initializer runs before the constructor body, so the handler is inert
+    // until LoadAppearance says otherwise.
+    bool loading = true;
+
+    void LoadAppearance()
+    {
+        loading = true;
+        try
+        {
+            IdleOpacitySlider.Value = BarFading.Clamp(manager.State.BarIdleOpacity);
+            FadeGraceSlider.Value = BarFading.ClampGraceSeconds(manager.State.BarFadeGraceSeconds);
+            // Shown in seconds and stored in milliseconds. Seconds is how the value is thought about
+            // ("about four seconds"), and milliseconds is what an animation takes.
+            FadeDurationSlider.Value = BarFading.ClampDurationMs(manager.State.BarFadeDurationMs) / 1000;
+
+            // Windows' own number, named in the checkbox rather than left as "the default": "use
+            // Windows' hover time" tells you nothing useful without saying what that is, and it is a
+            // value the user can change outside this app.
+            var system = HoverDwelling.ClampMs(null, SystemParameters.MouseHoverTime.TotalMilliseconds);
+            InheritHoverDwell.Content = $"Use Windows' own hover time ({system:0} ms)";
+            InheritHoverDwell.IsChecked = manager.State.HoverDwellMs is null;
+            // The slider shows the effective value even while inheriting, so unticking the box starts
+            // from what the bar is actually doing rather than jumping to some other number.
+            HoverDwellSlider.Value = manager.State.HoverDwellMs ?? system;
+        }
+        finally
+        {
+            loading = false;
+        }
+
+        ShowAppearanceValues();
+    }
+
+    // The readouts beside each slider. A slider with no number is fine for opacity and useless for a
+    // duration, and having all four labelled costs one method.
+    void ShowAppearanceValues()
+    {
+        IdleOpacityValue.Text = IdleOpacitySlider.Value >= 0.999
+            // Opacity 1.0 is not "100%", it is the absence of the feature, and saying so is the only
+            // way anyone finds out that this is where "stop dimming" lives.
+            ? "never dims"
+            : $"{IdleOpacitySlider.Value * 100:0}%";
+        FadeGraceValue.Text = FadeGraceSlider.Value <= 0.001 ? "at once" : $"{FadeGraceSlider.Value:0} s";
+        FadeDurationValue.Text = $"{FadeDurationSlider.Value:0.0} s";
+        HoverDwellSlider.IsEnabled = InheritHoverDwell.IsChecked != true;
+        HoverDwellValue.Text = HoverDwellSlider.Value <= 0.001 ? "at once" : $"{HoverDwellSlider.Value:0} ms";
+    }
+
+    // Every control on the tab lands here, and it writes on every change rather than on a Save button
+    // or a drag-completed event. That is the feature: the bar dims to the new opacity while the thumb
+    // is still moving, which is the only way to choose a value you have to look at.
+    //
+    // The cost is one state.json write per slider step, which is a small file written by a hand
+    // dragging a thumb -- tens of writes, not thousands. Debouncing was the obvious alternative and
+    // was rejected: it would put a timer between the thumb and the bar, and the whole point is that
+    // there is nothing between them.
+    // Two entry points rather than one, and not by choice: Slider.ValueChanged is a
+    // RoutedPropertyChangedEventHandler<double> while CheckBox.Checked is a plain RoutedEventHandler,
+    // and XAML matches the delegate type exactly rather than accepting a base-class signature. Both
+    // are one line onto the same method, so there is nothing to keep in step.
+    void OnAppearanceChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => ApplyAppearance();
+    void OnAppearanceChanged(object sender, RoutedEventArgs e) => ApplyAppearance();
+
+    void ApplyAppearance()
+    {
+        if (loading) return;
+
+        ShowAppearanceValues();
+
+        manager.SetBarAppearance(
+                idleOpacity: IdleOpacitySlider.Value,
+                fadeGraceSeconds: FadeGraceSlider.Value,
+                fadeDurationMs: FadeDurationSlider.Value * 1000,
+                // Null is what "inherit Windows' hover time" means, and it is the reason the checkbox
+                // exists rather than a magic value on the slider.
+                hoverDwellMs: InheritHoverDwell.IsChecked == true ? null : HoverDwellSlider.Value)
+            .TapError(err => MessageBox.Show(this, err, "TaskSpaces"));
+    }
+
+    // Clears the stored values rather than writing today's defaults as numbers, which is what keeps a
+    // later change of default reaching anyone who pressed this.
+    void OnResetAppearance(object sender, RoutedEventArgs e)
+    {
+        manager.SetBarAppearance(null, null, null, null).TapError(err => MessageBox.Show(this, err, "TaskSpaces"));
+        LoadAppearance();
+    }
 
 
     void OnSaveRules(object s, RoutedEventArgs e)

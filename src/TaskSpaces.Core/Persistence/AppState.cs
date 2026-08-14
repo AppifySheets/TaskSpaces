@@ -55,6 +55,24 @@ public sealed record AppState(
     // "never fade", so no separate on/off flag is needed.
     public double? BarIdleOpacity { get; init; }
 
+    // The two halves of the fade's timing, and the hover dwell (#151). Petre: "make things
+    // configurable, like dimming opacity, timeout, etc."
+    //
+    // All three were consts in the App layer, and the fade pair's own comment admitted what they were:
+    // a starting point chosen to be lived with rather than a measurement. Same nullable/no-migration
+    // pattern as BarIdleOpacity above, and null carries real meaning rather than being a stand-in for
+    // a number: it means "whatever the app decides", so changing a default in code still reaches
+    // everybody who never touched the knob.
+    //
+    // Read through BarFading.ClampGraceSeconds, BarFading.ClampDurationMs and HoverDwelling.ClampMs,
+    // which tolerate whatever a hand-edited file contains. Nothing reads these properties directly.
+    public double? BarFadeGraceSeconds { get; init; }
+    public double? BarFadeDurationMs { get; init; }
+
+    // Null here means something more specific than "the default": it means INHERIT WINDOWS' own
+    // MouseHoverTime, which is what the taskbar's thumbnails wait for. See HoverDwelling.
+    public double? HoverDwellMs { get; init; }
+
     // The two placements the Inventory above cannot express (Petre: "last placement IS the
     // rule"). Inventory already records identity -> workspace on every Place(), but a
     // PINNED window belongs to no single workspace and a DETACHED one belongs to none at
