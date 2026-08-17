@@ -1292,6 +1292,10 @@ public partial class FloatingBar : Window
         // leaves the rows showing whatever they last showed) must not also leave the button
         // pointing at a workspace we have since left.
         RefreshBackButton();
+        // Same fact, same moment, same source (#155). The trail and the back button must never
+        // disagree about where "back" is, and the only way to guarantee that is to derive both from
+        // one reading of the MRU on one rebuild.
+        RefreshHistoryTrail();
 
         // A geometry dump once the layout has settled, behind the trace marker and only when it differs
         // from the last one (see DumpRowGeometry).
@@ -2781,12 +2785,17 @@ public partial class FloatingBar : Window
         //   * Hover does NOT ring the row you are already on. Everywhere else the amber means
         //     "you would land here", and on the current row that is a lie: clicking it goes
         //     nowhere. The white "you are here" ring stays, which is the honest answer.
+        //   * The HISTORY trail (#155) sits at the bottom of the order, under everything above it.
+        //     Every other ring is about now or about what happens next; the trail is about the past,
+        //     and the past is the first thing that should give way. During a drag or a chord, "where
+        //     this lands" outranks "where I came from" on the same row, which is also what the issue
+        //     asked for.
         var hovered = candidate is null ? hoveredRow?.RowKey : null;
         rowRings.ToList().ForEach(row =>
             row.Value.BorderBrush = row.Key == candidate ? CandidateRowRing
                 : row.Key == currentRow ? CurrentRowRing
                 : row.Key == hovered ? CandidateRowRing
-                : Brushes.Transparent);
+                : HistoryRing(row.Key) ?? Brushes.Transparent);
 
         // Petre: "when adding a ring to the next workspace, make the active window in it visible
         // clearly, possibly with the same strength as it is in the currently active workspace."
@@ -2835,6 +2844,15 @@ public partial class FloatingBar : Window
     // Which row RebuildCore drew as current, so ApplyCandidate can put the white ring back when
     // the amber one moves off it.
     Guid? currentRow;
+
+    // How faintly this row wears the trail, or null for a row that is not in it (#155).
+    Brush? HistoryRing(Guid rowKey) =>
+        historyTrail.ToList().IndexOf(rowKey) switch
+        {
+            0 => PreviousRowRing,
+            1 => EarlierRowRing,
+            _ => null,
+        };
 
     // ~20% white: enough to read as "this row is armed" against the bar's #99202020
     // background without washing the icons out mid-drag.
@@ -3307,6 +3325,38 @@ public partial class FloatingBar : Window
     // the icon context menu already follows for a greyed "Restore title": a surface whose shape
     // shifts is harder to learn than one with a control that is visibly unavailable. The only
     // way to reach that state is a single workspace you are already on.
+    // --- the history trail (#155) ----------------------------------------------------------------
+    //
+    // Petre: "highlight the PREVIOUS workspace I was in, so i know what i'm coming from and where i'd
+    // go with the shortcut", then "maybe also ring the one before that, and the one before that, so i
+    // know what is the history of workspaces".
+    //
+    // ONE mark answers both of those questions, which is why it is worth drawing at all: the previous
+    // workspace is also exactly where one tap of Win+Ctrl+Tab lands, because the hotkey walks this same
+    // MRU order. The fact was already computed and already on screen -- in the back button's TOOLTIP,
+    // which you have to hover to read.
+    //
+    // Workspace ids, nearest first: index 0 is where you came from, index 1 is the one before that.
+    IReadOnlyList<Guid> historyTrail = [];
+
+    // Three marks in total, current included. Petre asked for "the one before that, and the one before
+    // that", and the cap is where the idea stops paying: eventually every workspace is in the MRU, and
+    // a bar where every row wears a ring says nothing at all. Two steps back is a trail; five is
+    // wallpaper.
+    //
+    // It is also the limit of what white alone can express. The three brightnesses below have to be
+    // tellable apart at a glance over lane tints of every colour, or the trail lies about its own
+    // order -- and adding a second channel to buy a fourth step would crowd an outline vocabulary that
+    // already carries "here", "would land here", "armed for a drop" and "has focus".
+    const int HistoryDepth = 2;
+
+    // The walk itself is RecentWorkspaces.Trail, in Core beside Back, so its edge cases (a trail that
+    // would include the row you are standing on, one workspace, none at all) are settled where they can
+    // be tested without a window -- and so the first step of the trail IS the back button's
+    // destination by construction rather than by coincidence.
+    void RefreshHistoryTrail() =>
+        historyTrail = manager.ByRecentUse().Trail(HistoryDepth).Select(w => w.Id).ToList();
+
     void RefreshBackButton()
     {
         var back = manager.ByRecentUse().Back;
@@ -3497,6 +3547,24 @@ public partial class FloatingBar : Window
     // against this background, so "can I see where I am" would have depended on where you were.
     // White is the same brightness on every row.
     static readonly Brush CurrentRowRing = Frozen(0xC0, 0xFF, 0xFF, 0xFF);
+
+    // The trail behind it (#155). Petre, on how the previous workspace should look: "maybe still
+    // white, less pronounced than the current one."
+    //
+    // Same colour and same shape as the current row's ring, at 40% and 20% of full white against its
+    // 75%. Same family on purpose: these are the same KIND of claim -- "this row is a place in your
+    // history" -- and a different colour would have invented a second meaning for what is one idea at
+    // three strengths. Weaker on purpose too, and by a wide margin at each step, because the gaps have
+    // to survive being drawn over lane tints of any colour. Equal spacing would have been prettier and
+    // less legible: the drop from 0xC0 to 0x66 is what stops "here" and "just left" reading as two
+    // currents, which is the mistake that would make the whole mark worse than nothing.
+    //
+    // Both are still visibly rings rather than hints. A trail nobody can see is a trail that is not
+    // there, and the second step is the one to watch on a busy bar: if it turns out to be invisible in
+    // daily use, the honest fix is dropping to one step rather than brightening it into competing with
+    // the current row.
+    static readonly Brush PreviousRowRing = Frozen(0x66, 0xFF, 0xFF, 0xFF);
+    static readonly Brush EarlierRowRing = Frozen(0x33, 0xFF, 0xFF, 0xFF);
 
     // Petre: "when switching, instead of showing the workspaces, focus the floating window
     // instead and do a cycle over those workspaces, in different color" -- because "i need to
