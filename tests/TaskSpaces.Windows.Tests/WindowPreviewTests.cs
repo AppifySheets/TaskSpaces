@@ -36,11 +36,48 @@ public class WindowPreviewTests
             WindowStyle = WindowStyle.None, ShowInTaskbar = false, ResizeMode = ResizeMode.NoResize,
             Content = stripes,
         };
+        // ContentRendered is raised after the window's FIRST FRAME has actually been composed, and
+        // subscribing before Show() is the only way to be sure of catching it.
+        var rendered = false;
+        window.ContentRendered += (_, _) => rendered = true;
+
         window.Show();
-        // One layout and render pass, or the window has no pixels yet and the capture is honestly blank.
         window.UpdateLayout();
-        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+        WaitForFirstFrame(() => rendered);
         return window;
+    }
+
+    // Why this exists, with the evidence: A_capture_carries_the_windows_own_colours_and_is_opaque
+    // failed twice on GitHub's runners -- once in CI on 2026-08-17 and once in the release build for
+    // v1.11.0, which blocked the release and left it published with no executable attached. Both times
+    // with "only 1 distinct colours: the capture is blank", and both times on a commit that had passed
+    // the same suite on the same runner image minutes earlier. A test that passes and fails on identical
+    // code is timing, not environment.
+    //
+    // What it used to do was pump the dispatcher once at Render priority and capture. That drains the
+    // dispatcher QUEUE, which is not the same thing as a frame existing: WPF composes on its own render
+    // thread, asynchronously, and PrintWindow against a window that has not been painted yet returns
+    // true and hands back one flat colour -- exactly the symptom, and exactly what a minimised window
+    // does for the same underlying reason (#107).
+    //
+    // So the wait is for the frame itself rather than for the queue, bounded, and it FAILS LOUDLY rather
+    // than proceeding into an assertion that would blame the capture for a window that never painted.
+    // The bound is generous because it costs nothing when the frame arrives on time, which locally is
+    // within a few milliseconds.
+    static void WaitForFirstFrame(Func<bool> rendered)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!rendered() && DateTime.UtcNow < deadline)
+        {
+            // The dispatcher has to keep running or ContentRendered can never be delivered: these tests
+            // run on a bare STA thread with no message loop of their own (see StaThread).
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                () => { }, System.Windows.Threading.DispatcherPriority.SystemIdle);
+            Thread.Sleep(10);
+        }
+
+        Assert.True(rendered(), "the window never painted a frame within 10s, so any capture of it would "
+                                + "be blank for a reason that has nothing to do with WindowPreview");
     }
 
     static WindowHandle HandleOf(Window window) => new(new WindowInteropHelper(window).Handle);
