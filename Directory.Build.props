@@ -17,7 +17,7 @@
          InformationalVersion   - free-form; the one place a suffix like -beta could go
        Bumping a release means editing VersionPrefix here and nothing else. -->
   <PropertyGroup>
-    <VersionPrefix>1.10.8</VersionPrefix>
+    <VersionPrefix>1.11.0</VersionPrefix>
     <Version>$(VersionPrefix)</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>$(VersionPrefix).0</FileVersion>
