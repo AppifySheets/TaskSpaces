@@ -4166,9 +4166,11 @@ public partial class FloatingBar : Window
     // did nothing at all -- only ICONS carried a menu, and the bar's own background menu went with
     // "Hide floating bar".
     //
-    // Deliberately NOT here: Remove. It is the one item that cannot be undone, this menu now opens
-    // on a click that used to do nothing, and a mis-aimed right-click landing on "Remove
-    // workspace" is a bad way to find that out. Manage still has it.
+    // Delete WAS deliberately kept off this menu -- "it is the one item that cannot be undone, this
+    // menu now opens on a click that used to do nothing, and a mis-aimed right-click landing on
+    // 'Remove workspace' is a bad way to find that out" -- and it arrived with #73 once it could
+    // refuse a workspace that still held windows. It closes those windows now instead of refusing;
+    // the reasoning, and what replaced the guard, is at the item itself at the bottom of this method.
     ContextMenu WorkspaceMenu(Guid workspaceId, string name, bool minimized, bool nested)
     {
         var menu = new ContextMenu();
@@ -4264,55 +4266,66 @@ public partial class FloatingBar : Window
 
         menu.Items.Add(new Separator());
 
-        // Delete (#73), which REVERSES a ruling rather than adding to the menu, so the reason is
-        // worth stating. Remove was deliberately kept off this menu: "it is the one item that
+        // Delete (#73), which REVERSED a ruling rather than adding to the menu, so the reason is
+        // still worth stating. Remove was deliberately kept off this menu: "it is the one item that
         // cannot be undone, this menu now opens on a click that used to do nothing, and a mis-aimed
         // right-click landing on 'Remove workspace' is a bad way to find that out."
         //
-        // What changes the answer is the GUARD. A workspace holding windows now refuses to be
-        // deleted, so the expensive mistake -- windows silently scattered onto a neighbouring
-        // desktop by Windows' own desktop-merge behaviour -- is no longer reachable from here at
-        // all. What remains reachable is losing a NAME, plus its rules and its placement memory,
-        // for a workspace that was already empty.
+        // What changed the answer was the GUARD: a workspace holding windows refused to be deleted,
+        // so the expensive mistake -- windows silently scattered onto a neighbouring desktop by
+        // Windows' own desktop-merge behaviour -- was not reachable from here at all.
         //
-        // That is still irreversible, which is why it is last, behind its own separator, and asks.
+        // It now CLOSES them instead of refusing (Petre: "delete workspace in context menu, close
+        // all windows in it"), and the guard's reasoning survives that intact, because closing is
+        // not scattering. Nothing ends up on a desktop nobody chose; the windows are asked to go,
+        // the way the X in their title bar asks, and one that would rather ask about unsaved work
+        // cancels the whole delete (see WorkspaceManager.DeleteWorkspaceClosingWindows).
+        //
+        // Which leaves the mis-click, and three things answer it. The dialog says how many windows
+        // and which apps, so the click that was aimed at the wrong row is recognisable from the
+        // names in it. It defaults to No, so a stray Enter or Space on a focused dialog cannot
+        // agree to it. And it is still last, behind its own separator, furthest from everything
+        // reversible.
+        //
         // Petre confirmed the scope of what goes: "deleting a named workspace also discards its
         // roster entry (placement memory), yes."
         Add("🗑", "Delete workspace…", () =>
         {
-            var workspace = manager.State.Workspaces.FirstOrDefault(w => w.Id == workspaceId);
-            if (workspace is null) return; // deleted from elsewhere while the menu sat open
-
-            // Asked BEFORE the emptiness check, so the answer to a mis-click is always the same
-            // dialog rather than sometimes a refusal from deeper in.
+            // Read at CLICK time, for the same reason IndexOf above is: a rebuild between the menu
+            // opening and this click is routine on this bar, and a count captured when the menu was
+            // built would describe a row that has since gained or lost windows. Costs one overview
+            // query, which is COM-heavy and entirely fine on a deliberate delete.
             //
-            // The note only appears when something else actually happens to the group, because a
-            // warning about something that is not happening is worse than no warning. What happens
-            // depends on how much of the group is left, so the wording follows the two real cases
-            // rather than promising one of them.
-            var group = manager.State.GroupOf(workspaceId);
-            var others = group is null ? 0 : manager.State.Workspaces.Count(w => w.GroupId == group.Id) - 1;
-            var groupNote = (group, others) switch
-            {
-                (null, _) or (_, 0) => "",
-                // A group of one is not a group, so the last one left stands alone.
-                (_, 1) => $"\n\n'{group!.Name}' is left with one workspace, so the group is dissolved and that workspace stands on its own. It keeps its windows.",
-                // Losing the anchor is what stops the borrowing, and only the anchor lends windows.
-                _ when manager.State.IsAnchor(workspaceId) =>
-                    $"\n\n'{group!.Name}' keeps its other {others} workspaces and its name, but they will no longer show this workspace's windows.",
-                _ => $"\n\n'{group!.Name}' keeps its other {others} workspaces.",
-            };
+            // One entry per WINDOW, named by its app: the dialog counts windows and names apps, and
+            // DeleteWorkspacePrompt is what knows the difference.
+            //
+            // A query that fails reads as "nothing to close", which is the safe way round: the
+            // empty-workspace path below re-checks emptiness in Core and refuses if it was wrong.
+            var closing = manager.WindowsByWorkspace() is { IsSuccess: true } overview
+                ? overview.Value.Workspaces.FirstOrDefault(g => g.Workspace.Id == workspaceId)?.Running
+                    .Select(r => r.Window.ProcessName).ToList() ?? []
+                : [];
 
-            if (MessageBox.Show(this,
-                    $"Delete '{workspace.Name}'?\n\n" +
-                    $"Its virtual desktop, its name, its rules and its placement memory all go. " +
-                    $"This cannot be undone." + groupNote,
-                    "TaskSpaces", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            // None means the workspace was deleted from somewhere else while this menu sat open.
+            if (DeleteWorkspacePrompt.For(manager.State, workspaceId, closing) is not { HasValue: true } prompt)
                 return;
 
-            // The refusal path reports through the same Report() as everything else, so "it still
-            // has windows" arrives as a plain message rather than as a silent no-op.
-            Report(manager.DeleteWorkspaceIfEmpty(workspaceId));
+            // MessageBoxResult.No as the default button, which this dialog did not set while the
+            // only thing it could lose was a name.
+            if (MessageBox.Show(this, prompt.Value, "TaskSpaces", MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+                return;
+
+            // Two paths on purpose, chosen by what the user was actually shown. A row that looked
+            // empty goes through the guard, so if a window appeared in the seconds between the
+            // dialog and this click, the delete is REFUSED rather than closing a window nobody was
+            // warned about. Only a dialog that named windows is allowed to close any.
+            //
+            // Both report through the same Report() as everything else, so a refusal arrives as a
+            // plain message rather than as a silent no-op.
+            Report(closing.Count == 0
+                ? manager.DeleteWorkspaceIfEmpty(workspaceId)
+                : manager.DeleteWorkspaceClosingWindows(workspaceId));
         });
 
         return menu;

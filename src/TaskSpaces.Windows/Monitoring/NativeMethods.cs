@@ -102,6 +102,22 @@ public static class NativeMethods
     public const uint WM_SETTEXT = 0x000C;
     public const uint SMTO_ABORTIFHUNG = 0x0002;
 
+    // "Please close." The same request the title bar's X makes, which is the whole point: an app
+    // with unsaved work answers it by asking about the work, and one that is happy to go, goes.
+    // Nothing here ever uses TerminateProcess or EndTask -- those take the window without asking
+    // and lose whatever was in it.
+    //
+    // POSTED rather than sent (see PostMessage below), so a hung window cannot take our UI thread
+    // down with it.
+    public const uint WM_CLOSE = 0x0010;
+
+    // Drops the message in the window's own queue and returns at once, without waiting for the
+    // owning process to handle it. That is the property this is chosen for: SendMessage into
+    // another process's UI thread blocks until that thread answers, and a window that is not
+    // answering is exactly the case a close has to survive.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool PostMessage(nint hwnd, uint msg, nint wparam, nint lparam);
+
     // Petre: "i also don't see an icon for whatsapp app". WhatsApp is a Store app whose
     // WhatsApp.Root.exe is a launcher stub with NO embedded icon, so
     // Icon.ExtractAssociatedIcon does not fail -- it quietly hands back the generic Windows

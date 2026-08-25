@@ -1618,6 +1618,71 @@ public sealed class WorkspaceManager(
                     "Move them to another workspace first — drag their icons to another row on the bar — then delete it.")
                 : RemoveWorkspace(id)));
 
+    // Delete, and close what is in it on the way (Petre: "delete workspace in context menu, close
+    // all windows in it").
+    //
+    // This does NOT withdraw the refusal above. DeleteWorkspaceIfEmpty is still what a row with no
+    // windows goes through, and still the only path the bar takes for one, so the accident that
+    // guard was written against -- a mis-aimed right-click on a row full of work -- costs a name and
+    // nothing else. What this adds is the case the guard had no answer for: a workspace you are
+    // finished with, whose windows you are finished with too. Moving five windows to another row so
+    // that a workspace can be deleted, only to close them there, is ceremony with no product.
+    //
+    // Three things keep it from being the scatter that the refusal exists to prevent:
+    //
+    //   * The windows are CLOSED, not left to Windows' desktop merge. A merged desktop's windows
+    //     land on a neighbour and are found days later; a closed window is where the user put it.
+    //   * They are ASKED, by WM_CLOSE (see IWindowActivator.CloseAll). An app with unsaved work puts
+    //     its dialog up and stays, and nothing here kills a process.
+    //   * A survivor CANCELS THE DELETE. The workspace and its desktop are left exactly as they
+    //     were, so a window that is asking a question keeps its desktop under it. The windows that
+    //     did close stay closed, which is why the message says what is still open rather than
+    //     pretending anything can be undone.
+    //
+    // The close set is the overview's Running, which is the row the user is looking at. That is also
+    // what makes a borrowed window safe (#42): the overview attributes it to the workspace that
+    // LENDS it, so deleting the child that is standing on it closes nothing of its parent's.
+    public Result DeleteWorkspaceClosingWindows(Guid id) =>
+        Workspace(id).Bind(workspace => WindowsByWorkspace().Bind(overview =>
+            (overview.Workspaces.FirstOrDefault(g => g.Workspace.Id == id)?.Running ?? []) switch
+            {
+                // Nothing to close, so nothing to ask the OS: this is the old path exactly.
+                { Count: 0 } => RemoveWorkspace(id),
+                // Compatibility mode has no activator (see the constructor), which means no way to
+                // close anything. Reported rather than ignored, because silently deleting a
+                // workspace full of windows is the one outcome nothing here is willing to produce.
+                _ when activator is null => Result.Failure("This build cannot close windows."),
+                var rows => CloseThenRemove(workspace, rows),
+            }));
+
+    Result CloseThenRemove(Workspace workspace, IReadOnlyList<Core.Overview.WindowRow> rows) =>
+        activator!.CloseAll(rows.Select(r => r.Window.Handle).ToList()) switch
+        {
+            { Count: 0 } => RemoveWorkspace(workspace.Id),
+            var survivors => Result.Failure(StillOpen(workspace, survivors, rows)),
+        };
+
+    // Named by APP rather than counted, because the count is not actionable and the name is: the
+    // window is asking something on a desktop the user may not be standing on, and "Word" is the
+    // difference between finding it and clicking delete again in confusion.
+    //
+    // Distinct, so seven Chrome windows that all refused read as "chrome" once. A survivor whose row
+    // has since gone is dropped from the names rather than shown as blank; the count still includes
+    // it, so the message cannot claim fewer windows are open than there are.
+    static string StillOpen(Workspace workspace, IReadOnlyList<WindowHandle> survivors, IReadOnlyList<Core.Overview.WindowRow> rows) =>
+        $"'{workspace.Name}' was not deleted: {survivors.Count} " +
+        $"{(survivors.Count == 1 ? "window" : "windows")} would not close" +
+        survivors
+            .Select(h => rows.FirstOrDefault(r => r.Window.Handle == h)?.Window.ProcessName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct()
+            .ToList() switch
+        {
+            { Count: 0 } => ".",
+            var names => $" ({string.Join(", ", names)}).",
+        } +
+        "\n\nThat usually means an app is asking whether to save. Answer it, then delete again.";
+
     public Result SetRules(IReadOnlyList<WorkspaceRule> workspaceRules, IReadOnlyList<RenameRule> renameRules)
     {
         Persist(State with { WorkspaceRules = workspaceRules, RenameRules = renameRules });

@@ -24,4 +24,21 @@ public interface IWindowActivator
     // is exactly what cannot be trusted at the moment a click is decided (see
     // WorkspaceManager.ToggleWindow).
     bool IsMinimized(WindowHandle window);
+
+    // "Close these, then tell me which ones are still here." The close half of deleting a workspace
+    // with windows still in it (Petre: "delete workspace in context menu, close all windows in it").
+    //
+    // Here rather than on an interface of its own, for the reason Minimize is: it is one more thing
+    // asked of a window by handle, and a second interface would only ever be handed around beside
+    // this one.
+    //
+    // A LIST rather than one window at a time, because the wait is what makes this slow and the
+    // windows can do it at the same time: asking twenty windows to close and then waiting once is
+    // twenty times cheaper than waiting after each. The caller has all of them anyway.
+    //
+    // The return is the SURVIVORS -- the windows that were still there when the wait ran out. Not a
+    // Result: nothing here can fail in a way a caller could act on. A handle that has already died
+    // is a success, and a window that refuses to go is the one interesting outcome, which is what
+    // the list carries.
+    IReadOnlyList<WindowHandle> CloseAll(IReadOnlyList<WindowHandle> windows);
 }

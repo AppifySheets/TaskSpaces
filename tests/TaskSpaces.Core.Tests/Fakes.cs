@@ -111,6 +111,18 @@ public sealed class FakeActivator : IWindowActivator
     public Result Activate(WindowHandle w) { Activated.Add(w); return Result.Success(); }
     public Result Minimize(WindowHandle w) { Minimized.Add(w); return Result.Success(); }
     public bool IsMinimized(WindowHandle w) => Iconic.Contains(w);
+
+    // Every window this was asked to close, in the order it was asked.
+    public List<WindowHandle> Closed { get; } = [];
+    // ...and the ones that ignore the request, the way an app with unsaved work does: it puts up a
+    // "save changes?" dialog and stays there. Set by tests; they come back as survivors, which is
+    // exactly what the real WindowActivator reports when its wait runs out.
+    public HashSet<WindowHandle> Stubborn { get; } = [];
+    public IReadOnlyList<WindowHandle> CloseAll(IReadOnlyList<WindowHandle> windows)
+    {
+        Closed.AddRange(windows);
+        return windows.Where(Stubborn.Contains).ToList();
+    }
 }
 
 // Flashing taskbar buttons. Tests push handles through Subject to mean "this window's button

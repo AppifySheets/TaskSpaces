@@ -58,6 +58,41 @@ public sealed class WindowActivator : IWindowActivator
             if (GetForegroundWindow() != window.Value) ForceForeground(window.Value);
         }, e => $"Could not activate window {window.Value}: {e.Message}");
 
+    // Ask a whole row's worth of windows to close, then wait once for them all rather than once
+    // each: they close in parallel, and a per-window wait would turn a workspace of ten windows
+    // into ten waits end to end.
+    //
+    // WM_CLOSE, posted. That is the same request the X in the title bar makes, so an app with
+    // unsaved work does what it always does -- puts a dialog up and stays -- and this reports it as
+    // a survivor instead of taking the window from under it. Nothing here kills a process.
+    //
+    // A dead handle needs no special case: PostMessage to it fails, IsWindow already says false,
+    // and the window is not a survivor. Which is why the return value of the post is ignored --
+    // "the window is already gone" and "the post worked" are the same outcome here.
+    //
+    // It BLOCKS the calling thread, which is the bar's UI thread, and that is deliberate rather than
+    // overlooked: the caller has just been told what will close and has agreed to it, so the honest
+    // thing is for the bar to be busy until it has happened. Handing the wait to a background thread
+    // would buy a responsive bar and then have to come back to the UI thread anyway, because
+    // removing the desktop afterwards is a COM call that cannot be made anywhere else.
+    //
+    // The budget is generous compared with the 300ms move-settling wait elsewhere in the app,
+    // because this waits on more than one process's UI thread and on apps that flush state on the
+    // way out. A browser with many tabs is the case that pushed it up. Longer would start to feel
+    // like a hang for the one thing this cannot help with anyway: an app that has decided to ask a
+    // question and will sit there until it is answered.
+    public IReadOnlyList<WindowHandle> CloseAll(IReadOnlyList<WindowHandle> windows)
+    {
+        windows.ToList().ForEach(w => PostMessage(w.Value, WM_CLOSE, 0, 0));
+
+        for (var waited = 0; waited < CloseBudgetMs && windows.Any(w => IsWindow(w.Value)); waited += CloseStepMs)
+            Thread.Sleep(CloseStepMs);
+
+        return windows.Where(w => IsWindow(w.Value)).ToList();
+    }
+
+    const int CloseBudgetMs = 2000, CloseStepMs = 25;
+
     static void ForceForeground(nint window)
     {
         var incumbent = GetForegroundWindow();
