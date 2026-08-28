@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using CSharpFunctionalExtensions;
 using TaskSpaces.App;
 using TaskSpaces.Core;
@@ -428,14 +429,29 @@ public class FloatingBarRebuildTests
 
         // ...and the same for the box drawn around each ROW, which is where the current-workspace
         // marker moved to (Petre: "when looking at the left edge, i can't really see what's
-        // active" -- the pill this replaced sat in the right-hand gutter). Present on both rows
-        // at the same thickness and corner radius, differing only in the brush.
+        // active" -- the pill this replaced sat in the right-hand gutter). Every row reserves the
+        // same band at the same thickness and corner radius, and none of them paints it: the ring
+        // itself is a stroked Rectangle drawn inside that band, so the trail can be dashed.
         var currentRow = RowBorderFor(bar.Rows, "GEPHA");
         var otherRow = RowBorderFor(bar.Rows, "Sparrow");
         Assert.Equal(otherRow.BorderThickness, currentRow.BorderThickness);
         Assert.Equal(otherRow.CornerRadius, currentRow.CornerRadius);
         Assert.Equal(otherRow.Margin, currentRow.Margin);
-        Assert.NotEqual(Strength(otherRow.BorderBrush), Strength(currentRow.BorderBrush));
+
+        // The ring that actually paints. It differs in stroke and pattern between these two rows and
+        // in nothing that measures: same thickness, same margin, on a row that is present either way.
+        // That is the invariant this test exists for -- current-ness must cost no width -- restated at
+        // the element that now carries it.
+        var currentRing = Rings(currentRow).Single();
+        var otherRing = Rings(otherRow).Single();
+        Assert.Equal(otherRing.StrokeThickness, currentRing.StrokeThickness);
+        Assert.Equal(otherRing.Margin, currentRing.Margin);
+
+        // Told apart by the PATTERN, not by strength: Sparrow is the workspace GEPHA came from, so it
+        // wears the trail's dashed ring in the same white (#155, second design). A dash array is not a
+        // measure, so this difference cannot move anything either.
+        Assert.Empty(currentRing.StrokeDashArray);
+        Assert.NotEmpty(otherRing.StrokeDashArray);
     });
 
     // The current-row state lives entirely in brush ALPHA now, so "brighter" is a number these
@@ -443,6 +459,14 @@ public class FloatingBarRebuildTests
     static byte Strength(TextBlock label) => Strength(label.Foreground);
 
     static byte Strength(Brush brush) => ((SolidColorBrush)brush).Color.A;
+
+    // Every ring in a row: the stroked Rectangle each row draws over its own border band, which is
+    // what carries the current-workspace mark and the history trail's dashes (#155).
+    static IReadOnlyList<Rectangle> Rings(DependencyObject row) =>
+        LogicalTreeHelper.GetChildren(row)
+            .OfType<DependencyObject>()
+            .SelectMany(child => child is Rectangle ring ? [ring] : Rings(child))
+            .ToList();
 
     // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
     // once, without the kb."
@@ -717,8 +741,11 @@ sealed class Harness
 
     // withUnnamedDesktop: a virtual desktop the shell has but no workspace claims -- Desktop 1, the one
     // everybody starts on (#149) -- with a window on it, since OverviewBuilder drops empty ones.
+    // extraWorkspace: a THIRD workspace, which is the fewest that gives the history trail (#155) two
+    // steps -- with two workspaces the walk returns to where it started after one, so "the one before
+    // the previous one" cannot exist to be drawn.
     public static Harness Build(bool withUnresolvableWindow = false, bool singleWorkspace = false,
-        bool busyWorkspace = false, bool withUnnamedDesktop = false)
+        bool busyWorkspace = false, bool withUnnamedDesktop = false, bool extraWorkspace = false)
     {
 
         // NO Application is created here, deliberately. An Application belongs to the thread
@@ -770,9 +797,27 @@ sealed class Harness
             monitor.Initial.Add(stray);
         }
 
+        // The third workspace, with a window of its own so its row looks like the others. It is last
+        // in the list, and no visit is ever recorded here, so the MRU keeps that order -- which makes
+        // it the SECOND step of the trail behind Sparrow, deterministically.
+        var archiveDesktop = Guid.NewGuid();
+        var archive = new Workspace(Guid.NewGuid(), "Archive", archiveDesktop);
+        if (extraWorkspace)
+        {
+            desktops.Desktops.Add(new DesktopInfo(archiveDesktop, "Archive"));
+            var filed = new WindowInfo(new WindowHandle(606), 66, "explorer", @"C:\explorer.exe", "Archive", null);
+            desktops.Placements[filed.Handle] = archiveDesktop;
+            monitor.Initial.Add(filed);
+        }
+
         var store = new StubStore
         {
-            Stored = AppState.Empty with { Workspaces = singleWorkspace ? [gepha] : [gepha, sparrow] },
+            Stored = AppState.Empty with
+            {
+                Workspaces = singleWorkspace ? [gepha]
+                    : extraWorkspace ? [gepha, sparrow, archive]
+                    : [gepha, sparrow],
+            },
         };
         var manager = new WorkspaceManager(desktops, monitor, new StubTitles(), store);
         Assert.True(manager.Start().IsSuccess);

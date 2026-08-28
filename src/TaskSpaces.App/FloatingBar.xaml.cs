@@ -6,6 +6,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using CSharpFunctionalExtensions;
 using TaskSpaces.Core;
 using TaskSpaces.Core.Domain;
@@ -1596,7 +1597,31 @@ public partial class FloatingBar : Window
             runs[^1].Add(r);
         });
 
-        var grid = new Grid();
+        // ONE ICON LINE TALL AT LEAST, whatever this line happens to hold, and that floor lives HERE
+        // rather than on the stack of lines above it. Petre: "separator is not always uniform in
+        // height."
+        //
+        // Measured on a real bar at its 0.9 scale, before this moved:
+        //
+        //   row with icons   line 23.4   mark 12.6 centred, 5.4 down from the line's top
+        //   row with none    line 12.6   mark 12.6 at the top, all the slack below it
+        //
+        // The stroke is a constant 14 DIP (MonitorMarker), so the ink never varied. What varied is
+        // that a line is as tall as its tallest child: a line holding icons has room to centre the
+        // mark in, and a line holding nothing but marks is exactly as tall as one, so it sat at the
+        // top of the row with the row's spare height underneath. Two neighbouring rows then drew
+        // their separators at different heights, which is what the screenshot showed.
+        //
+        // The floor used to sit on the vertical stack of lines instead, which cannot fix this: a
+        // vertical StackPanel gives its children their own desired height and keeps the slack, so
+        // the row was the right height and the line inside it was not. Here it is the LINE that is
+        // never shorter than an icon line, so the mark has the same space to centre in on every row
+        // -- and on each line of a wrapped row, which is the same question one level down.
+        //
+        // Still a floor rather than a fixed height, for the reason the stack's was: a line with tall
+        // content has to be free to exceed it. It also still scales with a shrunken row (#52, #109),
+        // because it is inside the row's own transform.
+        var grid = new Grid { MinHeight = IconLineHeight };
 
         // #89's drop target: the half of the line that stands for one screen. Painted behind the
         // icons rather than over them (added first, so it is the bottom of the Grid's z-order), and
@@ -2229,17 +2254,12 @@ public partial class FloatingBar : Window
             Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            // One icon line's worth, even with no icons in it (#76), so an empty workspace's row is
-            // the same height as a row holding one window instead of collapsing onto its label.
-            //
-            // A floor rather than a fixed height: a row with icons already exceeds it, and a row
-            // whose icons WRAP has to be free to grow. On the pinned row it also makes the drop
-            // target full height, which is the row's whole purpose.
-            //
-            // Applied to the icons rather than the row so the minimized transform still scales it:
-            // #52 scales the entire row by a third, and a floor placed on the row itself would
-            // fight that.
-            MinHeight = IconLineHeight,
+            // The "one icon line's worth even when empty" floor (#76) is NOT here any more: it moved
+            // onto each line, in LineOf, where the comment carries the measurement that moved it.
+            // A row of lines that each carry the floor has it too, so an empty workspace's row is
+            // still the height of a row holding one window and the pinned row's drop target is still
+            // full height -- and the mark inside the line now has the same space to centre in on
+            // every row, which a floor at this level could not give it.
             // The indent for a nested row (#42) is taken out of the ICONS' space, not the row's,
             // so the row itself still spans the bar and the monitor alignment still lines up
             // across every row.
@@ -2412,6 +2432,36 @@ public partial class FloatingBar : Window
 
         Grid.SetColumn(label, 1);
         container.Children.Add(label);
+
+        // THE ROW'S RING, and it is a stroked Rectangle rather than the Border's own BorderBrush for
+        // one blunt reason: Petre wants the trail told apart by pattern -- "current - solid - previous
+        // - dashed; one before that - dotted" -- and a Border cannot draw a dashed edge at all. There
+        // is no dash property on it and no brush that fakes one honestly, since a tiled brush would
+        // dash the horizontal edges and smear the vertical ones.
+        //
+        // Drawn OVER the border band the box below still reserves, not instead of it. The box keeps
+        // its 2px transparent thickness on every row, which is what stops a SizeToContent bar
+        // resizing every time the current row moves; this rectangle just paints in that reserved
+        // space. Hence the negative margin of half the thickness: the rectangle's edge sits in the
+        // middle of the band, and a stroke centred on it covers the band exactly.
+        //
+        // Added last, so it paints over the icons and the label, and hit-test invisible, so it cannot
+        // swallow a click at the row's edge -- the row's own press handling is what makes a row
+        // clickable and it lives below this.
+        var ring = new Rectangle
+        {
+            Margin = new Thickness(-RowRingThickness / 2),
+            StrokeThickness = RowRingThickness,
+            Stroke = Brushes.Transparent,
+            // A pixel more than the box's own 3, because this sits a pixel further out.
+            RadiusX = 4,
+            RadiusY = 4,
+            IsHitTestVisible = false,
+        };
+        Grid.SetColumn(ring, 0);
+        Grid.SetColumnSpan(ring, container.ColumnDefinitions.Count);
+        container.Children.Add(ring);
+        PaintRing(ring, isCurrent ? CurrentRowRing : Brushes.Transparent, SolidRing);
 
         // Hover freeze: hold this row's icon order while the pointer is inside it. Wired for
         // EVERY row, including the ones that can never re-sort (📌 Pinned and Unplaced have no
@@ -2655,7 +2705,11 @@ public partial class FloatingBar : Window
         var box = new Border
         {
             Child = container,
-            BorderBrush = isCurrent ? CurrentRowRing : Brushes.Transparent,
+            // Never painted any more: the ring itself is the Rectangle built above, which is the only
+            // way to draw the dashed and dotted steps of the trail. The THICKNESS stays, though, and
+            // it is the whole reason this border is still here -- it reserves the band the rectangle
+            // paints in, on every row, so the bar cannot resize when a ring appears.
+            BorderBrush = Brushes.Transparent,
             // Two pixels, not one, and paid by EVERY row (transparent when not current) for the
             // rule this file keeps relearning: the bar is SizeToContent, so a thickness only the
             // current row carried would resize the whole window on every switch. Uniform, it
@@ -2684,13 +2738,13 @@ public partial class FloatingBar : Window
         // Keyed on the switch DESTINATION rather than the row's label, because names are not
         // unique (an unbound desktop can share a name with a workspace) and the gesture only
         // ever knows ids.
-        if (rowKey is { } key) rowRings[key] = box;
+        if (rowKey is { } key) rowRings[key] = ring;
         return box;
     }
 
-    // Rebuilt from scratch on every RebuildCore, because the rows are. Anything holding a Border
-    // from a previous build is holding an element that is no longer in the tree.
-    readonly Dictionary<Guid, Border> rowRings = [];
+    // Rebuilt from scratch on every RebuildCore, because the rows are. Anything holding an element
+    // from a previous build is holding one that is no longer in the tree.
+    readonly Dictionary<Guid, Rectangle> rowRings = [];
 
     // ...and every icon on the bar, for the same reason and with the same lifetime.
     //
@@ -2790,12 +2844,20 @@ public partial class FloatingBar : Window
         //     and the past is the first thing that should give way. During a drag or a chord, "where
         //     this lands" outranks "where I came from" on the same row, which is also what the issue
         //     asked for.
+        //
+        // Each row is painted with a STROKE and a PATTERN now, not just a brush: everything about
+        // where you are or are going is a solid ring, and only the trail behind you is broken up.
         var hovered = candidate is null ? hoveredRow?.RowKey : null;
-        rowRings.ToList().ForEach(row =>
-            row.Value.BorderBrush = row.Key == candidate ? CandidateRowRing
-                : row.Key == currentRow ? CurrentRowRing
-                : row.Key == hovered ? CandidateRowRing
-                : HistoryRing(row.Key) ?? Brushes.Transparent);
+        rowRings.ToList().ForEach(row => PaintRing(row.Value,
+            row.Key == candidate || row.Key == hovered ? CandidateRowRing
+            : row.Key == currentRow ? CurrentRowRing
+            : HistoryRing(row.Key) is not null ? CurrentRowRing
+            : Brushes.Transparent,
+            row.Key == currentRow || row.Key == candidate || row.Key == hovered
+                ? SolidRing
+                : HistoryRing(row.Key) ?? SolidRing));
+
+        DumpRings();
 
         // Petre: "when adding a ring to the next workspace, make the active window in it visible
         // clearly, possibly with the same strength as it is in the currently active workspace."
@@ -2845,14 +2907,56 @@ public partial class FloatingBar : Window
     // the amber one moves off it.
     Guid? currentRow;
 
-    // How faintly this row wears the trail, or null for a row that is not in it (#155).
-    Brush? HistoryRing(Guid rowKey) =>
+    // Which PATTERN this row wears for the trail, or null for a row that is not in it (#155).
+    //
+    // Petre: "current - solid - previous - dashed; one before that - dotted." One step of the trail
+    // per pattern, in that order, and the depth of the trail (HistoryDepth) is the number of patterns
+    // there are -- which is the honest cap on the idea. A fourth step would need a fourth pattern
+    // nobody could name at 2px.
+    DoubleCollection? HistoryRing(Guid rowKey) =>
         historyTrail.ToList().IndexOf(rowKey) switch
         {
-            0 => PreviousRowRing,
-            1 => EarlierRowRing,
+            0 => DashedRing,
+            1 => DottedRing,
             _ => null,
         };
+
+    // Which rows are wearing what, behind the trace marker and only when it CHANGES, like the band and
+    // geometry dumps. Petre: "i can't see dotted lines", then "can't see dashed anything".
+    //
+    // Written because the alternative was another round of guessing at a screenshot. A ring can fail to
+    // appear for two completely different reasons and they look identical: the trail may be empty or
+    // shorter than it should be, or it may name a workspace whose ROW was never registered, in which
+    // case there is nothing to paint on. This line separates them by name, so the answer is a row to go
+    // and look at rather than a theory.
+    void DumpRings()
+    {
+        if (!ClickTrace.On) return;
+
+        var line = $"rings: current={NameOf(currentRow)} trail=[" +
+                   string.Join(", ", historyTrail.Select(id =>
+                       $"{NameOf(id)}{(rowRings.ContainsKey(id) ? "" : " NO ROW")}")) +
+                   $"] rows={rowRings.Count}";
+
+        if (line == lastRingDump) return;
+        lastRingDump = line;
+        ClickTrace.Write(line);
+    }
+
+    string lastRingDump = "";
+
+    string NameOf(Guid? id) =>
+        id is { } key
+            ? manager.State.Workspaces.FirstOrDefault(w => w.Id == key)?.Name ?? key.ToString()[..8]
+            : "none";
+
+    // Stroke and pattern together, always both, because the two are one decision: a ring that kept
+    // yesterday's dashes under today's brush would say the wrong thing about where you have been.
+    static void PaintRing(Rectangle ring, Brush stroke, DoubleCollection pattern)
+    {
+        ring.Stroke = stroke;
+        ring.StrokeDashArray = pattern;
+    }
 
     // ~20% white: enough to read as "this row is armed" against the bar's #99202020
     // background without washing the icons out mid-drag.
@@ -3548,23 +3652,34 @@ public partial class FloatingBar : Window
     // White is the same brightness on every row.
     static readonly Brush CurrentRowRing = Frozen(0xC0, 0xFF, 0xFF, 0xFF);
 
-    // The trail behind it (#155). Petre, on how the previous workspace should look: "maybe still
-    // white, less pronounced than the current one."
+    // The trail behind it (#155), and this is its second design. The first told the three steps apart
+    // by BRIGHTNESS -- the same white at 75%, 40% and 20% -- and Petre replaced it: "let the active
+    // workspace be circled the way it is, previous workspaces be dashed, instead of dimmed white",
+    // then "current - solid - previous - dashed; one before that - dotted".
     //
-    // Same colour and same shape as the current row's ring, at 40% and 20% of full white against its
-    // 75%. Same family on purpose: these are the same KIND of claim -- "this row is a place in your
-    // history" -- and a different colour would have invented a second meaning for what is one idea at
-    // three strengths. Weaker on purpose too, and by a wide margin at each step, because the gaps have
-    // to survive being drawn over lane tints of any colour. Equal spacing would have been prettier and
-    // less legible: the drop from 0xC0 to 0x66 is what stops "here" and "just left" reading as two
-    // currents, which is the mistake that would make the whole mark worse than nothing.
+    // He is right, and the reason is worth keeping rather than just the patterns. Dimming spends the
+    // one channel that has to survive being drawn over lane tints of every colour, so the faintest
+    // step was always the one at risk of not being there at all -- the old comment here said as much
+    // and offered dropping a step as the fix. A pattern costs nothing in contrast: a dashed ring is
+    // full-strength white everywhere it is drawn and simply drawn in fewer places, which is quieter
+    // than a solid ring without being fainter than anything.
     //
-    // Both are still visibly rings rather than hints. A trail nobody can see is a trail that is not
-    // there, and the second step is the one to watch on a busy bar: if it turns out to be invisible in
-    // daily use, the honest fix is dropping to one step rather than brightening it into competing with
-    // the current row.
-    static readonly Brush PreviousRowRing = Frozen(0x66, 0xFF, 0xFF, 0xFF);
-    static readonly Brush EarlierRowRing = Frozen(0x33, 0xFF, 0xFF, 0xFF);
+    // Measured in units of the stroke's own thickness (2 DIP), so: dashes of 6px with 4px gaps, dots
+    // of 2px with the same gaps. Dots are told from dashes by the LENGTH OF THE INK rather than by the
+    // gap, because at this scale the gap is the part the eye cannot measure -- a 2px square reads as a
+    // dot next to a 6px bar, whatever the spacing.
+    //
+    // Frozen, like every static brush in this file, or the first row built on another thread throws.
+    static readonly DoubleCollection SolidRing = Dashes();
+    static readonly DoubleCollection DashedRing = Dashes(3, 2);
+    static readonly DoubleCollection DottedRing = Dashes(1, 2);
+
+    static DoubleCollection Dashes(params double[] pattern)
+    {
+        var dashes = new DoubleCollection(pattern);
+        dashes.Freeze();
+        return dashes;
+    }
 
     // Petre: "when switching, instead of showing the workspaces, focus the floating window
     // instead and do a cycle over those workspaces, in different color" -- because "i need to
