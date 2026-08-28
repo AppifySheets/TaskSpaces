@@ -143,4 +143,56 @@ public class SharedIdentityPlacementTests
         Assert.NotEqual(
             RosterIdentity.Of(EdgePath, $"\"{EdgePath}\" --profile-directory=Default"),
             RosterIdentity.Of(EdgePath, $"\"{EdgePath}\" --profile-directory=\"Profile 2\""));
+
+    // --- an automated browser is a different app (Petre's Chrome report) ------------------------
+    //
+    // "Opening chrome in a workspace, i think claude opened it, opened up in my current workspace, not
+    // its own workspace... but it has worked correctly in the past."
+    //
+    // The trace named both halves. The launched-by tier declined because the launcher's most recent
+    // window was in the workspace he was already standing in, so there was nothing to move. And memory
+    // declined because another live Chrome shared the identity -- which on his machine every Chrome
+    // does, since not one of them passes --profile-directory. The past successes were the launched-by
+    // tier catching it whenever he happened to be standing somewhere else.
+    //
+    // These two tests are the whole fix seen from the outside: the automated window is placed even with
+    // ordinary browser windows live, and an ordinary window is still left where it was opened.
+    const string ChromePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+
+    static WindowInfo Chrome(nint hwnd, string args) =>
+        new(new WindowHandle(hwnd), 960, "chrome", ChromePath, "Chrome", $"\"{ChromePath}\" {args}");
+
+    static WindowInfo Automated(nint hwnd, string session) =>
+        Chrome(hwnd, $@"--user-data-dir=C:\x\ms-playwright-mcp\mcp-chrome-{session} --enable-automation");
+
+    [Fact]
+    public void An_automated_browser_window_is_placed_even_with_ordinary_ones_open()
+    {
+        // Two ordinary Chrome windows are live, and one automated one has been taught to live in
+        // Personal, exactly as his roster records it ("dice to seed - Google Chrome").
+        var manager = Started(Chrome(0x901, "--restore-session"), Chrome(0x902, ""), Automated(0x903, "829010e"));
+        Assert.True(manager.AssignWindow(Automated(0x903, "829010e").Handle, personal.Id).IsSuccess);
+
+        // That session ends and a new one starts, with a directory named differently.
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Automated(0x903, "829010e")));
+        desktops.WindowPlacements.Clear();
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Automated(0x904, "5adf218")));
+
+        Assert.Equal(personal.DesktopId, desktops.WindowPlacements[Automated(0x904, "5adf218").Handle]);
+    }
+
+    [Fact]
+    public void An_ordinary_browser_window_is_still_left_where_it_opened()
+    {
+        var manager = Started(Chrome(0x901, "--restore-session"), Automated(0x903, "829010e"));
+        Assert.True(manager.AssignWindow(Automated(0x903, "829010e").Handle, personal.Id).IsSuccess);
+        desktops.WindowPlacements.Clear();
+
+        // A Chrome window he opens himself is not the automated app coming back, and must not be
+        // dragged to where that one lives.
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome(0x905, "")));
+
+        Assert.False(desktops.WindowPlacements.ContainsKey(Chrome(0x905, "").Handle));
+    }
 }

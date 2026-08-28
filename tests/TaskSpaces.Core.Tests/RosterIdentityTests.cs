@@ -45,6 +45,42 @@ public class RosterIdentityTests
         Assert.NotEqual(work, home);
     }
 
+    // An automated browser is not the browser. Petre: "opening chrome in a workspace, i think claude
+    // opened it, opened up in my current workspace, not its own workspace."
+    //
+    // A Chrome that Playwright starts runs out of its own --user-data-dir and carries no
+    // --profile-directory at all -- and neither does an ordinary Chrome on Petre's machine, so on
+    // profile alone the two were one identity. Placement memory stands down when another live window
+    // shares an identity, so his roster entry for the automated Chrome could never be applied while any
+    // Chrome window was open, which on his machine is always.
+    [Fact]
+    public void An_automated_browser_has_its_own_identity()
+    {
+        var mine = RosterIdentity.Of(@"C:\chrome\chrome.exe", @"""C:\chrome\chrome.exe"" --restore-session");
+        var automated = RosterIdentity.Of(@"C:\chrome\chrome.exe",
+            @"""C:\chrome\chrome.exe"" --user-data-dir=C:\x\ms-playwright-mcp\mcp-chrome-829010e --enable-automation");
+
+        Assert.NotEqual(mine, automated);
+    }
+
+    // ...and it is the SAME identity from one automated session to the next, which is the half that
+    // makes it useful: the directory's trailing token is new every launch, so keying on the raw path
+    // would give every session a fresh identity and remember nothing.
+    [Fact]
+    public void Two_automated_sessions_share_one_identity() =>
+        Assert.Equal(
+            RosterIdentity.Of(@"C:\chrome\chrome.exe", @"""C:\chrome\chrome.exe"" --user-data-dir=C:\x\ms-playwright-mcp\mcp-chrome-829010e"),
+            RosterIdentity.Of(@"C:\chrome\chrome.exe", @"""C:\chrome\chrome.exe"" --user-data-dir=C:\x\ms-playwright-mcp\mcp-chrome-5adf218"));
+
+    // Two ordinary windows are still one identity, which is the ruling this must not disturb: session
+    // arguments vary run to run, and a browser that got a new identity every launch would be a new app
+    // every launch.
+    [Fact]
+    public void Two_ordinary_browser_windows_are_still_one_identity() =>
+        Assert.Equal(
+            RosterIdentity.Of(@"C:\chrome\chrome.exe", @"""C:\chrome\chrome.exe"" --restore-session"),
+            RosterIdentity.Of(@"C:\chrome\chrome.exe", @"""C:\chrome\chrome.exe"" --flag-switches-begin"));
+
     [Fact]
     public void Window_without_process_path_has_no_identity() =>
         Assert.True(RosterIdentity.Of(Window(@"C:\a.exe", null) with { ProcessPath = null }).HasNoValue);

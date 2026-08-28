@@ -35,9 +35,18 @@ public static class RosterIdentity
     // Default profile, so on profile alone it shared one identity with all four of his
     // ordinary Edge windows -- and since the roster maps identity -> ONE workspace, whichever
     // of the five was placed last owned the lot.
+    // ...and the profile ROOT when the browser was told to use one of its own, which is Petre's Chrome
+    // report: "opening chrome in a workspace, i think claude opened it, opened up in my current
+    // workspace, not its own workspace." An automated Chrome runs out of its own --user-data-dir and
+    // passes no --profile-directory -- and on his machine neither does the Chrome he starts himself, so
+    // every Chrome window was the identity "chrome.exe|" and memory, which stands down when another
+    // live window shares an identity, could never place any of them. The directory separates the
+    // automated browser from his own; BrowserProfile normalises away its per-session suffix so the
+    // separation survives from one session to the next.
     static string BrowserContent(string? commandLine) =>
         BrowserProfile.FromCommandLine(commandLine).Map(profile => $"profile:{profile}").GetValueOrDefault("")
-        + BrowserProfile.AppFromCommandLine(commandLine).Map(app => $"|app:{app}").GetValueOrDefault("");
+        + BrowserProfile.AppFromCommandLine(commandLine).Map(app => $"|app:{app}").GetValueOrDefault("")
+        + BrowserProfile.UserDataDirFromCommandLine(commandLine).Map(dir => $"|dir:{dir}").GetValueOrDefault("");
 
     public static string Of(InventoryEntry entry) => Of(entry.ProcessPath, entry.CommandLine);
 
