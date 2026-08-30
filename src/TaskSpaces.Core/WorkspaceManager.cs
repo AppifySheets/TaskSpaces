@@ -386,6 +386,69 @@ public sealed class WorkspaceManager(
         ApplyPendingMonitorMoves();
     }
 
+    // The window list, reconciled against the OS. Rides the same 5s sweep ResyncActiveWindow does.
+    //
+    // Petre: "i also don't see obs in the notary workspace." OBS was running, on that desktop, and the
+    // bar had never heard of it -- while still drawing a row for a handle Windows said was destroyed.
+    //
+    // The cause is that there are TWO window lists and only one of them was ever repaired.
+    // WindowMonitor.Resync reconciles the monitor's list every five seconds, but its adopt half
+    // returns immediately for anything already in `known`, and this class's list is fed purely by the
+    // monitor's events. So a window the manager missed -- a dropped WinEvent, an announcement made
+    // before it was listening -- can never be re-offered: to the monitor, that window was announced
+    // long ago. Measured on his machine, with the app's own code:
+    //
+    //   probe: obs 0xF11DA is a candidate: True, FromHwnd(obs).HasValue = True
+    //   bar:   band notary: msedge, Code, Docker Desktop, StartAllBackCfg   (no obs, and a dead 1C13F2)
+    //
+    // Nineteen hours of sweeps could not fix that, and restarting the app fixed it instantly. This is
+    // that restart, done every five seconds and without the restart.
+    //
+    // Three rules, and each one is load-bearing:
+    //
+    //   * ADOPT what the OS lists and we lack. Snapshot() is the taskbar-candidate list, which is the
+    //     same question the bar is answering, so anything in it belongs in a row.
+    //   * DROP only what is DEAD, asked as IsAlive and never as "absent from Snapshot". A window
+    //     minimised to the tray leaves the candidate list while its hwnd stays valid, and dropping it
+    //     would forget its rename ledger entry -- the defect OnHidden was written to avoid.
+    //   * PULSE only on a CHANGE, for the reason ResyncActiveWindow gives above: a pulse rebuilds
+    //     every open surface, and each rebuild costs a DesktopOf COM call per known window. In the
+    //     steady state this is one list comparison and nothing else.
+    //
+    // Adoption goes through neither OnAppeared nor the placement tiers, and that is deliberate. This is
+    // a window that has been open for hours where its owner left it, so re-living its first moment
+    // could move it: rules would fire, and #94's launched-by would look for whoever started it. A
+    // repair puts the window back in the list, not back through its own history. It is the same
+    // registration Start() does for the windows that are already open when the app launches.
+    public void RepairWindowList()
+    {
+        var adopted = monitor.Snapshot()
+            .Where(w => !knownWindows.ContainsKey(w.Handle) && !IsOursByProcess(w))
+            .ToList();
+
+        adopted.ForEach(w => { knownWindows[w.Handle] = w; NoteContainer(w); });
+
+        // Materialised before removing anything, because OnDisappeared writes to the dictionary this
+        // reads. It also does the rest of a close: the ledger, memberships and the detached set all
+        // have to forget a handle Windows may hand to an unrelated window tomorrow.
+        var dead = knownWindows.Values.Where(w => !monitor.IsAlive(w.Handle)).ToList();
+        dead.ForEach(OnDisappeared);
+
+        // Only when it did something, which is the same rule the pulse follows: a line every five
+        // seconds saying "nothing was wrong" would bury the one that matters.
+        if (adopted.Count + dead.Count > 0)
+            trace?.Invoke($"repair: adopted [{string.Join(", ", adopted.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}] " +
+                          $"dropped [{string.Join(", ", dead.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}]");
+
+        // OnDisappeared pulses for itself, so an adoption is the only change left to announce.
+        if (adopted.Count > 0) stateChanged.OnNext(Unit.Default);
+    }
+
+    // Our own windows never enter the list through the event path (see IsOurs), and a repair must not
+    // be the back door that puts them there. IsOurs cannot answer before the window is in the
+    // dictionary, which is exactly the moment this is asked, so the question is asked of the snapshot.
+    bool IsOursByProcess(WindowInfo window) => window.ProcessId == ownProcess;
+
     // The one place activeWindow is written after startup, so the event path and the sweep can
     // never disagree about what "became active" means.
     void MarkActive(WindowHandle window)

@@ -64,9 +64,15 @@ public sealed class FakeMonitor : IWindowMonitor
     // Lets a test say "this window already had focus when TaskSpaces started".
     public Maybe<WindowHandle> ForegroundWindow { get; set; } = Maybe<WindowHandle>.None;
 
+    // Handles the test has destroyed. Everything else is alive, including a window a test has taken
+    // out of InitialWindows to stand for a tray-minimise -- which is the distinction the repair turns
+    // on, so the fake has to be able to express both.
+    public HashSet<WindowHandle> Dead { get; } = [];
+
     public Result Start() => Result.Success();
     public IObservable<WindowEvent> Events => Subject.AsObservable();
     public IReadOnlyList<WindowInfo> Snapshot() => InitialWindows.ToList();
+    public bool IsAlive(WindowHandle window) => !Dead.Contains(window);
     public Maybe<WindowHandle> Foreground() => ForegroundWindow;
 }
 

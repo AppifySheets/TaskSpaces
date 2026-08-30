@@ -872,6 +872,18 @@ public partial class App : Application
                 try { monitor.Resync(); }
                 catch (Exception e) { ClickTrace.Write($"sweep: Resync threw {e.GetType().Name}: {e.Message}"); }
 
+                // ...and then the same question of the MANAGER's list, which used to reconcile against
+                // nothing. Petre: "i also don't see obs in the notary workspace", with the bar still
+                // drawing a row for a handle Windows had destroyed.
+                //
+                // The line above repairs the monitor's list, and its adopt half skips anything the
+                // monitor already knows -- so a window that reached the monitor but not the manager was
+                // invisible until the app was restarted. Immediately after Resync, so an adoption the
+                // monitor has just made is offered onward in the same tick rather than five seconds
+                // later.
+                try { manager.RepairWindowList(); }
+                catch (Exception e) { ClickTrace.Write($"sweep: RepairWindowList threw {e.GetType().Name}: {e.Message}"); }
+
                 try { manager.ReapplyRenames(); }
                 catch (Exception e) { ClickTrace.Write($"sweep: ReapplyRenames threw {e.GetType().Name}: {e.Message}"); }
 

@@ -184,6 +184,11 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         });
     }
 
+    // The one question that tells a destroyed window from one minimised to the tray, asked with the
+    // same call Resync's own drop half uses (see above). On the interface because the manager's repair
+    // needs it and must not be tempted to ask a cheaper question.
+    public bool IsAlive(WindowHandle window) => IsWindow(window.Value);
+
     nint Hook(uint min, uint max) =>
         SetWinEventHook(min, max, 0, callback, 0, 0, WINEVENT_OUTOFCONTEXT);
 

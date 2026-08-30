@@ -928,6 +928,7 @@ sealed class StubMonitor : IWindowMonitor
     public Result Start() => Result.Success();
     public IObservable<WindowEvent> Events => Pump;
     public IReadOnlyList<WindowInfo> Snapshot() => Initial.ToList();
+    public bool IsAlive(WindowHandle window) => true;
     public Maybe<WindowHandle> Foreground() => ForegroundWindow;
 }
 
