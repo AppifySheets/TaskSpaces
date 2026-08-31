@@ -87,7 +87,7 @@ download bundles the .NET runtime, so there is no framework to install first.
    startup; it goes straight to the notification area (the tray). Look for the
    tiled icon there.
 4. **Left-click the tray icon** to open Manage, the main window, and create your first
-   workspace. (Right-click gives you just Manage and Exit.)
+   workspace. (Right-click gives you Manage, "Check for updates…" and Exit.)
 5. In Manage, tick **Start TaskSpaces with Windows** if you want it always running.
    The floating bar appears on its own and stays; it is not optional, because it is the
    only surface that lists your windows.
@@ -97,7 +97,8 @@ nothing outside your own user profile:
 
 | What | Where |
 |---|---|
-| Your workspaces, rules and window names | `%APPDATA%\TaskSpaces\state.json` |
+| Workspaces, groups, colours, rules, window names, and the bar's size, place and settings | `%APPDATA%\TaskSpaces\state.json` |
+| Time spent per workspace | `%APPDATA%\TaskSpaces\time.json` |
 | "Start with Windows", when enabled | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
 
 > **Making the bar bigger or smaller.** It draws at 90% by default. Set `"BarScale"` in
@@ -128,20 +129,22 @@ dotnet publish src/TaskSpaces.App/TaskSpaces.App.csproj -c Release -r win-x64 `
 ```
 
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download). The result is a
-single ~74 MB exe in `artifacts/publish`.
+single ~77 MB exe in `artifacts/publish`.
 
 ## Using it
 
 - **Tray icon.** Left-click opens **Manage**, the main window. Right-click gives you
-  just Manage and Exit.
+  Manage, **Check for updates…** and Exit, plus an item to install the update whenever
+  one is waiting.
 - **Floating bar.** An always-on-top, icon-only strip with one row per workspace, and
   the surface you will actually live in. Click an icon to jump to that window wherever
   it lives, **click it again to minimise it** once you are in it, drag icons between rows
   to move windows between workspaces, click **anywhere on a row** to switch to that
   workspace, right-click an icon to rename it, rest on an icon to **see the window
   itself**.
-  Every workspace label is bold, with the current one ringed. Always on: it is the only
-  surface that lists your windows, so there is nothing to switch off.
+  The current workspace's name is the bright one and its whole row is ringed; every other
+  label sits back. Always on: it is the only surface that lists your windows, so there is
+  nothing to switch off.
 
   **↩ goes back**, to the workspace you were on before this one: the same thing one tap
   of `Win+Ctrl+Tab` does, for when your hand is already on the mouse. Press it twice and
@@ -175,15 +178,57 @@ single ~74 MB exe in `artifacts/publish`.
   row of them — not in whatever order Windows happened to number the displays. Your leftmost
   screen's group opens the row with no mark at all; the next takes a hairline, the one after
   two. So a mark always falls *between* two groups, which is the only place a boundary can
-  usefully be.
+  usefully be. Every row is divided over every screen you have, in the same place on each row,
+  so the boundary cannot wander from row to row.
 
-  A workspace with more than five windows **wraps onto another line** rather than making
-  the whole bar wider, so one busy workspace cannot stretch every other lane into empty
-  space. **`Ctrl`+drag or middle-drag moves the bar**, from anywhere on it, rows and icons
-  included, so a plain press is only ever the click of whatever is under it. Drop it wherever
-  you like, including on top of a taskbar; it stays put.
-- **Manage.** Workspaces (add, rename, remove, reorder), shortcuts, naming patterns, and
-  settings. Opened by left-clicking the tray icon.
+  That boundary is also a **drop target**: drag an icon across the hairline on its own row and
+  the window moves to that screen. Drop it past the hairline on another workspace's row and it
+  changes workspace and screen in one gesture.
+
+  A busy workspace **wraps onto another line** rather than making the whole bar wider, so
+  one workspace cannot stretch every other lane into empty space. Each screen's half of the
+  row wraps within its own half. **Drag either side edge to set the bar's width** and the
+  icons re-wrap as you drag; the width is remembered. **`Ctrl`+drag or middle-drag moves the
+  bar**, from anywhere on it, rows and icons included, so a plain press is only ever the click
+  of whatever is under it. Drop it wherever you like, including on top of a taskbar; it stays
+  put.
+
+  **The line along the bottom** says what the thing under your pointer is, and during a drag what
+  dropping it there would do, "move to Work, screen 2", so a gesture with a consequence tells you
+  the consequence before you commit to it.
+
+  **Where you have just been.** The current workspace's row is ringed in a solid outline, the
+  one you came from in a dashed one, and the step before that in dots. So the row that one tap
+  of `Win+Ctrl+Tab` will take you to is visible without pressing anything, and the shape says
+  how far back each row is rather than a second colour having to be learned.
+
+  **Right-click a row** for everything about that workspace: rename it, insert a new one before
+  or after it, add a child under it, move it up, down, to the top or to the end, minimize the
+  row, pick its colour, and delete it. **Minimize row** shrinks it to a fraction of its height,
+  everything still working, for the workspaces you keep but rarely touch. **Delete workspace…**
+  asks first, and when the workspace still holds windows it names the apps and closes them with
+  it; if an app refuses to close (an unsaved document, usually) nothing is deleted and it tells
+  you which one.
+
+  **📌 The pinned row** sits at the top. Drop an icon on it to pin that window to every desktop,
+  so it follows you everywhere; drag it off onto a workspace row to unpin it again.
+
+  **Desktops you have not named** appear as their own rows, below the workspaces, so nothing on
+  your machine is missing from the bar. Right-click one to give it a name, and it becomes a
+  workspace.
+- **Groups.** Related workspaces can be **grouped**: right-click a row and use **Move into
+  group**, or **Add child…** to nest one workspace under another. A group reads as one thing on
+  the bar, with a caption, one shared lane colour settable from any of its rows, and a bracket
+  down its left edge. A nested workspace really does get its parent's windows: stand in the
+  child and the parent's windows are there with it.
+- **Manage.** Five tabs, opened by left-clicking the tray icon.
+
+  **Workspaces** adds, renames, removes and reorders them, and that order is the bar's row
+  order. **Shortcuts** rebinds the one chord. **Time** reports how long you have actually spent
+  in each workspace, today, this week and over the last thirty days, by group and by workspace.
+  **Rules** holds the auto-assignment and renaming patterns. Along the bottom of the window,
+  outside the tabs, sit the two machine-level settings, "Start TaskSpaces with Windows" and the
+  update check, beside the version you are running.
 
   **Manage → Settings** holds the bar's four dials: how faint it goes once the pointer is
   elsewhere, how long it waits before starting to dim, how long the dimming takes, and how
@@ -191,6 +236,12 @@ single ~74 MB exe in `artifacts/publish`.
   bar as you drag the slider, so you choose by looking rather than by guessing, and there is
   nothing to save. Fully opaque means it never dims. The hover delay follows Windows' own
   setting unless you untick the box and pick your own.
+- **Updates.** TaskSpaces checks GitHub for a newer release in the background and offers it in
+  the tray menu; **Check for updates…** asks immediately. Installing downloads the new exe next
+  to the one you are running, tells you what it is doing as it goes, and restarts into it,
+  keeping "Start with Windows" pointed at the newest file. Nothing is downloaded until you ask
+  for it, and the check itself is the app's only phone-home behaviour: untick it at the bottom of
+  Manage and it never contacts GitHub at all.
 - **Switching workspaces, Alt+Tab style.** Hold `Win+Ctrl` and tap `Tab` to walk your
   workspaces in **most-recently-used** order; release to switch. Add `Shift` to walk
   backwards. One tap therefore returns you to wherever you just were, however your list
@@ -395,7 +446,9 @@ you do not have.
   with `ShowWindow` was considered and rejected for exactly that reason.)
 - Where a window belongs is remembered by **what it is**, not by its window handle:
   identity is its executable path plus arguments, so `rider64 A.sln` and
-  `rider64 B.sln` are different things. Chromium browsers key on their profile.
+  `rider64 B.sln` are different things. Chromium browsers key on their profile, plus the app id
+  of an installed web app, so YouTube Music can live somewhere other than the browser it runs
+  in, and plus the profile root when one was passed.
 - **Your last placement wins.** Drag a window somewhere and that is where it goes next
   time; rules only decide for windows with no history. One exception, learned the hard
   way: when several windows of one app are already open, a new one is left where you
@@ -403,8 +456,17 @@ you do not have.
   has no single answer for them.
 - Rules can auto-assign windows you have never placed, by process name, title
   regex or browser profile.
-- Everything is persisted, so your workspaces, window names, colours and shortcut
-  survive both an app restart and a reboot.
+- **A window opened by another app joins that app's workspace.** Click a link in your editor
+  and the browser window it opens lands beside the editor rather than wherever you happen to be
+  standing. It follows the process chain to whoever really started it, and where that app has
+  windows in several workspaces, the one you were last in wins. This is an inference about one
+  window, so it moves that window and teaches the roster nothing.
+- An **automated browser is not the browser it borrows its exe from**. A Chrome or Edge started
+  by a tool with its own `--user-data-dir` is a different app from the one you start yourself,
+  and gets its own place, with the per-session part of the directory ignored so it keeps that
+  place from one run to the next.
+- Everything is persisted, so your workspaces, groups, window names, colours, the bar's width,
+  position and settings, and your shortcut survive both an app restart and a reboot.
 
 ## Tech
 
@@ -413,8 +475,10 @@ mode), the Windows virtual desktop COM API via Slions.VirtualDesktop, WinEvent h
 plus RX for window lifecycle events, and CSharpFunctionalExtensions for
 railway-style error handling.
 
-The domain is deliberately COM-free and heavily unit-tested: 262 tests, of which 256
-run without touching Windows at all.
+The domain is deliberately COM-free and heavily unit-tested: about 855 tests, of which 753
+run without touching Windows at all. Of the rest, most construct real WPF windows on an STA
+thread per test, and ten create, switch and delete real virtual desktops. Those ten are the
+`Category=Integration` ones, excluded from the routine run below.
 
 ## Development
 
