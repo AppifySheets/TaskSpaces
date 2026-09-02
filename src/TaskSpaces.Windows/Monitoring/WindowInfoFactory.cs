@@ -88,7 +88,12 @@ public static class WindowInfoFactory
     // which is precisely what happened here. A call that overruns is abandoned on its thread-pool
     // thread rather than cancelled, since there is nothing in the API to cancel; it ends when the
     // service finally answers or throws, and its result is discarded.
-    static T? Budgeted<T>(TimeSpan budget, Func<T> ask) where T : class
+    // Func<T?> rather than Func<T>, and T? throughout: the per-window caller's query legitimately
+    // answers "no command line" for a process WMI knows nothing about, so the lambda's own return is
+    // nullable. Written as Func<T> it inferred T = string?, which breaks the `class` constraint and
+    // fails the release build, where warnings are errors (-warnaserror) even though a Debug build says
+    // nothing. That is how it reached a published tag with no executable attached.
+    static T? Budgeted<T>(TimeSpan budget, Func<T?> ask) where T : class
     {
         if (!Breaker.ShouldAsk(DateTimeOffset.UtcNow)) return null;
 
