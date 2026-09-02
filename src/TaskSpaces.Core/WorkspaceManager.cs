@@ -1876,10 +1876,30 @@ public sealed class WorkspaceManager(
         // come back up, and a gesture that quietly un-minimizes three windows while you tidy up is a
         // gesture nobody can use. Its restore rectangle has moved, so it comes back on the new screen when
         // you next open it, which is the whole of what was asked for.
+        // ...and only when the window is on the desktop you are STANDING ON, which is the fix for
+        // Petre's "i don't understand whether moving a window from one workspace to another takes me to
+        // the destination workspace or not; it seems to me that it does sometimes, sometimes it
+        // doesn't."
+        //
+        // It did, and this line was how. Activating a window that lives on another desktop makes
+        // Windows follow it there, so a cross-workspace drop that ALSO changed the window's screen took
+        // him with it, while one that did not change the screen left him where he was. His log settles
+        // it: three drops wrote "monitor move done" and each was followed by "arrived <destination>";
+        // the twenty-six that wrote "monitor move skipped" were followed by nothing. The deciding
+        // factor was therefore invisible -- not the row he dropped on, but which HALF of it, against
+        // the screen the window already happened to be on.
+        //
+        // #89's request keeps its own case exactly: "when you move that window, make it foreground" was
+        // asked of moving a window between SCREENS within the workspace you are in, and `here` is true
+        // for every one of those. A window sent to a workspace you are not in is by definition not the
+        // window you are about to use, and this app's standing rule is that it never yanks the desktop.
+        //
+        // A HELD move keeps the behaviour too, without needing a case of its own: it lands when you
+        // arrive on that workspace, and by then the window is where you are.
         if (settled)
         {
             Forget(window);
-            if (!facts.Minimized.Contains(window)) activator?.Activate(window);
+            if (here && !facts.Minimized.Contains(window)) activator?.Activate(window);
         }
         else Hold(window, monitorNumber);
 
