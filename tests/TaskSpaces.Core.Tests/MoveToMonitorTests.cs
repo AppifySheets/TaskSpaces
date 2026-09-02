@@ -244,6 +244,55 @@ public class MoveToMonitorTests
         Assert.Equal([code.Handle], activator.Activated);
     }
 
+    // ...but NOT when the drop sent it to a workspace you are not in. Petre: "i don't understand
+    // whether moving a window from one workspace to another takes me to the destination workspace or
+    // not; it seems to me that it does sometimes, sometimes it doesn't."
+    //
+    // It did, and this was the mechanism. Activating a window that lives on another desktop makes
+    // Windows follow it, so a cross-workspace drop that ALSO changed the window's screen took him
+    // along, while one that did not change the screen left him where he was. Read off his own log:
+    // three drops wrote "monitor move done" and every one of them was followed by "arrived <the
+    // destination>"; the twenty-six that wrote "monitor move skipped" were followed by nothing.
+    //
+    // Which meant the deciding factor was invisible: not the row he dropped on, but which HALF of it
+    // against the screen the window already happened to be on.
+    //
+    // #89's request stands where it was made -- "when you move that window, make it foreground" was
+    // about moving a window between screens WITHIN the workspace you are in, and it still does that.
+    // A window sent somewhere you are not is by definition not the window you are about to use, and
+    // this app's standing rule is that it never yanks the desktop.
+    [Fact]
+    public void A_window_moved_to_another_workspace_does_not_pull_you_after_it()
+    {
+        var manager = Started();
+
+        Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsSuccess);
+
+        // It went, and it went to the screen the drop named.
+        Assert.Equal(personal, desktops.WindowPlacements[code.Handle]);
+        Assert.Equal(new WindowRect(-2880, 540, -960, 1620), Assert.Single(screen.Moved).Rect);
+        // ...and nothing activated it, so Windows has no reason to follow it.
+        Assert.Empty(activator.Activated);
+    }
+
+    // The other side of that rule, and the reason it is a guard rather than a deletion: a held move
+    // lands when you arrive on the workspace, and by then the window IS where you are, so it takes the
+    // foreground exactly as #89 asked.
+    [Fact]
+    public void A_held_move_still_brings_the_window_forward_when_you_arrive()
+    {
+        var manager = Started();
+        screen.RefuseMoves = true;
+        Assert.True(manager.AssignWindow(code.Handle, target, monitor: 1).IsFailure);
+        Assert.Empty(activator.Activated);
+
+        screen.RefuseMoves = false;
+        desktops.CurrentDesktopId = personal;
+        desktops.CurrentChangedSubject.OnNext(personal);
+
+        Assert.Contains(code.Handle, activator.Activated);
+    }
+
     // ...and #107's other half: a MINIMIZED window stays down. The drag said which screen the window
     // belongs on, not that it should come back up, and a gesture that quietly un-minimizes windows while
     // you tidy up is a gesture nobody can use. Its restore rectangle still moves, which is what makes it
