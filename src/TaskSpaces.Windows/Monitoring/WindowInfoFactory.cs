@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Management;
 using System.Text;
 using CSharpFunctionalExtensions;
@@ -45,17 +45,74 @@ public static class WindowInfoFactory
 
     // One WMI round-trip for ALL processes -- the startup snapshot enumerates dozens of
     // windows; per-window queries there would cost seconds on the dispatcher thread.
-    public static IReadOnlyDictionary<uint, string> AllCommandLines()
+    //
+    // BUDGETED, and that is the fix for Petre's "the bar is stuck, i can see but it's stuck" after a
+    // resume from hibernation. His Winmgmt had not come back: a probe measured this very query still
+    // running after 90 seconds. This call is made on the dispatcher thread before the bar has drawn
+    // anything, so a wedged service meant an app that never finished starting -- and restarting it,
+    // the obvious cure, hung in exactly the same place.
+    //
+    // A miss costs nothing that matters: every caller falls back to ProcessCommandLine per window,
+    // which reads the command line out of the process itself in about 0.1ms and answered for 18 of 19
+    // windows when the two were measured against each other (#59). The batch is a shortcut, not the
+    // source of truth.
+    public static IReadOnlyDictionary<uint, string> AllCommandLines() =>
+        Budgeted(StartupBudget, () =>
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT ProcessId, CommandLine FROM Win32_Process")
+                    { Options = Bounded(StartupBudget) };
+                return (IReadOnlyDictionary<uint, string>)searcher.Get().Cast<ManagementBaseObject>()
+                    .Where(o => o["CommandLine"] is string { Length: > 0 })
+                    .ToDictionary(o => (uint)o["ProcessId"], o => (string)o["CommandLine"]);
+            })
+        ?? new Dictionary<uint, string>();
+
+    // Two seconds at startup and a fifth of a second per window, and the asymmetry is deliberate: the
+    // startup query answers for every process at once and happens before anything is on screen, while
+    // the per-window one runs inside a WinEvent callback and is paid again for every window that
+    // appears. Both are far above what a healthy service takes (a whole-table query measured 720ms on
+    // Petre's machine, a per-pid one 656ms) and far below what a sick one costs.
+    static readonly TimeSpan StartupBudget = TimeSpan.FromSeconds(2);
+    static readonly TimeSpan PerWindowBudget = TimeSpan.FromMilliseconds(200);
+
+    // Shared, because the point of the breaker is that ONE blown budget stops the next call: WMI is a
+    // single service, and a window appearing is not a reason to re-test a service that just failed to
+    // answer the last question.
+    static readonly WmiBreaker Breaker = new();
+
+    // Ask WMI for something, or give up. Null means "no answer": the service is in its cooldown, the
+    // call blew its budget, or it threw.
+    //
+    // The budget is enforced from OUTSIDE the call as well as inside it (see Bounded), because WMI's
+    // own timeout applies to enumerating results and a wedged service can hang before there are any --
+    // which is precisely what happened here. A call that overruns is abandoned on its thread-pool
+    // thread rather than cancelled, since there is nothing in the API to cancel; it ends when the
+    // service finally answers or throws, and its result is discarded.
+    static T? Budgeted<T>(TimeSpan budget, Func<T> ask) where T : class
     {
-        try
+        if (!Breaker.ShouldAsk(DateTimeOffset.UtcNow)) return null;
+
+        var call = Task.Run(ask);
+        if (!call.Wait(budget))
         {
-            using var searcher = new ManagementObjectSearcher("SELECT ProcessId, CommandLine FROM Win32_Process");
-            return searcher.Get().Cast<ManagementBaseObject>()
-                .Where(o => o["CommandLine"] is string { Length: > 0 })
-                .ToDictionary(o => (uint)o["ProcessId"], o => (string)o["CommandLine"]);
+            Breaker.TimedOut(DateTimeOffset.UtcNow);
+            // Observed so an abandoned call that later faults cannot come back as an unobserved task
+            // exception on the finalizer thread.
+            call.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            return null;
         }
-        catch (Exception) { return new Dictionary<uint, string>(); } // best-effort, like TryCommandLine
+
+        if (call.IsFaulted) return null; // best-effort metadata, as it always was
+        Breaker.Answered();
+        return call.Result;
     }
+
+    // WMI's own bound on the work, so a call that beats the wrapper's budget still cannot sit in the
+    // service for minutes. ReturnImmediately makes Get() semi-synchronous, which is what allows the
+    // timeout to apply at all.
+    // Fully qualified: System.IO has a type of the same name and this file reads directories nowhere.
+    static System.Management.EnumerationOptions Bounded(TimeSpan budget) =>
+        new() { Timeout = budget, ReturnImmediately = true, Rewindable = false };
 
     public static string TitleOf(nint hwnd)
     {
@@ -108,14 +165,15 @@ public static class WindowInfoFactory
         // 656ms for one of those is a fair price now that ordinary windows never reach it.
         if (ProcessCommandLine.TryRead(pid) is { Length: > 0 } fromProcess) return fromProcess;
 
-        try
+        // Budgeted and breakered, like the startup batch above and for the same morning's reason: this
+        // runs on the dispatcher thread inside a WinEvent callback, so a WMI that does not answer is a
+        // bar that does not move. Only elevated and protected processes reach this line at all, the
+        // PEB read above having answered for everything else.
+        return Budgeted(PerWindowBudget, () =>
         {
-            using var searcher = new ManagementObjectSearcher($"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
+            using var searcher = new ManagementObjectSearcher($"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}")
+                { Options = Bounded(PerWindowBudget) };
             return searcher.Get().Cast<ManagementBaseObject>().FirstOrDefault()?["CommandLine"] as string;
-        }
-        // Command line is best-effort metadata for BrowserProfile rules only -- never worth
-        // crashing over. WMI can throw more than ManagementException (UnauthorizedAccessException,
-        // raw COM exceptions from the WMI service hiccuping, etc.), so swallow broadly.
-        catch (Exception) { return null; }
+        });
     }
 }
