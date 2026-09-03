@@ -13,6 +13,7 @@ using TaskSpaces.Core.Time;
 using TaskSpaces.Core.Updates;
 using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Desktops;
+using TaskSpaces.Windows.Diagnostics;
 using TaskSpaces.Windows.Monitoring;
 using TaskSpaces.Windows.Renaming;
 
@@ -557,6 +558,22 @@ public partial class App : Application
         // real stack trace/telemetry), just not a window stuck with the wrong title.
         DispatcherUnhandledException += (_, args) =>
         {
+            // One exception to "let it die", and it is not ours to fix. WPF's tablet bookkeeping throws
+            // when a pen or touch device is removed -- Petre lost the app to it when his spacedesk
+            // screen disconnected -- and nothing of ours is on that stack. See KnownWpfFaults for the
+            // crash report and the reasoning; the short version is that our state is untouched by it,
+            // so dying would cost him every renamed title and the bar itself over a fault in WPF's
+            // input plumbing.
+            //
+            // Traced rather than silent, because a swallowed crash that nobody can see is how an app
+            // acquires a reputation for being haunted.
+            if (KnownWpfFaults.IsTabletBookkeepingRace(args.Exception))
+            {
+                ClickTrace.Write($"survived WPF's tablet race: {args.Exception.Message}");
+                args.Handled = true;
+                return;
+            }
+
             manager?.RestoreAllTitles();
             MessageBox.Show($"TaskSpaces hit an unexpected error and must close:\n{args.Exception.Message}",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Error);
