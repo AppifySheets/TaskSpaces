@@ -73,6 +73,10 @@ public sealed class FakeMonitor : IWindowMonitor
     public IObservable<WindowEvent> Events => Subject.AsObservable();
     public IReadOnlyList<WindowInfo> Snapshot() => InitialWindows.ToList();
     public bool IsAlive(WindowHandle window) => !Dead.Contains(window);
+
+    // Listed means "in InitialWindows", which is what Snapshot answers from: a test hides a window by
+    // taking it out of that list, exactly as the shell drops a hidden window from its own.
+    public bool IsListed(WindowHandle window) => InitialWindows.Any(w => w.Handle == window);
     public Maybe<WindowHandle> Foreground() => ForegroundWindow;
 }
 

@@ -434,11 +434,27 @@ public sealed class WorkspaceManager(
         var dead = knownWindows.Values.Where(w => !monitor.IsAlive(w.Handle)).ToList();
         dead.ForEach(OnDisappeared);
 
+        // ...and the ones that are alive but no longer LISTED: hidden, or closed to the tray. Petre,
+        // of Outlook's dismissed reminder dialog sitting in a row: "what's the bell icon in the gepha
+        // workspace?", and then "yes, hide what's hidden."
+        //
+        // Through OnHidden rather than OnDisappeared, and the difference is the whole reason there are
+        // two questions here instead of one. Hidden means the row goes and the RENAME LEDGER STAYS, so
+        // nothing forgets the window's original title; reporting it as gone would forget it, and a
+        // later re-show would then record our own short name as the original. The roster stays too, so
+        // a window that comes back out of the tray still knows where it belongs.
+        //
+        // Only for windows already dropped from `dead`, since a destroyed handle is not listed either
+        // and must go the whole way rather than half of it.
+        var hidden = knownWindows.Values.Where(w => !monitor.IsListed(w.Handle)).ToList();
+        hidden.ForEach(OnHidden);
+
         // Only when it did something, which is the same rule the pulse follows: a line every five
         // seconds saying "nothing was wrong" would bury the one that matters.
-        if (adopted.Count + dead.Count > 0)
+        if (adopted.Count + dead.Count + hidden.Count > 0)
             trace?.Invoke($"repair: adopted [{string.Join(", ", adopted.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}] " +
-                          $"dropped [{string.Join(", ", dead.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}]");
+                          $"dropped [{string.Join(", ", dead.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}] " +
+                          $"hidden [{string.Join(", ", hidden.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}]");
 
         // OnDisappeared pulses for itself, so an adoption is the only change left to announce.
         if (adopted.Count > 0) stateChanged.OnNext(Unit.Default);
@@ -532,6 +548,17 @@ public sealed class WorkspaceManager(
     void OnTitleChanged(WindowInfo window)
     {
         var previouslyUnknown = !knownWindows.ContainsKey(window.Handle);
+
+        // A title change on a window we do not have is only an arrival if the shell LISTS it. That
+        // guard is the route Petre's bell came back by: Outlook rewrites its reminder dialog's title as
+        // reminders accumulate ("1 Reminder(s)", "2 Reminder(s)"), and every one of those was read as
+        // "became taskbar-worthy late" and re-adopted -- so the row returned seconds after each sweep
+        // dropped it. A hidden window is not becoming taskbar-worthy; it is talking to itself.
+        //
+        // The monitor keeps its own copy of the title either way, so the ledger still has what it
+        // needs when the window comes back.
+        if (previouslyUnknown && !monitor.IsListed(window.Handle)) return;
+
         knownWindows[window.Handle] = window;
         if (previouslyUnknown) { OnAppeared(window); return; } // became taskbar-worthy late
 

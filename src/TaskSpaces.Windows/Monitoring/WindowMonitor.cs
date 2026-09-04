@@ -184,6 +184,11 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
         });
     }
 
+    // Listed by the shell right now, which is the same question Resync's adopt half asks of every
+    // window it enumerates -- asked here of one, so the manager can drop a row for a window that has
+    // gone quiet without mistaking it for a window that has gone.
+    public bool IsListed(WindowHandle window) => IsTracked(window.Value);
+
     // The one question that tells a destroyed window from one minimised to the tray, asked with the
     // same call Resync's own drop half uses (see above). On the interface because the manager's repair
     // needs it and must not be tempted to ask a cheaper question.

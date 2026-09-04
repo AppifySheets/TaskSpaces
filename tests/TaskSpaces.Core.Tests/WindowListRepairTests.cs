@@ -1,4 +1,4 @@
-using System.Reactive.Linq;
+﻿using System.Reactive.Linq;
 using TaskSpaces.Core.Abstractions;
 using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
@@ -95,21 +95,79 @@ public class WindowListRepairTests
         Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == Obs(0x1C13F2).Handle);
     }
 
-    // The trap this repair must not fall into, and it is the one the monitor's own comment warns
-    // about: a window minimised to the tray is absent from the taskbar-candidate list while still
-    // existing. Dropping it here would forget its rename ledger entry, so a later re-show would take
-    // our own short name for the original title.
+    // A window that is alive but no longer LISTED -- hidden, minimised to the tray -- leaves the bar.
+    //
+    // Petre: "what's the bell icon in the gepha workspace?" It was Outlook's reminder dialog, hidden
+    // since he dismissed it, holding a row it could not answer for: no taskbar button, and clicking it
+    // said "Window is not on any desktop (closed or pinned)", because Windows reports no desktop for a
+    // hidden window. Then: "yes, hide what's hidden."
+    //
+    // This is the HIDE path, not the gone path, and the difference is the whole point. OnHidden drops
+    // the window from the live bookkeeping and keeps the rename ledger, so nothing forgets the original
+    // title; reporting it as Disappeared would forget it, and a later re-show would then take our own
+    // short name for the original. The monitor's own comment warns about exactly that, and it is why
+    // this reconciles with two questions rather than one: IsAlive decides gone, and being listed
+    // decides visible.
     [Fact]
-    public void A_window_minimised_to_the_tray_is_not_dropped()
+    public void A_hidden_window_stops_holding_a_row()
     {
         GivenAWorkspace();
         var manager = Started();
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper()));
+        Assert.Contains(manager.KnownWindows, w => w.Handle == Beeper().Handle);
 
-        // Gone from the candidate list, still a real window.
+        // Gone from the candidate list, still a real window: closed to tray, or a dialog its app hid.
         monitor.InitialWindows.Clear();
 
         manager.RepairWindowList();
+
+        Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == Beeper().Handle);
+    }
+
+    // ...and the app it belongs to is still remembered, which is what makes the drop safe: the roster
+    // says what BELONGS to a workspace rather than what is live, so a window that comes back out of the
+    // tray goes back where it was.
+    [Fact]
+    public void Hiding_a_window_does_not_forget_the_app()
+    {
+        var workspace = GivenAWorkspace();
+        var manager = Started();
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Beeper()));
+        Assert.True(manager.AssignWindow(Beeper().Handle, workspace.Id).IsSuccess);
+
+        monitor.InitialWindows.Clear();
+        manager.RepairWindowList();
+
+        Assert.Contains(manager.State.Inventory[workspace.Id], entry => entry.ProcessPath == Beeper().ProcessPath);
+    }
+
+    // The route the bell came back by, every time. Outlook rewrites that dialog's title as reminders
+    // accumulate ("1 Reminder(s)", "2 Reminder(s)"), and a title change on a window we had dropped used
+    // to be read as "it became taskbar-worthy late" and re-adopted -- so the row returned within
+    // seconds of every sweep that removed it.
+    [Fact]
+    public void A_title_change_does_not_bring_a_hidden_window_back()
+    {
+        GivenAWorkspace();
+        var manager = Started();
+        monitor.InitialWindows.Clear();
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, Beeper() with { Title = "2 Reminder(s)" }));
+
+        Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == Beeper().Handle);
+    }
+
+    // ...while a title change on a window that IS listed still adopts it, which is what that path is
+    // for: an app whose window has no title until it has loaded something (a bare editor, a browser
+    // starting up) only becomes taskbar-worthy when the title arrives.
+    [Fact]
+    public void A_title_change_still_adopts_a_listed_window()
+    {
+        GivenAWorkspace();
+        var manager = Started();
+        monitor.InitialWindows.Add(Beeper());
+
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.TitleChanged, Beeper() with { Title = "Beeper | Michelle" }));
 
         Assert.Contains(manager.KnownWindows, w => w.Handle == Beeper().Handle);
     }
