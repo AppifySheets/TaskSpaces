@@ -1678,13 +1678,41 @@ public partial class FloatingBar : Window
                 lanes.Add((screen.Key, screen.Value, byMonitor.GetValueOrDefault(screen.Value))));
 
             // And then every run the screen map cannot account for: a window whose monitor never
-            // resolved, or one on a display that holds nothing else. They get a lane of their own with
-            // no mark rather than being dropped, and "dropped" is not hypothetical -- the first version
-            // of this drew only the mapped screens, so a bar where NO window had a monitor rendered
-            // every row with no icons in it at all. The bar tests caught exactly that.
-            runs.Where(run => !run[0].Monitor.HasValue || !mapped.Contains(run[0].Monitor.Value))
-                .ToList()
-                .ForEach(run => lanes.Add((0, run[0].Monitor, run)));
+            // resolved, or one on a display that holds nothing else. They are not dropped, and
+            // "dropped" is not hypothetical -- the first version of this drew only the mapped screens,
+            // so a bar where NO window had a monitor rendered every row with no icons in it at all. The
+            // bar tests caught exactly that.
+            //
+            // They go into the FIRST lane rather than into lanes of their own, and that is Petre's
+            // "separator on GEPHA is in a wrong place on the second line". A lane of their own changes
+            // the column count for the one line that happens to hold such a window, and his geometry
+            // dump shows what that does:
+            //
+            //   line 0  cols=[*:74, auto:5, *:74]        zones=[screen1@start, screen2@73]
+            //   line 1  cols=[*:50, auto:5, *:50, *:50]  zones=[screen1@5,     screen2@51]
+            //
+            // The boundary moved 22 pixels between two lines of one row, which is precisely what laying
+            // every row out over every known screen exists to prevent (#39, #99, #103): a screen's
+            // region has to be at the same x on every row and every line, or the hairline cannot mean
+            // anything.
+            //
+            // The FIRST lane specifically, because that is where the rest of the row already puts them:
+            // GroupRow budgets the wrap by MonitorRank, and an unresolved monitor has rank 0, so the
+            // icons were already being counted against the leftmost screen's share. Anywhere else and
+            // the wrap and the layout would disagree about which lane is full.
+            var orphans = runs
+                .Where(run => !run[0].Monitor.HasValue || !mapped.Contains(run[0].Monitor.Value))
+                .SelectMany(run => run)
+                .ToList();
+
+            if (orphans.Count > 0 && lanes.Count > 0)
+            {
+                // A NEW list rather than adding to the run in place: that run belongs to `byMonitor`,
+                // which is built from the same objects the caller still holds, and appending to it
+                // would put these icons in every later line as well.
+                var first = lanes[0];
+                lanes[0] = first with { Run = (first.Run ?? []).Concat(orphans).ToList() };
+            }
         }
         else
             runs.ForEach(run => lanes.Add((run[0].MonitorRank.GetValueOrDefault(0), run[0].Monitor, run)));
