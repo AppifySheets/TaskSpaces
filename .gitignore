@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Tool state from the claude-flow / ruflo plugins: generated, per-machine, never part of the app.
+.claude-flow/

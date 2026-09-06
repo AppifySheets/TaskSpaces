@@ -3392,7 +3392,9 @@ public partial class FloatingBar : Window
 
         card.Children.Add(new TextBlock
         {
-            Text = row.Window.Title,
+            // DisplayName, not Title: a window with no title of its own (Buzz) would head its card
+            // with an empty line otherwise. See WindowInfo.DisplayName.
+            Text = row.Window.DisplayName,
             TextWrapping = TextWrapping.Wrap,
             FontWeight = FontWeights.SemiBold,
             MaxWidth = width,
@@ -3776,7 +3778,9 @@ public partial class FloatingBar : Window
         // The window's title as the automation name. Two jobs, both real: a screen reader announces the
         // icon as the window it stands for rather than as "button", and it is how a test tells which icon
         // is which now that the hover card is not a string on the button.
-        System.Windows.Automation.AutomationProperties.SetName(button, row.Window.Title);
+        // DisplayName for the same reason the hover card uses it: an icon whose accessible name is the
+        // empty string cannot be reached by a screen reader or named in a test.
+        System.Windows.Automation.AutomationProperties.SetName(button, row.Window.DisplayName);
         // The row this icon stands for, so the hover watch can ask what is under the pointer without a
         // lookup table keyed on buttons that rebuilds keep replacing.
         button.DataContext = row;

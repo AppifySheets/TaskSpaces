@@ -1,4 +1,4 @@
-namespace TaskSpaces.Windows.Monitoring;
+﻿namespace TaskSpaces.Windows.Monitoring;
 
 using static NativeMethods;
 
@@ -9,10 +9,32 @@ public static class TopLevelWindows
         GetAncestor(hwnd, GA_ROOT) == hwnd          // top-level, not a child control
         && IsWindowVisible(hwnd)
         && !IsCloaked(hwnd)                          // UWP ghosts & windows on other desktops still count as visible; cloak check kills true ghosts
-        && GetWindowTextLength(hwnd) > 0             // taskbar buttons always have text
+        && (GetWindowTextLength(hwnd) > 0            // text, or an explicit taskbar opt-in (see below)
+            || HasExStyle(hwnd, WS_EX_APPWINDOW))
         && !IsShellOwned(hwnd)                       // the desktop, the Start button, the IME host: real hwnds with titles that Windows itself never lists
         && (!HasExStyle(hwnd, WS_EX_TOOLWINDOW) || HasExStyle(hwnd, WS_EX_APPWINDOW)); // tool windows skip the taskbar unless they opt back in
 
+    // WHY TEXT IS NOT REQUIRED ANY MORE, and why the alternative is an opt-in rather than nothing.
+    //
+    // Petre: "i can't see Buzz in HRIS workspace." Buzz was running with its window visible on that
+    // desktop, and the bar had never heard of it:
+    //
+    //   0x1F12EA buzz-desktop vis=1 cloaked=0 owner=0x0 ex=0x00040110 class='Tauri Window' title=''
+    //
+    // The line above used to read "taskbar buttons always have text", which is what this file believed
+    // until a Tauri app that never sets a title turned up. Windows gives that window a button anyway:
+    // text is not part of the shell's rule, only of the heuristic here that kept junk out.
+    //
+    // So the heuristic is now "text OR WS_EX_APPWINDOW" -- an explicit request to be on the taskbar --
+    // and the width of that relaxation was measured before it was written. Every window on his machine
+    // that the old rule rejected ONLY for having no text:
+    //
+    //   with WS_EX_APPWINDOW:  1  (Buzz)
+    //   without it:            0
+    //
+    // Dropping the text test outright would have been the same change on that machine and a bigger one
+    // on someone else's: a titleless window that never asked for a button is the shape of the helper
+    // windows apps leave lying around, and a row spent on one of those is a row wasted.
     public static IReadOnlyList<nint> Enumerate()
     {
         var found = new List<nint>();
