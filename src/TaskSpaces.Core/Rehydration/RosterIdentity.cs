@@ -50,9 +50,52 @@ public static class RosterIdentity
 
     public static string Of(InventoryEntry entry) => Of(entry.ProcessPath, entry.CommandLine);
 
-    // A window with no readable process path (elevated) can't be identified or relaunched.
+    // The SHELL, which is the one identity here that LIES.
+    //
+    // Petre: "run window opens in llc workspace" / "should open in current". Measured before anything
+    // was changed, because the app looked innocent -- no move appears in the trace, since placement
+    // memory is the one tier that does not write a line. His state.json held
+    //
+    //   Inventory[LLC] = { ProcessPath: "C:\WINDOWS\Explorer.EXE",
+    //                      CommandLine: "C:\WINDOWS\Explorer.EXE", Title: "Run" }
+    //
+    // and the live Win+R dialog sat on LLC's desktop (bdb0b172-...) while he was on GEPHA. Explorer
+    // builds a FRESH dialog per Win+R -- consecutive ones were 0x5C1174 then 0x41124A -- so each was
+    // appearing on the current desktop and being moved off it within milliseconds. Hence "it just
+    // opens in that workspace": there is no visible move, only a window that was never where it was
+    // made.
+    //
+    // One path with no arguments runs the desktop, the taskbar, every File Explorer folder window and
+    // that dialog, so "which workspace does C:\WINDOWS\explorer.exe live in" has no answer -- and the
+    // answer it was given got applied to whichever of those windows appeared next.
+    //
+    // LaunchedBy refuses the shell for the same reason and says so in its own words: it "owns File
+    // Explorer windows, so treating it as a launcher would place a newly started app wherever a folder
+    // window happened to be". That was the launcher half. This is the identity half, which was missing.
+    //
+    // Nothing usable is lost. Every explorer window shares this single identity, so memory could never
+    // tell a Downloads folder from a Run box, and the rule that memory stands down when another live
+    // window shares an identity already switched it off whenever two explorer windows were open. What
+    // remains is only the case where exactly one was -- a coin toss that moved whatever that happened
+    // to be.
+    //
+    // Kept to explorer, deliberately. The rest of LaunchedBy's NotLaunchers list is there to end a
+    // process walk early; those processes own no window this app tracks, so adding them here would be
+    // a claim about windows nobody has measured. ApplicationFrameHost is the one worth naming: it
+    // frames Store app windows, and on this machine WhatsApp and Teams are rostered under their own
+    // paths, so the frame is not what the window reports and it does not belong here either.
+    static readonly IReadOnlySet<string> Shell =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "explorer" };
+
+    public static bool IsShell(string processPath) =>
+        Shell.Contains(Path.GetFileNameWithoutExtension(processPath));
+
+    // No identity, so nothing can be remembered about the window and nothing can be re-applied to it.
+    // Two ways to get here: a window with no readable process path (elevated), and the shell.
     public static Maybe<string> Of(WindowInfo window) =>
-        window.ProcessPath is null ? Maybe<string>.None : Of(window.ProcessPath, window.CommandLine);
+        window.ProcessPath is null || IsShell(window.ProcessPath)
+            ? Maybe<string>.None
+            : Of(window.ProcessPath, window.CommandLine);
 
     // "Running anywhere counts": Rider-on-X sitting in ANOTHER workspace still means
     // Start must not launch a duplicate of it.

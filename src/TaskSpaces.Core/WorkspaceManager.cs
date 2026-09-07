@@ -2977,6 +2977,11 @@ public sealed class WorkspaceManager(
         // harmless -- but recording TaskSpaces as an app that BELONGS to that workspace
         // would make "▶ Start" relaunch it into its own "already running" dialog.
         if (IsOurs(window.Handle)) return;
+        // The shell is not an app that lives anywhere: see RosterIdentity.IsShell. Refused on the WAY
+        // IN as well as on the way out, because a drag is how his file learned the entry that broke
+        // Win+R -- dropping a Run dialog on a row would otherwise teach it again, and there is no UI
+        // that removes a roster entry once written.
+        if (RosterIdentity.IsShell(window.ProcessPath)) return;
         AddEntry(workspaceId, new InventoryEntry(window.ProcessPath, window.CommandLine,
             ledger.OriginalTitle(window.Handle).GetValueOrDefault(window.Title)));
     }
