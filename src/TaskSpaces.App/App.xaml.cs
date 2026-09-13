@@ -1137,8 +1137,18 @@ public partial class App : Application
         // this desktop and the tray's "Show bar" is still there on all of them.
         desktops!.Pin(new WindowHandle(hwnd))
             .TapError(err => ClickTrace.Write($"bar standin pin failed: {err}"));
+        var pinnedAfterPin = desktops.IsPinned(new WindowHandle(hwnd)).GetValueOrDefault(false);
 
         window.MinimizeToButton();
+
+        // BOTH readings, because both were doubted and only one can be checked by looking. A pinned
+        // window still reports the desktop it was BORN on through the public
+        // IVirtualDesktopManager::GetWindowDesktopId -- the bar, pinned for months and visible on
+        // every desktop, reports one too -- so an external probe cannot tell pinned from unpinned and
+        // this line is the only honest record. The second reading answers the other question that
+        // shape raised: minimizing does not undo the pin.
+        ClickTrace.Write($"bar standin pinned={pinnedAfterPin} then after minimize=" +
+                         desktops.IsPinned(new WindowHandle(hwnd)).GetValueOrDefault(false));
 
         RefreshTrayMenu();
     }
