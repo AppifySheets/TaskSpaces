@@ -34,50 +34,42 @@
              Windows tab were gone this bar became the only surface that lists windows and
              jumps to them, so hiding it left no way to reach your own windows. Always on. -->
         <StackPanel>
+            <!-- The bar's two commands, at the TOP. Petre: "those buttons for minimize and switch to
+                 previous workspace would make more sense at the top, next to the pin icon. eliminate
+                 that bottom row with titles completely."
+                 Right-aligned so they sit directly above the name gutter, which is where the pin icon
+                 is: every row puts its label in a fixed 58 DIP gutter on the RIGHT, so "next to the
+                 pin" and "right-hand end" are the same place on this bar.
+                 In their own strip rather than inside the pinned row, and that is the constraint
+                 rather than a preference: every row is laid out over one shared set of column
+                 definitions so a screen's region lands at the same x on each of them, and a control
+                 added inside that grid moves the monitor hairlines. That is #70, #99 and #103, and
+                 each was argued from a screenshot.
+                 The 18px each costs is paid in WIDTH, on a line that holds nothing else, so the rows
+                 below are untouched, and the bar is now SHORTER than before, because the strip this
+                 replaces sat under a separator and a reserved text line. -->
+            <!-- The 4 DIP gap is not cosmetic, and a pixel test is what found it: RowRingPixelTests
+                 samples a 6px band from one pixel ABOVE each row's top edge, and with the buttons
+                 flush against the first row the glyphs' bottoms landed in the pinned row's band and
+                 read as ring ink on a row that wears none. A gap wider than the band fixes the
+                 measurement and the look at once.
+                 No separator LINE under it, unlike the strip this replaces: a line spanning the bar's
+                 width would put far more ink in that same band, and the point of the change was fewer
+                 pixels rather than the same pixels somewhere else. -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,4">
+                <Button x:Name="BackButton" Content="↩" Width="18" FontSize="12"
+                        Foreground="White" Background="Transparent" BorderThickness="0"
+                        Padding="0" VerticalAlignment="Center" Click="OnBackClick"/>
+                <Button x:Name="MinimizeButton" Content="▁" Width="18" FontSize="12"
+                        Foreground="White" Background="Transparent" BorderThickness="0"
+                        Padding="0" VerticalAlignment="Center" Click="OnMinimizeClick"
+                        ToolTip="Minimize the bar to a taskbar button"/>
+            </StackPanel>
+
             <!-- One horizontal row per group (Pinned first, then every workspace, then
                  unbound desktops with windows), populated in code-behind (Rebuild). -->
             <StackPanel x:Name="Rows"/>
 
-            <!-- Hover info line (Petre: "add a small panel, when i hover over any icon,
-                 i want to see what it is"). Deliberately part of THIS window rather than
-                 a Popup or ToolTip: those live in their own HWNDs, and this window is a
-                 topmost + AllowsTransparency layered window pinned to all virtual
-                 desktops, the class of setup where separate-HWND popups are most prone
-                 to landing behind the bar or on the wrong desktop. In-window text cannot
-                 have that problem.
-                 Height is RESERVED (the line is always present, showing a hint when
-                 nothing is hovered) instead of appearing on demand: the bar's default
-                 position is the bottom-right corner, where a grow-on-hover panel would
-                 expand straight off the bottom of the work area. A fixed Width on the
-                 text keeps SizeToContent from re-sizing (and thus re-positioning) the
-                 whole bar every time a longer or shorter title is hovered. -->
-            <Border Height="1" Margin="0,4,0,3" Background="White" Opacity="0.2"/>
-            <!-- Petre: "that floating window width can be half of what it is now... maybe even
-                 less, 3 icons wide by default, can grow on demand."
-                 This TextBlock is what dictated the bar's width: at 340 it was wider than any
-                 row of icons, so the bar was always that wide no matter how little was in it.
-                 Narrowed to roughly three icons plus a row label. A FIXED width is still the
-                 point (see the comment above): it stops a hover from resizing, and therefore
-                 repositioning, a SizeToContent window. Rows wider than this still grow the bar,
-                 which is the "grow on demand" half. -->
-            <!-- Petre: "on the floating window i want a go back to previous button... basically
-                 the same as ctrl+win+tab tap once, without the kb."
-                 Shares the info line's row rather than taking a row of its own: the bar's
-                 default home is the bottom-right corner, where extra HEIGHT grows towards the
-                 screen edge, while the 18px of width this costs is paid once.
-                 Declared here rather than built in RebuildCore because it is not part of the
-                 Rows panel that gets cleared; RebuildCore refreshes its state instead.
-                 Width is FIXED for the same reason Info's is (see above): a control that
-                 tracked a workspace name's length would resize, and therefore reposition, a
-                 SizeToContent window every time the recency order changed. The destination is
-                 named in the tooltip, which costs no layout. -->
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="BackButton" Content="↩" Width="18" FontSize="12"
-                        Foreground="White" Background="Transparent" BorderThickness="0"
-                        Padding="0" VerticalAlignment="Center" Click="OnBackClick"/>
-                <TextBlock x:Name="Info" Width="150" FontSize="11" Foreground="White"
-                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
-            </StackPanel>
         </StackPanel>
     </Border>
 </Window>

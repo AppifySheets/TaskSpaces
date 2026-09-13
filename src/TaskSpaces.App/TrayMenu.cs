@@ -30,8 +30,13 @@ public static class TrayMenu
     //
     // Third rather than first: it is the least used of the three, and the two that were here are
     // where the hand already expects them.
+    // `bar` is #173: "Minimize bar" while the bar is on screen, "Show bar" while it is standing
+    // behind its taskbar button. One item that changes its own label rather than two that take
+    // turns being greyed out, because the tray is the channel that must never be a dead end -- if
+    // the taskbar button is ever lost (a shell restart, a pin that failed on a Windows build
+    // without the desktop COM), this is the way back.
     public static ContextMenu Build(bool compatibilityMode, Action openManage, Action exit, Action checkNow,
-        (string Label, Action Open)? update = null)
+        (string Label, Action Open)? update = null, (string Label, Action Toggle)? bar = null)
     {
         var menu = new ContextMenu();
 
@@ -58,6 +63,15 @@ public static class TrayMenu
         var manage = new MenuItem { Header = "Manage…" };
         manage.Click += (_, _) => openManage();
         menu.Items.Add(manage);
+
+        // Directly under Manage, above the update check: it acts on the surface Petre looks at all
+        // day, which puts it closer in kind to Manage than to anything below it.
+        if (bar is { } toggle)
+        {
+            var item = new MenuItem { Header = toggle.Label };
+            item.Click += (_, _) => toggle.Toggle();
+            menu.Items.Add(item);
+        }
 
         var check = new MenuItem { Header = "Check for updates…" };
         check.Click += (_, _) => checkNow();

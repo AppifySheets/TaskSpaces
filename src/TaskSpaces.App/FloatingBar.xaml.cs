@@ -303,6 +303,8 @@ public partial class FloatingBar : Window
     // position always land together.
     public void ShowBar()
     {
+        Minimized = false; // before Save() below, which persists this as Visible
+        ClickTrace.Write("bar restore");
         Rebuild();
         Show();
         PositionFromState();
@@ -385,16 +387,49 @@ public partial class FloatingBar : Window
     // Petre: "the bar shouldn't be hidden, it should be impossible to hide that floating bar,
     // that's the app."
     //
-    // HideBar() and its OnHideClick handler lived here and are gone. They were ALREADY
-    // unreachable -- nothing in FloatingBar.xaml bound the handler, so HideBar's only caller was
-    // one nobody could trigger -- which meant the bar was unhideable by accident rather than on
-    // purpose. Deleted so it stays that way deliberately, and so nothing wires a close
-    // affordance back onto the one surface this app exists to show. Same ruling that removed
-    // Manage's "Show floating bar" checkbox.
+    // HideBar() and its OnHideClick handler lived here and were deleted, on the ruling that the
+    // bar "is crucial for the app's design" and that a hidden bar with no way back would look like
+    // data loss. That reasoning is intact and is why minimizing is NOT the old hide coming back:
+    // what was missing then was the way back, and the taskbar button is it (#173). Petre:
+    // "i want ability to minimize the floating bar, which gets minimized in every workspace as an
+    // item in the taskbar" -- the "in every workspace" half is the whole difference, and App
+    // delivers it by pinning the stand-in across desktops.
     //
-    // FloatingBarState.Visible is now vestigial: always written true, read by nothing. Left in
-    // place rather than removed because it is a POSITIONAL member of a persisted record, so
-    // dropping it would change the shape of everyone's state.json for no behavioural gain.
+    // The bar does not know what a stand-in is. It hides itself, remembers that it is hidden, and
+    // raises an event; App owns the window that holds the button, because that window has to be
+    // registered with WindowMonitor.Ignore and pinned, and neither is the bar's business -- the
+    // same division that keeps ReclaimTopmost's subscription in App.
+
+    // Raised by the button on the bar and by the menu item, so both gestures run one path.
+    public event Action? MinimizeRequested;
+
+    // Whether the bar is standing behind its taskbar button. Read by Save(), which persists it, and
+    // by App at startup to decide which of the two states to start in.
+    public bool Minimized { get; private set; }
+
+    // Hide, and record it. NOT Close and NOT a new window: the handle has to survive, because it is
+    // the one WindowMonitor.Ignore was given at startup and the one ReclaimTopmost addresses.
+    // Persisting immediately rather than on exit means a crash or a kill leaves the state Petre
+    // actually chose, which is the same reason ShowBar persists the moment it positions.
+    public void MinimizeToTaskbar()
+    {
+        if (Minimized) return;
+        Minimized = true;
+        ClickTrace.Write("bar minimize");
+        ClearInfo(); // a popup is its own window: hiding the bar does not take it with it
+        Hide();
+        Save();
+    }
+
+    void OnMinimizeClick(object sender, RoutedEventArgs e) => MinimizeRequested?.Invoke();
+
+    // Starting up into the minimized state, which is NOT MinimizeToTaskbar with the hiding left out.
+    // Nothing is persisted here on purpose: the flag in the file is already false, and Save() writes
+    // the POSITION alongside it, which this early would be the position of a window that has never
+    // been laid out. The bar is SizeToContent, so its width is 0 until the first layout pass and its
+    // right and bottom anchors are computed from that width -- saving here would quietly replace the
+    // position Petre chose with one derived from nothing.
+    public void AdoptMinimizedState() => Minimized = true;
 
     // Task 11 fix round 3 (reviewer, Petre: "can't drag it"): the ORIGINAL design put
     // the drag handler on the Border alone, betting on it having bare background to
@@ -2594,7 +2629,7 @@ public partial class FloatingBar : Window
             // Hover feedback is the LABEL brightening, never a row background: the background
             // already means "a dragged window will land here" (DropHighlight above), and one
             // channel cannot carry two meanings on a surface this small.
-            container.MouseEnter += (_, _) => { setHover(true); ShowRowActions(visualLabel); };
+            container.MouseEnter += (_, _) => setHover(true);
             container.MouseLeave += (_, _) => { setHover(false); ClearInfo(); };
 
             // ...and the icons punch holes in that hover area. Clicking an icon jumps to a
@@ -2615,7 +2650,7 @@ public partial class FloatingBar : Window
                 // MouseLeave calls ClearInfo, and this handler is added after it, so it wins --
                 // without it, sliding off an icon into the empty part of the same row would drop
                 // you back to the generic hint while still standing on the row.
-                icon.MouseLeave += (_, _) => { setHover(true); ShowRowActions(visualLabel); };
+                icon.MouseLeave += (_, _) => setHover(true);
             });
         }
 
@@ -2643,13 +2678,13 @@ public partial class FloatingBar : Window
                 // The reserved info line doubles as the drop-target readout: on a bar this
                 // small, "where will this land?" is otherwise pure guesswork -- rows are
                 // ~28px tall and adjacent.
-                Info.Text = (screen, ownRow) switch
+                ShowReadout((screen, ownRow) switch
                 {
                     (null, true) => "→ drop past the hairline for the other screen",
                     (null, false) => $"→ move to {groupLabel}",
                     ({ } s, true) => $"→ move to screen {s}",
                     ({ } s, false) => $"→ move to {groupLabel}, screen {s}",
-                };
+                });
             };
             container.DragLeave += (_, _) => { container.Background = idle; ClearAim(groupKey); ClearInfo(); };
             container.Drop += (_, e) =>
@@ -2709,7 +2744,7 @@ public partial class FloatingBar : Window
                 // Left on the info line rather than cleared, so the one gesture with no immediate
                 // effect says what it is waiting for. The next hover or rebuild replaces it.
                 if (waits && screen is { } held)
-                    Info.Text = $"screen {held} applies when you go to {groupLabel}";
+                    ShowReadout($"screen {held} applies when you go to {groupLabel}");
             };
         }
 
@@ -3118,25 +3153,61 @@ public partial class FloatingBar : Window
     // footer earned its reputation: 150 DIPs with an ellipsis, far from the pointer, on a surface where
     // the pointer is already on the thing it describes. What survives is the process name and the
     // workspace, which the tooltip cannot repeat without becoming a paragraph.
-    void ShowInfo(string groupLabel, WindowRow row)
+    // ShowInfo, ClearInfo's hint and ShowRowActions are gone with the line they wrote to. Petre:
+    // "eliminate that bottom row with titles completely."
+    //
+    // Nothing survives them except the DROP READOUT, and that survives because of what the comment
+    // beside it says: rows are about 28px tall and adjacent, so "where will this land?" during a
+    // drag is otherwise guesswork. It moved into a popup, below, which costs the bar no layout at
+    // all -- the reason the line could not simply be hidden and re-shown mid-drag is that the bar is
+    // SizeToContent and anchored by its bottom edge, so growing a line while a drag is in flight
+    // would slide every row out from under the pointer that is aiming at one.
+    //
+    // The other three were already redundant or were hints:
+    //   * the hovered window's detail is what the hover card shows, in full, beside the icon the
+    //     pointer is already on -- the "two places showing the same string" this file warned about;
+    //   * "hover an icon · drag icons between rows · ctrl+drag to move" was a permanent hint for
+    //     gestures that are learned once;
+    //   * the row's "ctrl+drag to move" was the same, per row.
+
+    // The drop-target readout, in the hover card's clothes so the bar has one visual language for
+    // "text about something you are pointing at". A Popup, like the hover card, for the layout
+    // reason above; placed on the LEFT for the same reason the card is, the bar living at the
+    // right-hand edge of the screen.
+    void ShowReadout(string text)
     {
-        Info.Inlines.Clear();
-        var detail = row.OriginalTitle.HasValue
-            ? $"{row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
-            : $"{row.Window.ProcessName} · {groupLabel}";
-        Info.Inlines.Add(new Run(detail) { Foreground = DimForeground });
+        readoutText ??= new TextBlock { Foreground = Brushes.White, FontSize = 11 };
+        readoutBody ??= new Border
+        {
+            Background = CardBackground,
+            BorderBrush = CardBorder,
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 4, 8, 4),
+            Child = readoutText,
+        };
+        readout ??= new System.Windows.Controls.Primitives.Popup
+        {
+            Child = readoutBody,
+            PlacementTarget = this,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Left,
+            AllowsTransparency = true,
+            PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.None,
+            StaysOpen = true,
+        };
+
+        readoutText.Text = text;
+        readout.IsOpen = true;
     }
 
-    // The idle state: a hint, not blank. It names both gestures the bar answers to --
-    // hovering for identification and dragging icons between rows -- because neither is
-    // discoverable from an icon-only surface, and it costs a line that is reserved anyway.
+    System.Windows.Controls.Primitives.Popup? readout;
+    Border? readoutBody;
+    TextBlock? readoutText;
+
+    // Named ClearInfo still, because every caller means the same thing it always did: whatever the
+    // bar was saying about the thing under the pointer, stop saying it.
     void ClearInfo()
     {
-        Info.Inlines.Clear();
-        // Names the gesture that works from ANYWHERE, rather than the edge-and-info-line one that
-        // also works but has to be found. "drag labels to move" was true until rows stopped being
-        // drag handles, and a hint advertising a gesture that no longer exists is worse than none.
-        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · ctrl+drag to move") { Foreground = DimForeground });
+        if (readout is not null) readout.IsOpen = false;
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
@@ -3428,20 +3499,6 @@ public partial class FloatingBar : Window
     // The bar-wide hint at the bottom names ctrl+drag, but it is only on screen when nothing is
     // hovered -- which is never the moment you are reaching for the bar to move it. Hovering a
     // row's bare area is exactly that moment: you are on the surface, with your hand on it.
-    //
-    // The gesture ONLY. Petre: "don't say click to switch, only say ctrl+drag to move." Naming
-    // the click as well was padding: the row is already brightening its label under the cursor,
-    // and a hint is worth reading only for the thing that is not obvious.
-    //
-    // Only for rows that can be switched to -- Pinned and Unplaced never reach here (see the
-    // caller's null guard).
-    void ShowRowActions(string label)
-    {
-        Info.Inlines.Clear();
-        Info.Inlines.Add(new Run($"{label}  ") { Foreground = Brushes.White });
-        Info.Inlines.Add(new Run("ctrl+drag to move") { Foreground = DimForeground });
-    }
-
     // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
     // once, without the kb." So this deliberately holds NO history of its own: it asks the same
     // MRU the chord asks, through the same RecentWorkspaces.Back, and is therefore incapable of
@@ -3786,7 +3843,7 @@ public partial class FloatingBar : Window
         button.DataContext = row;
 
         // Hover -> the card, and the footer no longer carries the title (#135).
-        button.MouseEnter += (_, _) => { ShowInfo(groupLabel, row); ArmHoverCard(groupLabel, row, button); };
+        button.MouseEnter += (_, _) => ArmHoverCard(groupLabel, row, button);
         button.MouseLeave += (_, _) => ClearInfo();
 
         // ...and hover -> ring (#67). The pointer resting on an icon makes THAT window the thing a
@@ -4475,6 +4532,7 @@ public partial class FloatingBar : Window
                 : manager.DeleteWorkspaceClosingWindows(workspaceId));
         });
 
+        AddMinimizeItem(menu);
         return menu;
     }
 
@@ -4490,6 +4548,22 @@ public partial class FloatingBar : Window
     // The current desktop name is offered as the initial value rather than an empty box. "Desktop 1"
     // is what the shell calls it, it is what the row says, and starting from it makes the dialog a
     // correction rather than a blank to fill in.
+    // "Minimize bar", offered by every menu the bar's own surface opens (#173). One helper rather
+    // than the item written out twice, so the two menus cannot drift apart -- and separated,
+    // because it is the one item on these menus that acts on the BAR rather than on the row the
+    // right-click landed on.
+    //
+    // Not added to IconMenu: that menu is already the longest of the three, and every item on it
+    // acts on one window. A command that made the whole bar vanish sitting under the same right
+    // click as "Close window" is a mis-aim waiting to happen.
+    void AddMinimizeItem(ContextMenu menu)
+    {
+        menu.Items.Add(new Separator());
+        var minimize = new MenuItem { Header = "Minimize bar", Icon = MenuGlyph("▁") };
+        minimize.Click += (_, _) => MinimizeRequested?.Invoke();
+        menu.Items.Add(minimize);
+    }
+
     ContextMenu DesktopMenu(Guid desktopId, string currentName)
     {
         var menu = new ContextMenu();
@@ -4501,6 +4575,7 @@ public partial class FloatingBar : Window
                 .Tap(chosen => Report(manager.NameDesktop(desktopId, chosen)));
         menu.Items.Add(name);
 
+        AddMinimizeItem(menu);
         return menu;
     }
 
@@ -5095,13 +5170,16 @@ public partial class FloatingBar : Window
     }
 
     // One place that writes the position, so Right can never be persisted out of step with
-    // Left. Visible is always true here: both callers are showing or moving the bar.
+    // Left. Visible now says whether the bar is on screen or standing behind a taskbar button
+    // (#173): it was written true and read by nothing for as long as the bar could not be hidden,
+    // and minimizing is exactly the state it was declared for, so it needed no new field and no
+    // change to the shape of anyone's state.json.
     // double.NaN is what Width reads as while the bar is still SizeToContent, and it is the honest
     // "no width chosen" here too -- persisting it as a number would freeze the bar at whatever its
     // content happened to measure on the day, which is the opposite of following the content.
     // The layout key rides along so the same position is remembered twice: once as "the last position"
     // and once as "the position on this arrangement of monitors" (#150).
-    void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)
+    void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, !Minimized)
     {
         Right = anchorRight,
         Bottom = anchorBottom,
