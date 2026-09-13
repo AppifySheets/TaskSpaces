@@ -149,6 +149,7 @@ public class BarMinimizeTests(ITestOutputHelper output)
         var standIn = new BarStandIn();
         var hwnd = standIn.EnsureHandle();
         standIn.Show();
+        standIn.MinimizeToButton(); // the caller pins between these two, which a test cannot do
 
         var ex = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE);
         output.WriteLine($"stand-in ex-style 0x{(long)ex:X8}");
@@ -169,6 +170,7 @@ public class BarMinimizeTests(ITestOutputHelper output)
         var standIn = new BarStandIn();
         standIn.EnsureHandle();
         standIn.Show();
+        standIn.MinimizeToButton();
         var asks = 0;
         standIn.RestoreRequested += () => asks++;
 
@@ -189,6 +191,7 @@ public class BarMinimizeTests(ITestOutputHelper output)
         var standIn = new BarStandIn();
         standIn.EnsureHandle();
         standIn.Show();
+        standIn.MinimizeToButton();
         var asks = 0;
         standIn.RestoreRequested += () => asks++;
 
@@ -206,6 +209,7 @@ public class BarMinimizeTests(ITestOutputHelper output)
         var standIn = new BarStandIn();
         standIn.EnsureHandle();
         standIn.Show();
+        standIn.MinimizeToButton();
         var asks = 0;
         standIn.RestoreRequested += () => asks++;
 

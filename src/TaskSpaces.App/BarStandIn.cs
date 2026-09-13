@@ -51,7 +51,11 @@ public sealed class BarStandIn : Window
     {
         Title = "TaskSpaces";
         ShowInTaskbar = true;
-        WindowState = WindowState.Minimized;
+        // NOT minimized yet: a window that has never been shown is on no virtual desktop, so it
+        // cannot be pinned to all of them, and pinning is what puts this button on every workspace.
+        // The caller shows it, pins it, then calls MinimizeToButton. Being parked off the virtual
+        // screen with ShowActivated false is what makes that invisible.
+        WindowState = WindowState.Normal;
         // Off the virtual screen as well as minimized. Restoring is never ALLOWED to happen (see
         // OnStateChanged), but if some shell gesture ever forces a frame out anyway, it paints
         // where nobody is looking rather than in the middle of Petre's screen.
@@ -93,10 +97,21 @@ public sealed class BarStandIn : Window
     // back, not this, so the restore is refused -- the state is put straight back to Minimized --
     // and turned into the event instead. Without this the stand-in would flash a 320x120 panel on
     // its way to being closed.
+    // Minimize, and only from here on does a restore mean anything. Arming matters because this
+    // window is shown NORMAL for as long as it takes to pin it, and a state change during that
+    // setup would otherwise read as the user asking for the bar back before it had even gone.
+    public void MinimizeToButton()
+    {
+        WindowState = WindowState.Minimized;
+        armed = true;
+    }
+
+    bool armed;
+
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);
-        if (WindowState == WindowState.Minimized) return;
+        if (!armed || WindowState == WindowState.Minimized) return;
         WindowState = WindowState.Minimized;
         Restore();
     }
@@ -105,7 +120,7 @@ public sealed class BarStandIn : Window
     protected override void OnActivated(EventArgs e)
     {
         base.OnActivated(e);
-        Restore();
+        if (armed) Restore();
     }
 
     // The X on the taskbar thumbnail. Petre chose "restore the bar" over "exit the app" for it, and

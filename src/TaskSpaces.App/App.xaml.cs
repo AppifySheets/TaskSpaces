@@ -44,6 +44,7 @@ public partial class App : Application
     IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
     bool floatingBarPinned; // Task 11 fix round 4: pin the bar's real hwnd to all desktops exactly once (see PinFloatingBar)
     BarStandIn? standIn;    // #173: the window that owns the taskbar button while the bar is minimized
+    nint barHandle;         // #173: the bar's hwnd, kept because the pin now happens after each Show
     (string Label, Action Open)? pendingUpdate; // #173: held so rebuilding the tray menu cannot drop the update item
 
     // --- check for updates (#71) ------------------------------------------------------
@@ -748,10 +749,7 @@ public partial class App : Application
             // is the bar's business.
             floatingBar.MinimizeRequested += MinimizeBar;
 
-            // The bar is PINNED either way, minimized or not, because the pin lives on the hwnd and
-            // survives Hide()/Show(): pinning only when it happens to start visible would leave a
-            // restore from the taskbar showing a bar that belonged to one desktop again.
-            PinFloatingBar(barHwnd);
+            barHandle = barHwnd; // for the pin below, which cannot happen until the bar is shown
 
             // Visible is read again after years of being written and ignored (see FloatingBar.Save).
             // A file written by an older build has it true, which is the state those builds were
@@ -759,7 +757,7 @@ public partial class App : Application
             if (manager.State.FloatingBar is { Visible: false })
                 StartMinimized();
             else
-                floatingBar.ShowBar();
+                ShowBarAndPin();
 
             // Petre: "if i activate the taskbar, it hides the floating window". Topmost is a
             // shared band, not a rank, so the taskbar (and StartAllBack's menu) climbs over
@@ -1060,6 +1058,16 @@ public partial class App : Application
     // see the Manage window in the bar), so the bar would now be a perfectly ordinary
     // pinned window as far as the overview is concerned -- which is exactly why the caller
     // registers this handle with monitor.Ignore first.
+    // ORDER IS LOAD-BEARING, and this is the second time this file has had to learn it. Petre, with a
+    // screenshot: "TaskSpaces could not pin the floating bar to every workspace: Unexpected error
+    // pinning window 13375486: Element not found. (0x8002802B)".
+    //
+    // That came from moving this call to before the bar's first Show(), on the reasoning written
+    // below that a real handle is all it needs. A handle is NOT all it needs: pinning is a statement
+    // about which desktops a window appears on, and a window that has never been shown is on no
+    // desktop at all -- the same TYPE_E_ELEMENTNOTFOUND the virtual-desktop API returns for any
+    // window it cannot place. So the pin now follows the Show, every time, and the flag below keeps
+    // it to once.
     void PinFloatingBar(nint hwnd)
     {
         if (floatingBarPinned) return;
@@ -1080,6 +1088,14 @@ public partial class App : Application
     // desktop he minimized from and nothing anywhere else -- and the bar he had just put away is
     // the surface he uses to move between desktops in the first place. BarStandIn carries the rest
     // of the reasoning, including why the bar cannot simply minimize itself.
+
+    // Show, then pin: see PinFloatingBar. Used by startup and by every restore, so a bar that
+    // started minimized is pinned the first time it is actually on screen rather than never.
+    void ShowBarAndPin()
+    {
+        floatingBar!.ShowBar();
+        PinFloatingBar(barHandle);
+    }
 
     // The user gesture: the button on the bar, "Minimize bar" on either of the bar's own menus, or
     // the tray item. Guarded on standIn, because three entry points can reach it.
@@ -1109,6 +1125,11 @@ public partial class App : Application
         // bar it is standing in for -- and since it is pinned, that row would be the pinned one.
         var hwnd = window.EnsureHandle();
         monitor!.Ignore(hwnd);
+
+        // Shown NORMAL first, off the virtual screen, and minimized only after the pin. Same lesson
+        // as PinFloatingBar above, one step further: a window has to be on a desktop before it can
+        // be pinned to all of them. Nothing flashes, because "normal" here is a 320x120 window
+        // parked at -32000 with ShowActivated false.
         window.Show();
 
         // What puts the button on every workspace. Failure is REPORTED AND SURVIVED rather than
@@ -1116,6 +1137,8 @@ public partial class App : Application
         // this desktop and the tray's "Show bar" is still there on all of them.
         desktops!.Pin(new WindowHandle(hwnd))
             .TapError(err => ClickTrace.Write($"bar standin pin failed: {err}"));
+
+        window.MinimizeToButton();
 
         RefreshTrayMenu();
     }
@@ -1130,7 +1153,7 @@ public partial class App : Application
             if (!window.IsClosing) window.Close();
         }
 
-        floatingBar?.ShowBar();
+        if (floatingBar is not null) ShowBarAndPin();
         // It has been off screen while other windows held the foreground, and topmost is a band
         // rather than a rank, so without this it comes back underneath whatever climbed over it.
         floatingBar?.ReclaimTopmost();
