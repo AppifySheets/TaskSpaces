@@ -303,6 +303,8 @@ public partial class FloatingBar : Window
     // position always land together.
     public void ShowBar()
     {
+        Minimized = false; // before Save() below, which persists this as Visible
+        ClickTrace.Write("bar restore");
         Rebuild();
         Show();
         PositionFromState();
@@ -385,16 +387,48 @@ public partial class FloatingBar : Window
     // Petre: "the bar shouldn't be hidden, it should be impossible to hide that floating bar,
     // that's the app."
     //
-    // HideBar() and its OnHideClick handler lived here and are gone. They were ALREADY
-    // unreachable -- nothing in FloatingBar.xaml bound the handler, so HideBar's only caller was
-    // one nobody could trigger -- which meant the bar was unhideable by accident rather than on
-    // purpose. Deleted so it stays that way deliberately, and so nothing wires a close
-    // affordance back onto the one surface this app exists to show. Same ruling that removed
-    // Manage's "Show floating bar" checkbox.
+    // HideBar() and its OnHideClick handler lived here and were deleted, on the ruling that the
+    // bar "is crucial for the app's design" and that a hidden bar with no way back would look like
+    // data loss. That reasoning is intact and is why minimizing is NOT the old hide coming back:
+    // what was missing then was the way back, and the taskbar button is it (#173). Petre:
+    // "i want ability to minimize the floating bar, which gets minimized in every workspace as an
+    // item in the taskbar" -- the "in every workspace" half is the whole difference, and App
+    // delivers it by pinning the stand-in across desktops.
     //
-    // FloatingBarState.Visible is now vestigial: always written true, read by nothing. Left in
-    // place rather than removed because it is a POSITIONAL member of a persisted record, so
-    // dropping it would change the shape of everyone's state.json for no behavioural gain.
+    // The bar does not know what a stand-in is. It hides itself, remembers that it is hidden, and
+    // raises an event; App owns the window that holds the button, because that window has to be
+    // registered with WindowMonitor.Ignore and pinned, and neither is the bar's business -- the
+    // same division that keeps ReclaimTopmost's subscription in App.
+
+    // Raised by the button on the bar and by the menu item, so both gestures run one path.
+    public event Action? MinimizeRequested;
+
+    // Whether the bar is standing behind its taskbar button. Read by Save(), which persists it, and
+    // by App at startup to decide which of the two states to start in.
+    public bool Minimized { get; private set; }
+
+    // Hide, and record it. NOT Close and NOT a new window: the handle has to survive, because it is
+    // the one WindowMonitor.Ignore was given at startup and the one ReclaimTopmost addresses.
+    // Persisting immediately rather than on exit means a crash or a kill leaves the state Petre
+    // actually chose, which is the same reason ShowBar persists the moment it positions.
+    public void MinimizeToTaskbar()
+    {
+        if (Minimized) return;
+        Minimized = true;
+        ClickTrace.Write("bar minimize");
+        Hide();
+        Save();
+    }
+
+    void OnMinimizeClick(object sender, RoutedEventArgs e) => MinimizeRequested?.Invoke();
+
+    // Starting up into the minimized state, which is NOT MinimizeToTaskbar with the hiding left out.
+    // Nothing is persisted here on purpose: the flag in the file is already false, and Save() writes
+    // the POSITION alongside it, which this early would be the position of a window that has never
+    // been laid out. The bar is SizeToContent, so its width is 0 until the first layout pass and its
+    // right and bottom anchors are computed from that width -- saving here would quietly replace the
+    // position Petre chose with one derived from nothing.
+    public void AdoptMinimizedState() => Minimized = true;
 
     // Task 11 fix round 3 (reviewer, Petre: "can't drag it"): the ORIGINAL design put
     // the drag handler on the Border alone, betting on it having bare background to
@@ -4475,6 +4509,7 @@ public partial class FloatingBar : Window
                 : manager.DeleteWorkspaceClosingWindows(workspaceId));
         });
 
+        AddMinimizeItem(menu);
         return menu;
     }
 
@@ -4490,6 +4525,22 @@ public partial class FloatingBar : Window
     // The current desktop name is offered as the initial value rather than an empty box. "Desktop 1"
     // is what the shell calls it, it is what the row says, and starting from it makes the dialog a
     // correction rather than a blank to fill in.
+    // "Minimize bar", offered by every menu the bar's own surface opens (#173). One helper rather
+    // than the item written out twice, so the two menus cannot drift apart -- and separated,
+    // because it is the one item on these menus that acts on the BAR rather than on the row the
+    // right-click landed on.
+    //
+    // Not added to IconMenu: that menu is already the longest of the three, and every item on it
+    // acts on one window. A command that made the whole bar vanish sitting under the same right
+    // click as "Close window" is a mis-aim waiting to happen.
+    void AddMinimizeItem(ContextMenu menu)
+    {
+        menu.Items.Add(new Separator());
+        var minimize = new MenuItem { Header = "Minimize bar", Icon = MenuGlyph("▁") };
+        minimize.Click += (_, _) => MinimizeRequested?.Invoke();
+        menu.Items.Add(minimize);
+    }
+
     ContextMenu DesktopMenu(Guid desktopId, string currentName)
     {
         var menu = new ContextMenu();
@@ -4501,6 +4552,7 @@ public partial class FloatingBar : Window
                 .Tap(chosen => Report(manager.NameDesktop(desktopId, chosen)));
         menu.Items.Add(name);
 
+        AddMinimizeItem(menu);
         return menu;
     }
 
@@ -5095,13 +5147,16 @@ public partial class FloatingBar : Window
     }
 
     // One place that writes the position, so Right can never be persisted out of step with
-    // Left. Visible is always true here: both callers are showing or moving the bar.
+    // Left. Visible now says whether the bar is on screen or standing behind a taskbar button
+    // (#173): it was written true and read by nothing for as long as the bar could not be hidden,
+    // and minimizing is exactly the state it was declared for, so it needed no new field and no
+    // change to the shape of anyone's state.json.
     // double.NaN is what Width reads as while the bar is still SizeToContent, and it is the honest
     // "no width chosen" here too -- persisting it as a number would freeze the bar at whatever its
     // content happened to measure on the day, which is the opposite of following the content.
     // The layout key rides along so the same position is remembered twice: once as "the last position"
     // and once as "the position on this arrangement of monitors" (#150).
-    void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, true)
+    void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, !Minimized)
     {
         Right = anchorRight,
         Bottom = anchorBottom,

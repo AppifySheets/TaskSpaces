@@ -43,6 +43,8 @@ public partial class App : Application
     System.Threading.Mutex? singleInstance;
     IVirtualDesktopService? desktops; // Task 11 fix round 4: promoted from a local so PinOwnWindow (below) can reach it from the tray/hover callbacks, not just OnStartup
     bool floatingBarPinned; // Task 11 fix round 4: pin the bar's real hwnd to all desktops exactly once (see PinFloatingBar)
+    BarStandIn? standIn;    // #173: the window that owns the taskbar button while the bar is minimized
+    (string Label, Action Open)? pendingUpdate; // #173: held so rebuilding the tray menu cannot drop the update item
 
     // --- check for updates (#71) ------------------------------------------------------
     //
@@ -166,8 +168,8 @@ public partial class App : Application
     // ConfigureAwait(true) on both callers' awaits put us back on the dispatcher, which these need.
     void Announce(ReleaseInfo release)
     {
-        trayIcon!.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow,
-            ($"Update to {release.Version}…", () => OfferUpdate(release)));
+        pendingUpdate = ($"Update to {release.Version}…", () => OfferUpdate(release));
+        RefreshTrayMenu();
 
         // The balloon is BEST EFFORT and always has been, which the trace now says out loud. It is a
         // Shell_NotifyIcon balloon, so whether anything appears is Windows' decision: notifications
@@ -176,7 +178,7 @@ public partial class App : Application
         // on the new version -- so a missing balloon is a missed glance, not a missed update.
         try
         {
-            trayIcon.ShowNotification(
+            trayIcon!.ShowNotification(
                 title: $"TaskSpaces {release.Version} is available",
                 message: $"You are running {UpdateService.DisplayVersion}. Click here to update.");
             ClickTrace.Write($"update {release.Version} announced: menu item set, balloon requested");
@@ -679,7 +681,7 @@ public partial class App : Application
             // taskbar and window icons cannot drift apart.
             IconSource = AppIcon,
             ToolTipText = compatibilityMode ? "TaskSpaces (compatibility mode)" : "TaskSpaces",
-            ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow),
+            ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow, null, BarToggle()),
             // Petre: "left click gives us the main window, right click gives exit and
             // manage". RightClick only, so a left-click is free to open Manage (wired
             // below) instead of raising the same menu twice.
@@ -739,8 +741,25 @@ public partial class App : Application
             // XAML and applied by InitializeComponent, which the constructor above ran.
             var barHwnd = new WindowInteropHelper(floatingBar).EnsureHandle();
             monitor.Ignore(barHwnd);
-            floatingBar.ShowBar();
+
+            // #173. Both ways in arrive here: the button on the bar and either menu item raise
+            // MinimizeRequested, and App is what owns the window that holds the taskbar button --
+            // that window has to be registered with Ignore and pinned across desktops, and neither
+            // is the bar's business.
+            floatingBar.MinimizeRequested += MinimizeBar;
+
+            // The bar is PINNED either way, minimized or not, because the pin lives on the hwnd and
+            // survives Hide()/Show(): pinning only when it happens to start visible would leave a
+            // restore from the taskbar showing a bar that belonged to one desktop again.
             PinFloatingBar(barHwnd);
+
+            // Visible is read again after years of being written and ignored (see FloatingBar.Save).
+            // A file written by an older build has it true, which is the state those builds were
+            // always in, so an upgrade starts exactly where it left off.
+            if (manager.State.FloatingBar is { Visible: false })
+                StartMinimized();
+            else
+                floatingBar.ShowBar();
 
             // Petre: "if i activate the taskbar, it hides the floating window". Topmost is a
             // shared band, not a rank, so the taskbar (and StartAllBack's menu) climbs over
@@ -1051,6 +1070,88 @@ public partial class App : Application
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Warning));
     }
 
+    // --- minimizing the bar to a taskbar button (#173) --------------------------------------
+    //
+    // Petre: "i want ability to minimize the floating bar, which gets minimized in every workspace
+    // as an item in the taskbar."
+    //
+    // The second half of that sentence is the whole design. Windows gives a taskbar button only to
+    // windows on the CURRENT desktop, so a stand-in that was not pinned would leave a button on the
+    // desktop he minimized from and nothing anywhere else -- and the bar he had just put away is
+    // the surface he uses to move between desktops in the first place. BarStandIn carries the rest
+    // of the reasoning, including why the bar cannot simply minimize itself.
+
+    // The user gesture: the button on the bar, "Minimize bar" on either of the bar's own menus, or
+    // the tray item. Guarded on standIn, because three entry points can reach it.
+    void MinimizeBar()
+    {
+        if (floatingBar is not { } bar || standIn is not null) return;
+        bar.MinimizeToTaskbar();
+        ShowStandIn();
+    }
+
+    // Startup into the state the last session was left in. Split from MinimizeBar because the bar
+    // must NOT persist here: see FloatingBar.AdoptMinimizedState.
+    void StartMinimized()
+    {
+        floatingBar!.AdoptMinimizedState();
+        ShowStandIn();
+    }
+
+    void ShowStandIn()
+    {
+        var window = new BarStandIn { Icon = AppIcon };
+        standIn = window;
+        window.RestoreRequested += RestoreBar;
+
+        // Ignore BEFORE Show, exactly as the bar does: WindowMonitor does not skip our own process,
+        // so an EVENT_OBJECT_SHOW that arrived first would give the stand-in a permanent row in the
+        // bar it is standing in for -- and since it is pinned, that row would be the pinned one.
+        var hwnd = window.EnsureHandle();
+        monitor!.Ignore(hwnd);
+        window.Show();
+
+        // What puts the button on every workspace. Failure is REPORTED AND SURVIVED rather than
+        // thrown: on a Windows build whose desktop COM we cannot drive, the button still exists on
+        // this desktop and the tray's "Show bar" is still there on all of them.
+        desktops!.Pin(new WindowHandle(hwnd))
+            .TapError(err => ClickTrace.Write($"bar standin pin failed: {err}"));
+
+        RefreshTrayMenu();
+    }
+
+    // Every way back: the taskbar button, the X on its thumbnail, Alt+Tab, and the tray item.
+    void RestoreBar()
+    {
+        if (standIn is { } window)
+        {
+            standIn = null; // before Close, so the Closing this may raise finds nothing to restore
+            window.RestoreRequested -= RestoreBar;
+            if (!window.IsClosing) window.Close();
+        }
+
+        floatingBar?.ShowBar();
+        // It has been off screen while other windows held the foreground, and topmost is a band
+        // rather than a rank, so without this it comes back underneath whatever climbed over it.
+        floatingBar?.ReclaimTopmost();
+        RefreshTrayMenu();
+    }
+
+    // One place that builds the tray menu, so the update item and the bar item cannot knock each
+    // other out: before this the only rebuild was Announce's, which passed the update and nothing
+    // else, and would now have dropped the bar toggle every time a release was found.
+    void RefreshTrayMenu()
+    {
+        if (trayIcon is null) return;
+        trayIcon.ContextMenu = TrayMenu.Build(compatibilityMode, OpenManage, ExitApp, CheckForUpdateNow,
+            pendingUpdate, BarToggle());
+    }
+
+    (string Label, Action Toggle)? BarToggle() =>
+        floatingBar is not { } bar ? null
+        : bar.Minimized ? ("Show bar", (Action)RestoreBar)
+        : ("Minimize bar", MinimizeBar);
+
     // Re-registers the Alt+Tab-style switcher when its configured chord changes, and moves
     // the picker's hold-detection onto the new modifiers at the same time. Both halves must
     // move together: a chord registered on Win+Tab whose release poll still watched Ctrl+Alt
@@ -1069,6 +1170,15 @@ public partial class App : Application
 
     void ExitApp()
     {
+        // Unsubscribed first: closing this raises RestoreRequested, and showing the bar again while
+        // the app is shutting down would leave a window on screen with nothing behind it.
+        if (standIn is { } window)
+        {
+            standIn = null;
+            window.RestoreRequested -= RestoreBar;
+            window.Close();
+        }
+
         manager?.RestoreAllTitles();  // leave every window as we found it
         monitor?.Dispose();
         hotkeys?.Dispose(); // unregisters RegisterHotKey chords before the process exits

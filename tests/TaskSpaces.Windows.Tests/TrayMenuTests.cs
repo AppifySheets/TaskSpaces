@@ -64,4 +64,33 @@ public class TrayMenuTests
         Assert.Contains("Virtual desktops unavailable", (string)notice.Header);
         Assert.False(notice.IsEnabled);
     });
+
+    // #173. The tray is the channel that must never be a dead end: if the taskbar button is ever
+    // lost -- a shell restart, or a pin that failed on a Windows build without the desktop COM --
+    // this item is the way back to a bar nobody can see.
+    [Fact]
+    public void The_bar_toggle_sits_under_manage_and_says_which_way_it_goes() => StaThread.Run(() =>
+    {
+        var minimize = TrayMenu.Build(compatibilityMode: false, () => { }, () => { }, () => { },
+            update: null, bar: ("Minimize bar", () => { }));
+        Assert.Equal(["Manage…", "Minimize bar", "Check for updates…", "Exit"], Headers(minimize));
+
+        // The same item, the other way round, while the bar is standing behind its button.
+        var show = TrayMenu.Build(compatibilityMode: false, () => { }, () => { }, () => { },
+            update: null, bar: ("Show bar", () => { }));
+        Assert.Equal(["Manage…", "Show bar", "Check for updates…", "Exit"], Headers(show));
+    });
+
+    [Fact]
+    public void The_bar_toggle_invokes_the_toggle() => StaThread.Run(() =>
+    {
+        var toggles = 0;
+        var menu = TrayMenu.Build(compatibilityMode: false, () => { }, () => { }, () => { },
+            update: null, bar: ("Minimize bar", () => toggles++));
+
+        menu.Items.OfType<MenuItem>().Single(item => (string)item.Header == "Minimize bar")
+            .RaiseEvent(new System.Windows.RoutedEventArgs(MenuItem.ClickEvent));
+
+        Assert.Equal(1, toggles);
+    });
 }

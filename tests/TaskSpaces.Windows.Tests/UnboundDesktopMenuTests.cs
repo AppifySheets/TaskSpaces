@@ -60,13 +60,19 @@ public class UnboundDesktopMenuTests
     // workspace to act on -- reorder positions a row in a list this desktop is not in, colour comes
     // from that position, delete would close somebody's desktop from a right-click. Offering them
     // greyed out would advertise five things that cannot work.
+    //
+    // It gained a SECOND item with #173, and the rule above is why that is not a contradiction:
+    // "Minimize bar" does not act on the desktop the right-click landed on, it acts on the bar. The
+    // rule was never "one item", it was "nothing that needs a workspace", and every menu the bar
+    // opens offers the minimize so that a right-click anywhere on it behaves the same way.
     [Fact]
-    public void That_menu_offers_nothing_else() => StaThread.Run(() =>
+    public void That_menu_offers_nothing_else_that_needs_a_workspace() => StaThread.Run(() =>
     {
         var harness = Harness.Build(withUnnamedDesktop: true);
         using var bar = harness.ShowBar();
 
-        Assert.Single(HeadersOf(RowLabelled(bar.Rows, "Desktop 1").ContextMenu!));
+        Assert.Equal(["Name this desktop…", "Minimize bar"],
+            HeadersOf(RowLabelled(bar.Rows, "Desktop 1").ContextMenu!));
     });
 
     // The original reasoning still holds where it was right: 📌 Pinned is not a workspace and has

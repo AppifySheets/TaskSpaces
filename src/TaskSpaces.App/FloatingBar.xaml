@@ -75,6 +75,21 @@
                 <Button x:Name="BackButton" Content="↩" Width="18" FontSize="12"
                         Foreground="White" Background="Transparent" BorderThickness="0"
                         Padding="0" VerticalAlignment="Center" Click="OnBackClick"/>
+                <!-- Minimize (#173). Petre asked for this on the bar itself as well as in the two
+                     menus, so it has to live SOMEWHERE on a surface he also asked to keep tight.
+                     Here, sharing the info line's row with the back button, for the reason written
+                     above it: this strip is outside the Rows panel, so it costs 18px of width once
+                     rather than height, and the bar's home is the bottom-right corner where height
+                     grows towards the screen edge.
+                     Outside the row grid is not a preference, it is the constraint. Every row is
+                     laid out over one shared set of columns so a screen's region sits at the same x
+                     on each of them; a control added INSIDE that grid moves the monitor hairlines,
+                     which is #70, #99 and #103 and has been argued from screenshots three times
+                     already. -->
+                <Button x:Name="MinimizeButton" Content="▁" Width="18" FontSize="12"
+                        Foreground="White" Background="Transparent" BorderThickness="0"
+                        Padding="0" VerticalAlignment="Center" Click="OnMinimizeClick"
+                        ToolTip="Minimize the bar to a taskbar button"/>
                 <TextBlock x:Name="Info" Width="150" FontSize="11" Foreground="White"
                            TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
             </StackPanel>
