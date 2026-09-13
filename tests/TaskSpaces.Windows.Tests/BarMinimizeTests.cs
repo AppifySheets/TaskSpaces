@@ -214,4 +214,48 @@ public class BarMinimizeTests(ITestOutputHelper output)
 
         Assert.Equal(1, asks);
     });
+
+    // --- where the two buttons live (#173, second round) -----------------------------
+    //
+    // Petre: "those buttons for minimize and switch to previous workspace would make more sense at
+    // the top, next to the pin icon. eliminate that bottom row with titles completely."
+    //
+    // ORDER is the assertion, not coordinates: a y-position test would pass on a bar whose strip had
+    // been moved back down and whose rows happened to be empty.
+    [Fact]
+    public void Both_buttons_sit_above_the_rows() => StaThread.Run(() =>
+    {
+        var bar = Bar(Started(new StubStore()));
+        bar.ShowBar();
+
+        var strip = (Panel)((Button)bar.FindName("BackButton")!).Parent;
+        var rows = (Panel)bar.FindName("Rows")!;
+        var column = (Panel)strip.Parent;
+
+        Assert.Same(column, rows.Parent); // siblings, so the comparison below means something
+        Assert.True(column.Children.IndexOf(strip) < column.Children.IndexOf(rows));
+
+        // Both of them, in the same strip: the point was one place for the bar's own commands.
+        Assert.Same(strip, ((Button)bar.FindName("MinimizeButton")!).Parent);
+
+        // ...right-aligned, which is what "next to the pin icon" means on a bar whose rows put their
+        // labels in a fixed gutter on the RIGHT.
+        Assert.Equal(HorizontalAlignment.Right, strip.HorizontalAlignment);
+
+        bar.Close();
+    });
+
+    // The line that showed hovered titles, the idle hint and the row hint is gone outright. The
+    // hover card already showed the window details beside the icon, which was the "two places
+    // showing the same string" this file warned about long before it was deleted.
+    [Fact]
+    public void The_bar_has_no_title_line_any_more() => StaThread.Run(() =>
+    {
+        var bar = Bar(Started(new StubStore()));
+        bar.ShowBar();
+
+        Assert.Null(bar.FindName("Info"));
+
+        bar.Close();
+    });
 }

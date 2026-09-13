@@ -416,6 +416,7 @@ public partial class FloatingBar : Window
         if (Minimized) return;
         Minimized = true;
         ClickTrace.Write("bar minimize");
+        ClearInfo(); // a popup is its own window: hiding the bar does not take it with it
         Hide();
         Save();
     }
@@ -2628,7 +2629,7 @@ public partial class FloatingBar : Window
             // Hover feedback is the LABEL brightening, never a row background: the background
             // already means "a dragged window will land here" (DropHighlight above), and one
             // channel cannot carry two meanings on a surface this small.
-            container.MouseEnter += (_, _) => { setHover(true); ShowRowActions(visualLabel); };
+            container.MouseEnter += (_, _) => setHover(true);
             container.MouseLeave += (_, _) => { setHover(false); ClearInfo(); };
 
             // ...and the icons punch holes in that hover area. Clicking an icon jumps to a
@@ -2649,7 +2650,7 @@ public partial class FloatingBar : Window
                 // MouseLeave calls ClearInfo, and this handler is added after it, so it wins --
                 // without it, sliding off an icon into the empty part of the same row would drop
                 // you back to the generic hint while still standing on the row.
-                icon.MouseLeave += (_, _) => { setHover(true); ShowRowActions(visualLabel); };
+                icon.MouseLeave += (_, _) => setHover(true);
             });
         }
 
@@ -2677,13 +2678,13 @@ public partial class FloatingBar : Window
                 // The reserved info line doubles as the drop-target readout: on a bar this
                 // small, "where will this land?" is otherwise pure guesswork -- rows are
                 // ~28px tall and adjacent.
-                Info.Text = (screen, ownRow) switch
+                ShowReadout((screen, ownRow) switch
                 {
                     (null, true) => "→ drop past the hairline for the other screen",
                     (null, false) => $"→ move to {groupLabel}",
                     ({ } s, true) => $"→ move to screen {s}",
                     ({ } s, false) => $"→ move to {groupLabel}, screen {s}",
-                };
+                });
             };
             container.DragLeave += (_, _) => { container.Background = idle; ClearAim(groupKey); ClearInfo(); };
             container.Drop += (_, e) =>
@@ -2743,7 +2744,7 @@ public partial class FloatingBar : Window
                 // Left on the info line rather than cleared, so the one gesture with no immediate
                 // effect says what it is waiting for. The next hover or rebuild replaces it.
                 if (waits && screen is { } held)
-                    Info.Text = $"screen {held} applies when you go to {groupLabel}";
+                    ShowReadout($"screen {held} applies when you go to {groupLabel}");
             };
         }
 
@@ -3152,25 +3153,61 @@ public partial class FloatingBar : Window
     // footer earned its reputation: 150 DIPs with an ellipsis, far from the pointer, on a surface where
     // the pointer is already on the thing it describes. What survives is the process name and the
     // workspace, which the tooltip cannot repeat without becoming a paragraph.
-    void ShowInfo(string groupLabel, WindowRow row)
+    // ShowInfo, ClearInfo's hint and ShowRowActions are gone with the line they wrote to. Petre:
+    // "eliminate that bottom row with titles completely."
+    //
+    // Nothing survives them except the DROP READOUT, and that survives because of what the comment
+    // beside it says: rows are about 28px tall and adjacent, so "where will this land?" during a
+    // drag is otherwise guesswork. It moved into a popup, below, which costs the bar no layout at
+    // all -- the reason the line could not simply be hidden and re-shown mid-drag is that the bar is
+    // SizeToContent and anchored by its bottom edge, so growing a line while a drag is in flight
+    // would slide every row out from under the pointer that is aiming at one.
+    //
+    // The other three were already redundant or were hints:
+    //   * the hovered window's detail is what the hover card shows, in full, beside the icon the
+    //     pointer is already on -- the "two places showing the same string" this file warned about;
+    //   * "hover an icon · drag icons between rows · ctrl+drag to move" was a permanent hint for
+    //     gestures that are learned once;
+    //   * the row's "ctrl+drag to move" was the same, per row.
+
+    // The drop-target readout, in the hover card's clothes so the bar has one visual language for
+    // "text about something you are pointing at". A Popup, like the hover card, for the layout
+    // reason above; placed on the LEFT for the same reason the card is, the bar living at the
+    // right-hand edge of the screen.
+    void ShowReadout(string text)
     {
-        Info.Inlines.Clear();
-        var detail = row.OriginalTitle.HasValue
-            ? $"{row.Window.ProcessName} · {groupLabel} · was: {row.OriginalTitle.Value}"
-            : $"{row.Window.ProcessName} · {groupLabel}";
-        Info.Inlines.Add(new Run(detail) { Foreground = DimForeground });
+        readoutText ??= new TextBlock { Foreground = Brushes.White, FontSize = 11 };
+        readoutBody ??= new Border
+        {
+            Background = CardBackground,
+            BorderBrush = CardBorder,
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 4, 8, 4),
+            Child = readoutText,
+        };
+        readout ??= new System.Windows.Controls.Primitives.Popup
+        {
+            Child = readoutBody,
+            PlacementTarget = this,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Left,
+            AllowsTransparency = true,
+            PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.None,
+            StaysOpen = true,
+        };
+
+        readoutText.Text = text;
+        readout.IsOpen = true;
     }
 
-    // The idle state: a hint, not blank. It names both gestures the bar answers to --
-    // hovering for identification and dragging icons between rows -- because neither is
-    // discoverable from an icon-only surface, and it costs a line that is reserved anyway.
+    System.Windows.Controls.Primitives.Popup? readout;
+    Border? readoutBody;
+    TextBlock? readoutText;
+
+    // Named ClearInfo still, because every caller means the same thing it always did: whatever the
+    // bar was saying about the thing under the pointer, stop saying it.
     void ClearInfo()
     {
-        Info.Inlines.Clear();
-        // Names the gesture that works from ANYWHERE, rather than the edge-and-info-line one that
-        // also works but has to be found. "drag labels to move" was true until rows stopped being
-        // drag handles, and a hint advertising a gesture that no longer exists is worse than none.
-        Info.Inlines.Add(new Run("hover an icon · drag icons between rows · ctrl+drag to move") { Foreground = DimForeground });
+        if (readout is not null) readout.IsOpen = false;
     }
 
     static readonly Brush DimForeground = Frozen(0x8C, 0xFF, 0xFF, 0xFF);
@@ -3462,20 +3499,6 @@ public partial class FloatingBar : Window
     // The bar-wide hint at the bottom names ctrl+drag, but it is only on screen when nothing is
     // hovered -- which is never the moment you are reaching for the bar to move it. Hovering a
     // row's bare area is exactly that moment: you are on the surface, with your hand on it.
-    //
-    // The gesture ONLY. Petre: "don't say click to switch, only say ctrl+drag to move." Naming
-    // the click as well was padding: the row is already brightening its label under the cursor,
-    // and a hint is worth reading only for the thing that is not obvious.
-    //
-    // Only for rows that can be switched to -- Pinned and Unplaced never reach here (see the
-    // caller's null guard).
-    void ShowRowActions(string label)
-    {
-        Info.Inlines.Clear();
-        Info.Inlines.Add(new Run($"{label}  ") { Foreground = Brushes.White });
-        Info.Inlines.Add(new Run("ctrl+drag to move") { Foreground = DimForeground });
-    }
-
     // Petre: "i want a go back to previous button... basically the same as ctrl+win+tab tap
     // once, without the kb." So this deliberately holds NO history of its own: it asks the same
     // MRU the chord asks, through the same RecentWorkspaces.Back, and is therefore incapable of
@@ -3820,7 +3843,7 @@ public partial class FloatingBar : Window
         button.DataContext = row;
 
         // Hover -> the card, and the footer no longer carries the title (#135).
-        button.MouseEnter += (_, _) => { ShowInfo(groupLabel, row); ArmHoverCard(groupLabel, row, button); };
+        button.MouseEnter += (_, _) => ArmHoverCard(groupLabel, row, button);
         button.MouseLeave += (_, _) => ClearInfo();
 
         // ...and hover -> ring (#67). The pointer resting on an icon makes THAT window the thing a

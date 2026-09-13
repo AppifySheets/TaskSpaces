@@ -18,8 +18,8 @@ namespace TaskSpaces.Windows.Tests;
 //      at TaskSpaces.App.FloatingBar.OnPreviewMouseLeftButtonDown(...)
 //
 // The bar's press handler walks UP from whatever the press actually hit, looking for one of its
-// tagged icon buttons. The info line is a TextBlock whose contents are Run inlines, and a Run is a
-// ContentElement -- not a Visual. VisualTreeHelper.GetParent does not return null for one of those,
+// tagged icon buttons. The bar's text is held in TextBlocks whose contents are Run inlines, and a Run
+// is a ContentElement -- not a Visual. VisualTreeHelper.GetParent does not return null for one of those,
 // it THROWS, and an exception from a mouse handler on the dispatcher takes the process with it.
 //
 // So the bar could be killed by a left-click on its own hint text. It had been possible for as
@@ -32,7 +32,7 @@ namespace TaskSpaces.Windows.Tests;
 public class FloatingBarPressTests
 {
     [Fact]
-    public void Pressing_the_info_line_text_does_not_kill_the_bar() => StaThread.Run(() =>
+    public void Pressing_text_on_the_bar_does_not_kill_the_bar() => StaThread.Run(() =>
     {
         var desktopId = Guid.NewGuid();
         var workspace = new Workspace(Guid.NewGuid(), "GEPHA", desktopId);
@@ -57,12 +57,14 @@ public class FloatingBarPressTests
         bar.Top = -32000;
         bar.Show();
 
-        // The hint the bar shows when nothing is hovered ("hover an icon · drag icons between
-        // rows · ctrl+drag to move"), which ClearInfo builds out of Runs. A REAL one from the
-        // running bar rather than a Run made up here, so the test cannot drift from what the info
-        // line is actually built out of.
-        var info = (TextBlock)bar.FindName("Info")!;
-        var run = info.Inlines.OfType<Run>().First();
+        // The info line this pressed is gone (#173: "eliminate that bottom row with titles
+        // completely"), and with it the bar's only permanent text outside the rows. What the test
+        // needs from it survives the deletion: a REAL Run, in the real tree, somewhere that is not a
+        // click target. Planted in the top strip beside the two buttons, which is the same technique
+        // the positive case at the bottom of this test has always used.
+        var strip = (Panel)((Button)bar.FindName("BackButton")!).Parent;
+        var run = new Run("text");
+        strip.Children.Add(new TextBlock { Inlines = { run } });
 
         // Against the walkers themselves rather than through a routed event, and that is a
         // deliberate retreat: the first version of this test raised a real tunnelling
@@ -80,9 +82,8 @@ public class FloatingBarPressTests
 
         // ...and the walks still WORK for the case they exist to answer, so the fix cannot have
         // bought its safety by giving up and returning false everywhere. The ↩ button is a click
-        // target; the info line's TextBlock sits beside it and is not.
+        // target; the text planted beside it is not, which the assertion above already showed.
         Assert.True(bar.StartedOnClickTarget((Button)bar.FindName("BackButton")!));
-        Assert.False(bar.StartedOnClickTarget(info));
 
         // The whole point of the logical hop, and the half a "return false on text" fix would get
         // wrong: from a Run the walk must CROSS INTO the visual tree and carry on, not stop at the
