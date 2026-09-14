@@ -1638,7 +1638,20 @@ public partial class FloatingBar : Window
     //
     // On a bar with no width of its own (SizeToContent still owns it) the stars have no slack to
     // share and everything simply packs, which is the same thing this drew before any of it.
-    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons, bool isLastLine)
+    // `scale` and `indent` arrive here rather than being applied to the ROW, and that is the whole
+    // point of them being parameters. Petre, with a screenshot of the bar: "mid line not aligned."
+    // His geometry dump named both offenders in one rebuild:
+    //
+    //   pinned row    zones=[screen1@5,  screen2@78]     <- scaled 0.8 as a whole (#109)
+    //   nested rows   zones=[screen1@12, screen2@74]     <- indented 8 as a whole (#42)
+    //   every other   zones=[screen1@5,  screen2@72]
+    //
+    // A row that is scaled or shifted takes its LANES with it, and the lanes are what the hairline
+    // divides. The invariant this bar has been argued into three times (#70, #99, #103) is that a
+    // screen's region sits at the same x on every row, so neither a smaller row nor an indented one
+    // may move the grid: the icons inside it shrink, the icons inside it shift, and the lane
+    // structure stays identical everywhere.
+    UIElement LineOf(IReadOnlyList<WindowRow> line, ISet<WindowHandle> opensGroup, string groupLabel, string groupKey, Guid? rowKey, List<UIElement> iconButtons, bool isLastLine, double scale = 1.0, double indent = 0)
     {
         // Runs of consecutive icons that share a monitor. `opensGroup` already knows where each
         // one starts -- it is the same set the wrap arithmetic budgets a marker for -- so this
@@ -1674,7 +1687,10 @@ public partial class FloatingBar : Window
         // Still a floor rather than a fixed height, for the reason the stack's was: a line with tall
         // content has to be free to exceed it. It also still scales with a shrunken row (#52, #109),
         // because it is inside the row's own transform.
-        var grid = new Grid { MinHeight = IconLineHeight };
+        // Scaled with the row's ICONS, not with the row: a short row is short because what it holds is
+        // smaller, and this floor is a statement about icon height. The lane columns above it are
+        // untouched, which is what keeps the hairline where every other row draws it.
+        var grid = new Grid { MinHeight = IconLineHeight * scale };
 
         // #89's drop target: the half of the line that stands for one screen. Painted behind the
         // icons rather than over them (added first, so it is the bottom of the Grid's z-order), and
@@ -1770,6 +1786,7 @@ public partial class FloatingBar : Window
         else
             runs.ForEach(run => lanes.Add((run[0].MonitorRank.GetValueOrDefault(0), run[0].Monitor, run)));
 
+        var firstLane = true;
         lanes.ForEach(lane =>
         {
             // The mark divides, so it belongs to the screen it precedes and never to the first one: absence
@@ -1780,10 +1797,24 @@ public partial class FloatingBar : Window
 
             if (lane.Run is { } run)
             {
-                var stack = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+                // A nested row's indent lives HERE, inside the leftmost lane, rather than on the row:
+                // see the note on this method. The icons start further in, which is all the indent
+                // was ever meant to say, and the lane it starts in is the same width as everyone
+                // else's.
+                var stack = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = firstLane ? new Thickness(indent, 0, 0, 0) : default,
+                };
                 run.ForEach(r =>
                 {
                     var button = IconButton(groupLabel, groupKey, r);
+                    // The row's shrink, applied per ICON. A LayoutTransform rather than a smaller
+                    // icon size: the icon's own pixels come from a cache keyed by size, and asking
+                    // for a second size per row would double that cache to make a row shorter.
+                    if (scale is not 1.0 && button is FrameworkElement scaled)
+                        scaled.LayoutTransform = new ScaleTransform(scale, scale);
                     iconButtons.Add(button);
                     stack.Children.Add(button);
                     if (button is Button icon)
@@ -1801,12 +1832,14 @@ public partial class FloatingBar : Window
             {
                 // Nothing on this screen: an empty half that is still a drop target (#102), and with no
                 // hairline of its own beyond the divider above.
-                var empty = new Border();
+                var empty = new Border { Margin = firstLane ? new Thickness(indent, 0, 0, 0) : default };
                 var emptyColumn = AddColumn(empty, new GridLength(1, GridUnitType.Star));
                 if (firstColumn < 0) firstColumn = emptyColumn;
                 if (lane.Monitor.HasValue)
                     zones.Add(new MonitorZone(lane.Monitor.Value, mark ?? empty, firstColumn, emptyColumn - firstColumn + 1));
             }
+
+            firstLane = false;
         });
 
         // Registered per LINE rather than per row, because a wrapped row can hold one screen's icons
@@ -2330,6 +2363,12 @@ public partial class FloatingBar : Window
         //
         // Costs nothing on a bar that has no width of its own: SizeToContent makes the star column
         // exactly as wide as the widest row, so stretching to it changes nothing anyone can see.
+        // How much smaller this row's ICONS are drawn: #52 shrinks a minimized workspace's row and
+        // #109 the pinned one. Declared here because LineOf needs it while the lines are being built,
+        // and it no longer reaches the row container at all -- see the note where the transform used
+        // to be applied.
+        var scale = minimized ? MinimizedRowScale : pinned ? PinnedRowScale : 1.0;
+
         var icons = new StackPanel
         {
             Orientation = Orientation.Vertical,
@@ -2341,10 +2380,11 @@ public partial class FloatingBar : Window
             // still the height of a row holding one window and the pinned row's drop target is still
             // full height -- and the mark inside the line now has the same space to centre in on
             // every row, which a floor at this level could not give it.
-            // The indent for a nested row (#42) is taken out of the ICONS' space, not the row's,
-            // so the row itself still spans the bar and the monitor alignment still lines up
-            // across every row.
-            Margin = nested ? new Thickness(NestedIndent, 0, 0, 0) : default,
+            // The indent for a nested row (#42) used to be a margin HERE, and the claim written
+            // beside it -- that taking it out of the icons' space keeps the monitor alignment
+            // lined up across every row -- was measured false: this panel holds the lane grids,
+            // so indenting it indents them, and his dump showed those rows' hairline 2 DIP right
+            // of everyone else's. It is passed to LineOf now and applied inside the first lane.
         };
 
         // Built BEFORE the icons, which it did not used to be. Once the bar has a width the user
@@ -2473,7 +2513,8 @@ public partial class FloatingBar : Window
         // isLastLine carries #102's empty tail halves, which belong to the row rather than to each of its
         // wrapped lines.
         drawnLines.Select((line, at) => (line, last: at == drawnLines.Count - 1)).ToList()
-            .ForEach(x => icons.Children.Add(LineOf(x.line, showMonitorMarkers ? opensLine : [], groupLabel, groupKey, rowKey, iconButtons, x.last)));
+            .ForEach(x => icons.Children.Add(LineOf(x.line, showMonitorMarkers ? opensLine : [], groupLabel, groupKey, rowKey, iconButtons, x.last,
+                scale, nested ? NestedIndent : 0)));
 
         // The parent's windows USED to be drawn here, dimmed, on every nested row -- the issue
         // asked for "everything from the main workspace pinned to the nested ones". Petre, seeing
@@ -2580,16 +2621,15 @@ public partial class FloatingBar : Window
         // Scaled down as a whole, everything included: a minimized row (#52) or the pinned row (#109).
         // Applied LAST, so nothing built above has to know it is being drawn small, and minimized wins
         // when a row is somehow both -- the smaller claim is the more specific one.
-        var scale = minimized ? MinimizedRowScale : pinned ? PinnedRowScale : 1.0;
-        if (scale is not 1.0) container.LayoutTransform = new ScaleTransform(scale, scale);
 
-        // ...and the caption content is scaled BACK UP by exactly as much. The pinned row is drawn at
-        // 0.8 (#109) because its icons are a reference rather than a destination, and that reasoning
-        // has nothing to say about the two buttons now sharing its cell: at 0.8 they would be 14px
-        // targets, which is small for something meant to be clicked with a glance. Only this content
-        // is exempted, so the row itself is still the compact one Petre asked for.
-        if (scale is not 1.0 && captionContent is FrameworkElement caption)
-            caption.LayoutTransform = new ScaleTransform(1 / scale, 1 / scale);
+        // NO transform on the row. It used to carry one (0.8 for pinned, 0.43 for minimized), and that
+        // is what put those rows' hairlines at a different x from everyone else's: a scaled row scales
+        // the lane grid the hairline divides. The scale reaches the ICONS instead, through LineOf, so
+        // the row is still shorter and the lanes are still identical.
+        //
+        // The counter-scale that used to undo this for the caption is gone with it. Nothing needs
+        // undoing now: the two buttons in the pinned row's cell are drawn at their natural size
+        // because nothing shrank them in the first place.
 
         container.Tag = new RowTag(groupKey);
 

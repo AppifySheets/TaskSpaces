@@ -474,8 +474,34 @@ public partial class App : Application
     // Assembly-qualified pack URI, matching the window XAML: the short "/Assets/..." form
     // resolves against Application.ResourceAssembly, which only a WPF exe's generated Main
     // sets, so it breaks anywhere the app is loaded as a library (notably under test).
-    public static readonly System.Windows.Media.ImageSource AppIcon =
-        new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/TaskSpaces.App;component/Assets/taskspaces.ico"));
+    //
+    // DECODED AT 256, and that is the whole of this fix. Petre: "that taskbar icon when i minimize
+    // the taskspaces app is kinda small, why?" Measured, rather than guessed at:
+    //
+    //   frames in taskspaces.ico:  16 20 24 32 40 48 64 128 256
+    //   what "new BitmapImage(uri)" hands back:  16 x 16
+    //
+    // A plain BitmapImage takes the FIRST frame of a multi-frame .ico, which is the smallest one, so
+    // every window in this app -- including the stand-in that owns the taskbar button while the bar
+    // is minimized -- was handing the shell a 16px bitmap to draw at 32 or more. Upscaled 16px art is
+    // exactly the "kinda small" look, softened as well as undersized.
+    //
+    // Asking for a size picks the matching FRAME rather than resampling: DecodePixelWidth 32, 48 and
+    // 256 come back as 32, 48 and 256 square. 256 is chosen so one source serves every use the app
+    // has -- tray at 16, taskbar at 32 or 40, Alt+Tab larger, and whatever a 200% display asks for --
+    // all of them downsampling from real pixels rather than magnifying a thumbnail.
+    public static readonly System.Windows.Media.ImageSource AppIcon = LoadAppIcon();
+
+    static System.Windows.Media.ImageSource LoadAppIcon()
+    {
+        var icon = new System.Windows.Media.Imaging.BitmapImage();
+        icon.BeginInit();
+        icon.UriSource = new Uri("pack://application:,,,/TaskSpaces.App;component/Assets/taskspaces.ico");
+        icon.DecodePixelWidth = 256;
+        icon.EndInit();
+        icon.Freeze(); // shared by every window, and a thawed shared bitmap takes thread affinity
+        return icon;
+    }
 
     protected override void OnStartup(StartupEventArgs e)
     {

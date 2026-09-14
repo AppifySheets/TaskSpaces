@@ -331,6 +331,25 @@ public class BarMinimizeTests(ITestOutputHelper output)
         return (ink.Top + ink.Bottom) / 2 + shift;
     }
 
+    // Petre: "that taskbar icon when i minimize the taskspaces app is kinda small, why?" Because a
+    // plain BitmapImage takes the FIRST frame of a multi-frame .ico, and in this one that is 16x16 --
+    // so the shell was magnifying a thumbnail onto a 32px or larger button.
+    //
+    // Asserted on the SIZE rather than on the DecodePixelWidth that produces it: the property is the
+    // mechanism, the pixels are the requirement, and an .ico re-exported one day without its large
+    // frames would pass a property check and still look small.
+    [Fact]
+    public void The_app_icon_is_decoded_big_enough_for_a_taskbar_button() => StaThread.Run(() =>
+    {
+        var icon = (System.Windows.Media.Imaging.BitmapSource)global::TaskSpaces.App.App.AppIcon;
+        output.WriteLine($"app icon decodes to {icon.PixelWidth}x{icon.PixelHeight}");
+
+        // 48 is the floor rather than the target: a 200% display asks for 64 on the taskbar, and the
+        // file carries frames up to 256, so anything under this means the wrong frame was taken.
+        Assert.True(icon.PixelWidth >= 48, $"the app icon decoded to {icon.PixelWidth}px");
+        Assert.True(icon.IsFrozen); // shared across every window, so it must not take thread affinity
+    });
+
     // The line that showed hovered titles, the idle hint and the row hint is gone outright. The
     // hover card already showed the window details beside the icon, which was the "two places
     // showing the same string" this file warned about long before it was deleted.
