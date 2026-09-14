@@ -21,8 +21,14 @@ public class HistoryRingTests
     static IReadOnlyList<Border> RowBoxes(Panel rows) =>
         rows.Children.OfType<Border>().Where(b => b.Child is Grid).ToList();
 
+    // The pinned row has no text of its own since #173 -- its caption cell holds the bar's two
+    // buttons where the pin glyph used to be -- so it is found by the accessible name every row
+    // now carries. Rows with captions still answer to their caption, which is why both are tried.
     static Border RowLabelled(Panel rows, string label) =>
-        RowBoxes(rows).Single(box => TextIn(box).Any(text => text.Contains(label)));
+        RowBoxes(rows).Single(box => TextIn(box).Any(text => text.Contains(label)) || NameOf(box) == label);
+
+    static string NameOf(Border box) =>
+        box.Child is DependencyObject row ? System.Windows.Automation.AutomationProperties.GetName(row) : "";
 
     // The ring is the row's only Rectangle: a stroked outline drawn over the row's border band, which
     // is what a dashed ring needs -- a Border's BorderBrush cannot be dashed at all.
@@ -105,7 +111,7 @@ public class HistoryRingTests
     {
         using var bar = Harness.Build(withUnnamedDesktop: true).ShowBar();
 
-        Assert.Equal(0, AlphaOf(Ring(bar.Rows, "📌")));
+        Assert.Equal(0, AlphaOf(Ring(bar.Rows, "Pinned")));
     });
 
     // The regression that would matter most: exactly one row says "you are here", and it is the only

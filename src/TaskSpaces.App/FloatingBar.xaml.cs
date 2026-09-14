@@ -423,6 +423,20 @@ public partial class FloatingBar : Window
 
     void OnMinimizeClick(object sender, RoutedEventArgs e) => MinimizeRequested?.Invoke();
 
+    // Hands the bar's command strip to whoever is building the pinned row, detaching it from
+    // wherever it currently hangs first -- an element has exactly one parent in WPF, and adding a
+    // still-parented one throws.
+    //
+    // Moved rather than rebuilt, because these two buttons are declared in XAML with their handlers,
+    // their names and, in the back button's case, state that RebuildCore refreshes rather than
+    // recreates. Rebuilding them per row would mean re-wiring all of that on every rebuild, and
+    // rebuilds happen many times a minute on this bar.
+    UIElement TakeBarCommands()
+    {
+        if (BarCommands.Parent is Panel parent) parent.Children.Remove(BarCommands);
+        return BarCommands;
+    }
+
     // Starting up into the minimized state, which is NOT MinimizeToTaskbar with the hiding left out.
     // Nothing is persisted here on purpose: the flag in the file is already false, and Save() writes
     // the POSITION alongside it, which this early would be the position of a window that has never
@@ -1387,11 +1401,12 @@ public partial class FloatingBar : Window
             // the trap fix round 6 removed for empty workspaces, whose labels are likewise
             // kept as legitimate targets rather than hidden as dead chrome.
             //
-            // Visual label is just "📌" (brief) but the icon tooltips below still
-            // say the full word "Pinned" -- a glyph reads fine as a compact row
-            // label, but "Pinned · window title" is a nicer tooltip than "📌 ·
-            // window title".
-            groupRows.Add(GroupRow(visualLabel: "📌", groupLabel: "Pinned", isCurrent: false, switchTo: null,
+            // NO visual label at all now. Petre: "remove the pin icon and have those buttons at the
+            // right." The caption cell holds the bar's two commands instead, and the row is still
+            // the pinned one to everything that matters: the icon tooltips say "Pinned · window
+            // title", the drop readout says "move to Pinned", and the container carries both its
+            // RowTag and an accessible name of "Pinned".
+            groupRows.Add(GroupRow(visualLabel: "", groupLabel: "Pinned", isCurrent: false, switchTo: null,
                     groupKey: DraggedWindow.PinnedGroupKey,
                     // The screen is honoured here now, and it has to be: with #108 the pinned row draws
                     // halves that answer, so its DragOver readout says "→ move to Pinned, screen 2" and a
@@ -1402,7 +1417,10 @@ public partial class FloatingBar : Window
                         .Bind(() => screen is { } s ? manager.MoveWindowToMonitor(h, s) : Result.Success())),
                     overview.Pinned,
                     // #109: shorter than a workspace row, since it holds a window or two.
-                    pinned: true));
+                    pinned: true,
+                    // The bar's own two buttons, which is what this cell holds instead of the pin
+                    // glyph. Taken rather than built: see TakeBarCommands.
+                    captionContent: TakeBarCommands()));
 
             // Fix round 6 (Petre, screenshot showing ONE "Sparrow" row: "it does follow
             // across every workspace, but not showw all workspace tabs"). The original
@@ -2237,7 +2255,7 @@ public partial class FloatingBar : Window
     // both (#149). It exists so the row can offer to name that desktop, which is the only action an
     // unbound row has. Null on every other kind of row, including the Unplaced catch-all, which is
     // not a desktop at all.
-    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null, bool pinned = false, Guid? desktopId = null)
+    UIElement GroupRow(string visualLabel, string groupLabel, bool isCurrent, Func<Result>? switchTo, string groupKey, Action<WindowHandle, int?>? onDrop, IEnumerable<WindowRow> rows, Brush? tint = null, Guid? rowKey = null, bool minimized = false, bool nested = false, Brush? spine = null, bool pinned = false, Guid? desktopId = null, UIElement? captionContent = null)
     {
         // Background MUST be non-null for a panel to take part in hit testing at all --
         // a null Background leaves gaps between icons that swallow nothing and report no
@@ -2334,7 +2352,13 @@ public partial class FloatingBar : Window
         // label's own width depends on nothing, so measuring it first is safe and settles the
         // question with no layout circularity. setHover is null exactly when this row has no
         // destination (see RowLabel), which keeps the Pinned and Unplaced rows inert below.
-        var (label, setHover) = RowLabel(visualLabel, isCurrent, switchTo, caption: true);
+        // captionContent replaces the label outright, and exactly one row uses it: the pinned row,
+        // whose cell now holds the bar's own two buttons instead of a pin glyph (#173). No setHover
+        // either, which changes nothing -- RowLabel already returns null for a row with no
+        // destination, and the pinned row has never had one.
+        var (label, setHover) = captionContent is null
+            ? RowLabel(visualLabel, isCurrent, switchTo, caption: true)
+            : (captionContent, (Action<bool>?)null);
 
         // Collected as they are built, because the hover wiring below needs the BUTTONS and
         // icons.Children now holds line panels. Reading icons.Children there instead would
@@ -2559,7 +2583,21 @@ public partial class FloatingBar : Window
         var scale = minimized ? MinimizedRowScale : pinned ? PinnedRowScale : 1.0;
         if (scale is not 1.0) container.LayoutTransform = new ScaleTransform(scale, scale);
 
+        // ...and the caption content is scaled BACK UP by exactly as much. The pinned row is drawn at
+        // 0.8 (#109) because its icons are a reference rather than a destination, and that reasoning
+        // has nothing to say about the two buttons now sharing its cell: at 0.8 they would be 14px
+        // targets, which is small for something meant to be clicked with a glance. Only this content
+        // is exempted, so the row itself is still the compact one Petre asked for.
+        if (scale is not 1.0 && captionContent is FrameworkElement caption)
+            caption.LayoutTransform = new ScaleTransform(1 / scale, 1 / scale);
+
         container.Tag = new RowTag(groupKey);
+
+        // The row's name for anything that cannot read pixels. It was always worth setting and is
+        // now load-bearing: the pinned row has NO text of its own any more, so without this it is a
+        // nameless strip of buttons to a screen reader, and the tests that used to find it by its
+        // pin glyph would have had to reach for the Tag, which is an implementation detail.
+        System.Windows.Automation.AutomationProperties.SetName(container, groupLabel);
         container.MouseEnter += (_, _) => EnterRow(groupKey, rowKey, ordered);
         container.MouseLeave += (_, _) => LeaveRow(groupKey);
 

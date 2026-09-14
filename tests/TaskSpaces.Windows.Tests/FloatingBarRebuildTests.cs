@@ -126,7 +126,10 @@ public class FloatingBarRebuildTests
 
         using var bar = harness.ShowBar();
 
-        Assert.Contains("📌", Labels(bar.Rows));
+        // By NAME rather than by glyph: the row carries "Pinned" for anything that cannot read
+        // pixels, and since #173 that is the only thing it carries -- the cell that held the pin now
+        // holds the bar's own buttons.
+        Assert.Contains("Pinned", RowNames(bar.Rows));
     });
 
     // A window whose desktop the COM API cannot resolve MUST appear somewhere, or it becomes
@@ -343,7 +346,7 @@ public class FloatingBarRebuildTests
         var harness = Harness.Build();
         using var bar = harness.ShowBar();
 
-        var pinned = RowFor(bar.Rows, "📌");
+        var pinned = RowFor(bar.Rows, "Pinned");
         Press(pinned);
         Release(pinned);
 
@@ -631,11 +634,15 @@ public class FloatingBarRebuildTests
             .Select(line => IconButtons(line).Count)
             .ToList();
 
+    // The pinned row has no text of its own since #173 -- its caption cell holds the bar's two
+    // buttons where the pin glyph used to be -- so it is found by the accessible name every row
+    // now carries. Rows with captions still answer to their caption, which is why both are tried.
     static Grid RowFor(Panel rows, string label) =>
         rows.Children.OfType<Border>()
             .Select(b => b.Child)
             .OfType<Grid>()
-            .Single(row => TextBlocks(row).Any(t => t.Text == label));
+            .Single(row => TextBlocks(row).Any(t => t.Text == label)
+                           || System.Windows.Automation.AutomationProperties.GetName(row) == label);
 
     static Border RowBorderFor(Panel rows, string label) =>
         rows.Children.OfType<Border>()
@@ -695,6 +702,13 @@ public class FloatingBarRebuildTests
                     Collect(child);
                 });
     }
+
+    static IReadOnlyList<string> RowNames(Panel rows) =>
+        rows.Children.OfType<Border>()
+            .Select(b => b.Child)
+            .OfType<Grid>()
+            .Select(System.Windows.Automation.AutomationProperties.GetName)
+            .ToList();
 
     static IReadOnlyList<string> Labels(DependencyObject root) =>
         TextBlocks(root).Select(text => text.Text).ToList();

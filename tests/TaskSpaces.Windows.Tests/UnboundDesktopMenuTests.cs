@@ -21,8 +21,13 @@ public class UnboundDesktopMenuTests
     static IReadOnlyList<Grid> RowContainers(Panel rows) =>
         rows.Children.OfType<Border>().Select(b => b.Child).OfType<Grid>().ToList();
 
+    // The pinned row has no text of its own since #173 -- its caption cell holds the bar's two
+    // buttons where the pin glyph used to be -- so it is found by the accessible name every row
+    // now carries. Rows with captions still answer to their caption, which is why both are tried.
     static Grid RowLabelled(Panel rows, string label) =>
-        RowContainers(rows).Single(row => TextIn(row).Any(text => text.Contains(label)));
+        RowContainers(rows).Single(row =>
+            TextIn(row).Any(text => text.Contains(label))
+            || System.Windows.Automation.AutomationProperties.GetName(row) == label);
 
     static IReadOnlyList<string> TextIn(DependencyObject root)
     {
@@ -83,7 +88,7 @@ public class UnboundDesktopMenuTests
         var harness = Harness.Build(withUnnamedDesktop: true);
         using var bar = harness.ShowBar();
 
-        Assert.Null(RowLabelled(bar.Rows, "📌").ContextMenu);
+        Assert.Null(RowLabelled(bar.Rows, "Pinned").ContextMenu);
     });
 
     // A named workspace keeps the full menu, so the new branch cannot have stolen the old one.

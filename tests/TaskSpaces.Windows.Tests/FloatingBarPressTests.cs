@@ -62,9 +62,12 @@ public class FloatingBarPressTests
         // needs from it survives the deletion: a REAL Run, in the real tree, somewhere that is not a
         // click target. Planted in the top strip beside the two buttons, which is the same technique
         // the positive case at the bottom of this test has always used.
-        var strip = (Panel)((Button)bar.FindName("BackButton")!).Parent;
+        // Planted OUTSIDE Rows, as a sibling of it. That matters now: StartedOnClickTarget answers
+        // true for anything inside Rows, and since #173 the bar's two buttons live in the pinned
+        // row's caption cell, so text planted beside them would be a click target and prove nothing.
+        var rowsPanel = (Panel)bar.FindName("Rows")!;
         var run = new Run("text");
-        strip.Children.Add(new TextBlock { Inlines = { run } });
+        ((Panel)rowsPanel.Parent).Children.Add(new TextBlock { Inlines = { run } });
 
         // Against the walkers themselves rather than through a routed event, and that is a
         // deliberate retreat: the first version of this test raised a real tunnelling

@@ -219,35 +219,78 @@ public class BarMinimizeTests(ITestOutputHelper output)
         Assert.Equal(1, asks);
     });
 
-    // --- where the two buttons live (#173, second round) -----------------------------
+    // --- where the two buttons live (#173, third round) ------------------------------
     //
-    // Petre: "those buttons for minimize and switch to previous workspace would make more sense at
-    // the top, next to the pin icon. eliminate that bottom row with titles completely."
+    // Petre: "move those buttons down next to the pin icon; remove the pin icon and have those
+    // buttons at the right."
     //
-    // ORDER is the assertion, not coordinates: a y-position test would pass on a bar whose strip had
-    // been moved back down and whose rows happened to be empty.
+    // So they sit in the PINNED ROW's caption cell, which is the rightmost column of every row and
+    // is where that row used to draw a pin glyph. Asserted through the tree rather than by
+    // coordinates: a position test would pass on a bar whose strip had drifted back out into one of
+    // its own.
     [Fact]
-    public void Both_buttons_sit_above_the_rows() => StaThread.Run(() =>
+    public void Both_buttons_sit_in_the_pinned_rows_caption_cell() => StaThread.Run(() =>
     {
         var bar = Bar(Started(new StubStore()));
         bar.ShowBar();
 
-        var strip = (Panel)((Button)bar.FindName("BackButton")!).Parent;
-        var rows = (Panel)bar.FindName("Rows")!;
-        var column = (Panel)strip.Parent;
+        var back = (Button)bar.FindName("BackButton")!;
+        var minimize = (Button)bar.FindName("MinimizeButton")!;
+        var strip = (Panel)back.Parent;
 
-        Assert.Same(column, rows.Parent); // siblings, so the comparison below means something
-        Assert.True(column.Children.IndexOf(strip) < column.Children.IndexOf(rows));
+        Assert.Same(strip, minimize.Parent); // one strip, so the two cannot drift apart
 
-        // Both of them, in the same strip: the point was one place for the bar's own commands.
-        Assert.Same(strip, ((Button)bar.FindName("MinimizeButton")!).Parent);
+        // Up from the strip to the row that owns it, and that row must be the pinned one.
+        var row = Ancestors(strip).OfType<Grid>().First(g =>
+            System.Windows.Automation.AutomationProperties.GetName(g).Length > 0);
+        Assert.Equal("Pinned", System.Windows.Automation.AutomationProperties.GetName(row));
 
-        // ...right-aligned, which is what "next to the pin icon" means on a bar whose rows put their
-        // labels in a fixed gutter on the RIGHT.
-        Assert.Equal(HorizontalAlignment.Right, strip.HorizontalAlignment);
+        // In the caption COLUMN, which is the fixed gutter on the right that every row shares.
+        Assert.Equal(1, Grid.GetColumn(strip));
+
+        // ...and inside the rows panel, which is what tells the reparenting actually happened: the
+        // strip is declared in XAML as a sibling of Rows and is moved in on every rebuild.
+        Assert.Contains((Panel)bar.FindName("Rows")!, Ancestors(strip).OfType<Panel>());
 
         bar.Close();
     });
+
+    static IEnumerable<DependencyObject> Ancestors(DependencyObject from)
+    {
+        for (var at = LogicalTreeHelper.GetParent(from); at is not null; at = LogicalTreeHelper.GetParent(at))
+            yield return at;
+    }
+
+    // The pin glyph is gone with it: the row is still the pinned one to everything that matters, and
+    // says so through the accessible name every row now carries.
+    [Fact]
+    public void The_pinned_row_keeps_its_name_without_a_glyph() => StaThread.Run(() =>
+    {
+        var bar = Bar(Started(new StubStore()));
+        bar.ShowBar();
+
+        var rows = (Panel)bar.FindName("Rows")!;
+        var pinned = rows.Children.OfType<Border>().Select(b => b.Child).OfType<Grid>()
+            .Single(g => System.Windows.Automation.AutomationProperties.GetName(g) == "Pinned");
+
+        Assert.DoesNotContain("📌", Texts(pinned));
+
+        bar.Close();
+    });
+
+    static IReadOnlyList<string> Texts(DependencyObject root)
+    {
+        var found = new List<string>();
+        Collect(root);
+        return found;
+
+        void Collect(DependencyObject node) =>
+            LogicalTreeHelper.GetChildren(node).OfType<DependencyObject>().ToList().ForEach(child =>
+            {
+                if (child is TextBlock { Text: { } text }) found.Add(text);
+                Collect(child);
+            });
+    }
 
     // The line that showed hovered titles, the idle hint and the row hint is gone outright. The
     // hover card already showed the window details beside the icon, which was the "two places

@@ -34,29 +34,18 @@
              Windows tab were gone this bar became the only surface that lists windows and
              jumps to them, so hiding it left no way to reach your own windows. Always on. -->
         <StackPanel>
-            <!-- The bar's two commands, at the TOP. Petre: "those buttons for minimize and switch to
-                 previous workspace would make more sense at the top, next to the pin icon. eliminate
-                 that bottom row with titles completely."
-                 Right-aligned so they sit directly above the name gutter, which is where the pin icon
-                 is: every row puts its label in a fixed 58 DIP gutter on the RIGHT, so "next to the
-                 pin" and "right-hand end" are the same place on this bar.
-                 In their own strip rather than inside the pinned row, and that is the constraint
-                 rather than a preference: every row is laid out over one shared set of column
-                 definitions so a screen's region lands at the same x on each of them, and a control
-                 added inside that grid moves the monitor hairlines. That is #70, #99 and #103, and
-                 each was argued from a screenshot.
-                 The 18px each costs is paid in WIDTH, on a line that holds nothing else, so the rows
-                 below are untouched, and the bar is now SHORTER than before, because the strip this
-                 replaces sat under a separator and a reserved text line. -->
-            <!-- The 4 DIP gap is not cosmetic, and a pixel test is what found it: RowRingPixelTests
-                 samples a 6px band from one pixel ABOVE each row's top edge, and with the buttons
-                 flush against the first row the glyphs' bottoms landed in the pinned row's band and
-                 read as ring ink on a row that wears none. A gap wider than the band fixes the
-                 measurement and the look at once.
-                 No separator LINE under it, unlike the strip this replaces: a line spanning the bar's
-                 width would put far more ink in that same band, and the point of the change was fewer
-                 pixels rather than the same pixels somewhere else. -->
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,4">
+            <!-- The bar's two commands. Petre: "move those buttons down next to the pin icon;
+                 remove the pin icon and have those buttons at the right."
+                 So they live in the PINNED ROW's caption cell now, and the pin glyph that used to
+                 sit there is gone: the row was already reserved, already always rendered, and its
+                 caption cell was carrying one decorative glyph. RebuildCore moves this strip into
+                 that cell on every rebuild, which is why it is declared here rather than built
+                 there: the buttons keep their identity, their handlers and their x:Names across
+                 every rebuild, and only their parent changes.
+                 Declared as a child of this panel so it has somewhere to be before the first
+                 rebuild. Nothing flashes: ShowBar rebuilds before it shows. -->
+            <StackPanel x:Name="BarCommands" Orientation="Horizontal"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
                 <Button x:Name="BackButton" Content="↩" Width="18" FontSize="12"
                         Foreground="White" Background="Transparent" BorderThickness="0"
                         Padding="0" VerticalAlignment="Center" Click="OnBackClick"/>

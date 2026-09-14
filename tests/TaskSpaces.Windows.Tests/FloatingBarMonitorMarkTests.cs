@@ -46,7 +46,7 @@ public class FloatingBarMonitorMarkTests(ITestOutputHelper output)
         // those rows, which is the point of scaling a row rather than its parts. A height threshold
         // was the first attempt and is too close to call -- the pinned row measures 22.3 against a
         // full row's 27.
-        var full = marks.Where(m => m.Row is not "📌").ToList();
+        var full = marks.Where(m => m.Row is not "Pinned").ToList();
         Assert.Equal(2, full.Count); // the busy row and the empty one, one mark each
 
         Assert.Single(full.Select(m => Math.Round(m.Height, 1)).Distinct());
@@ -93,7 +93,7 @@ public class FloatingBarMonitorMarkTests(ITestOutputHelper output)
     {
         using var bar = TwoScreens(busyIcons: 7, oneWithNoMonitor: true);
 
-        var marks = bar.Marks().Where(m => m.Row is not "📌").ToList();
+        var marks = bar.Marks().Where(m => m.Row is not "Pinned").ToList();
         marks.ForEach(m => output.WriteLine(m.ToString()));
 
         // Every line of every full-size row divides its screens at the SAME x.
@@ -217,8 +217,22 @@ public class FloatingBarMonitorMarkTests(ITestOutputHelper output)
 
         double Left(FrameworkElement element) => element.TransformToAncestor(bar).Transform(new Point(0, 0)).X;
 
+        // The row's accessible name first, because since #173 the pinned row has no text at all --
+        // its caption cell holds the bar's two buttons. Text second, since a workspace row's name is
+        // its caption and reading it from the visual tree is what these measurements already do.
+        // The NAME first, read off the row container: Row() above hands back the Border, and the name
+        // is set on the Grid inside it, which is the element every row is actually built around.
+        // Text second, since a workspace row is still identified by its caption.
+        //
+        // Order matters more than it looks: since #173 the pinned row contains the bar's two buttons
+        // and no caption, so a text-first reading labels it "↩" and the filters below stop excluding
+        // it -- which is how this test failed when the buttons moved in.
         static string Label(DependencyObject row) =>
-            Descendants(row).OfType<TextBlock>().Select(t => t.Text).FirstOrDefault(t => t.Length > 0) ?? "unnamed";
+            (row is Border { Child: { } inner }
+                ? System.Windows.Automation.AutomationProperties.GetName(inner)
+                : System.Windows.Automation.AutomationProperties.GetName(row)) is { Length: > 0 } name
+                ? name
+                : Descendants(row).OfType<TextBlock>().Select(t => t.Text).FirstOrDefault(t => t.Length > 0) ?? "unnamed";
     }
 }
 

@@ -31,7 +31,7 @@ public class RowRingPixelTests(ITestOutputHelper output)
         var current = bar.TopEdgeInk("GEPHA");
         var previous = bar.TopEdgeInk("Sparrow");
         var earlier = bar.TopEdgeInk("Archive");
-        var none = bar.TopEdgeInk("📌");
+        var none = bar.TopEdgeInk("Pinned");
 
         output.WriteLine($"current={current:0.###} previous={previous:0.###} earlier={earlier:0.###} none={none:0.###}");
 
@@ -109,10 +109,13 @@ public class RowRingPixelTests(ITestOutputHelper output)
             return bitmap;
         }
 
+        // Text OR the accessible name: the pinned row lost its glyph in #173 and answers to
+        // "Pinned" alone now.
         FrameworkElement Row(string label) =>
             bar.Rows.Children.OfType<Border>()
                 .Where(box => box.Child is Grid)
-                .Single(box => Texts(box).Any(text => text.Contains(label)));
+                .Single(box => Texts(box).Any(text => text.Contains(label))
+                               || System.Windows.Automation.AutomationProperties.GetName(box.Child) == label);
 
         static IEnumerable<string> Texts(DependencyObject root) =>
             LogicalTreeHelper.GetChildren(root)
