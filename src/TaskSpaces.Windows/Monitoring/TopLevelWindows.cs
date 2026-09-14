@@ -73,6 +73,24 @@ public static class TopLevelWindows
         "Shell_TrayWnd",
         "Shell_SecondaryTrayWnd",
         "Button",
+        // DWM's stand-in for an app that has stopped responding: the window Windows paints, greyed,
+        // with "(Not Responding)" on it while the real one is wedged.
+        //
+        // Petre: "what's in the unplaced workspace?" One window, and it was this:
+        //
+        //   0x703DC  pid=15908 (dwm)  class='Ghost'  title=''  visible=True
+        //       ex=0x00040110 (WS_EX_APPWINDOW)  rect=(-32000,-32000)-(-31802,-31944)
+        //
+        // Titleless, carrying the taskbar opt-in, and parked off screen. That pair is exactly what
+        // the rule above was relaxed to admit, and the measurement behind that relaxation could not
+        // have caught this: a ghost exists only while something is hung, so there was none on the
+        // machine when every window on it was counted.
+        //
+        // Excluded by CLASS rather than by its off-screen rectangle, for the same reason the rest of
+        // this list is: a real window can be parked off screen too (a minimized one reports exactly
+        // -32000), and the shell itself never lists a ghost separately -- it replaces the hung
+        // window's own button, which this app is already showing.
+        "Ghost",
     };
 
     static bool IsShellOwned(nint hwnd)

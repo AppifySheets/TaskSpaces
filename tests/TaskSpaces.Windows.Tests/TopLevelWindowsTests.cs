@@ -91,6 +91,62 @@ public class TopLevelWindowsTests
             return new TestWindow { Handle = handle };
         }
 
+        // A window of a named CLASS, which "static" cannot give us and which one exclusion needs.
+        // The class has to be real: the predicate reads the class name off the live hwnd, so a
+        // pretend one would test nothing.
+        public static TestWindow CreateOfClass(string className, string title, uint exStyle)
+        {
+            EnsureClass(className);
+            var handle = CreateWindowExW(exStyle, className, title, WS_POPUP | WS_VISIBLE,
+                -32000, -32000, 40, 40, 0, 0, 0, 0);
+            Assert.NotEqual(0, handle);
+            return new TestWindow { Handle = handle };
+        }
+
+        // Kept in a static field on purpose: the delegate IS the window procedure, and letting it be
+        // collected while a window of the class lives would crash the runner rather than fail a test.
+        static readonly Dictionary<string, WndProc> Registered = [];
+
+        static void EnsureClass(string className)
+        {
+            if (Registered.ContainsKey(className)) return;
+
+            WndProc proc = DefWindowProcW;
+            Registered[className] = proc;
+            var registration = new WNDCLASSEXW
+            {
+                cbSize = Marshal.SizeOf<WNDCLASSEXW>(),
+                lpfnWndProc = Marshal.GetFunctionPointerForDelegate(proc),
+                lpszClassName = className,
+            };
+            Assert.NotEqual(0, RegisterClassExW(ref registration));
+        }
+
+        delegate nint WndProc(nint hwnd, uint message, nint w, nint l);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct WNDCLASSEXW
+        {
+            public int cbSize;
+            public uint style;
+            public nint lpfnWndProc;
+            public int cbClsExtra;
+            public int cbWndExtra;
+            public nint hInstance;
+            public nint hIcon;
+            public nint hCursor;
+            public nint hbrBackground;
+            public string? lpszMenuName;
+            public string lpszClassName;
+            public nint hIconSm;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern ushort RegisterClassExW(ref WNDCLASSEXW registration);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern nint DefWindowProcW(nint hwnd, uint message, nint w, nint l);
+
         public void Dispose() => DestroyWindow(Handle);
 
         const uint WS_POPUP = 0x80000000, WS_VISIBLE = 0x10000000;
@@ -101,5 +157,27 @@ public class TopLevelWindowsTests
 
         [DllImport("user32.dll", SetLastError = true)]
         static extern bool DestroyWindow(nint hwnd);
+    }
+
+    // Petre: "what's in the unplaced workspace?" One window, and it was DWM's ghost -- the greyed
+    // stand-in Windows paints over an app that has stopped responding:
+    //
+    //   0x703DC  pid=15908 (dwm)  class='Ghost'  title=''  ex=0x00040110 (WS_EX_APPWINDOW)
+    //
+    // Titleless AND carrying the taskbar opt-in, which is precisely the pair this rule was relaxed to
+    // admit for Buzz. The measurement behind that relaxation could not have caught it: a ghost exists
+    // only while something is hung, so there was none on the machine when every window was counted.
+    [Fact]
+    public void The_shells_ghost_window_is_not_a_candidate()
+    {
+        using var ghost = TestWindow.CreateOfClass("Ghost", "", WS_EX_APPWINDOW);
+        using var ordinary = TestWindow.CreateOfClass("NotAGhost", "", WS_EX_APPWINDOW);
+
+        Assert.False(TopLevelWindows.IsTaskbarCandidate(ghost.Handle));
+
+        // The control: same styles, same absent title, a class nobody excludes. Without this the test
+        // would pass just as well against a rule that had stopped admitting titleless windows at all,
+        // which is the fix it is guarding.
+        Assert.True(TopLevelWindows.IsTaskbarCandidate(ordinary.Handle));
     }
 }

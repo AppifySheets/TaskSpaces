@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using TaskSpaces.App;
@@ -290,6 +292,43 @@ public class BarMinimizeTests(ITestOutputHelper output)
                 if (child is TextBlock { Text: { } text }) found.Add(text);
                 Collect(child);
             });
+    }
+
+    // Petre, with the two buttons blown up: "these two aren't really aligned to one another, do
+    // align them."
+    //
+    // Measured as INK rather than as boxes, which is the whole point: both buttons are the same size,
+    // the same font and the same VerticalAlignment, and they looked wrong anyway, because '▁' paints
+    // on the baseline floor while '↩' paints mid line. A box comparison passes on the bug.
+    [Fact]
+    public void The_two_glyphs_share_a_centre_line() => StaThread.Run(() =>
+    {
+        var bar = Bar(Started(new StubStore()));
+        bar.ShowBar();
+
+        var back = InkCentre((Button)bar.FindName("BackButton")!);
+        var minimize = InkCentre((Button)bar.FindName("MinimizeButton")!);
+        output.WriteLine($"back={back:0.##} minimize={minimize:0.##} difference={Math.Abs(back - minimize):0.##}");
+
+        // Half a DIP: tighter than anything an eye can see at this size, and loose enough that a font
+        // fallback rounding differently does not fail the build.
+        Assert.True(Math.Abs(back - minimize) < 0.5,
+            $"the glyphs' ink centres are {Math.Abs(back - minimize):0.##} DIP apart");
+
+        bar.Close();
+    });
+
+    // Where the glyph's ink actually sits inside the button, transform included -- the alignment is
+    // paid for by a TranslateTransform, so a reading that ignored it would measure the wrong thing.
+    static double InkCentre(Button button)
+    {
+        var text = new FormattedText((string)button.Content, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(button.FontFamily, button.FontStyle, button.FontWeight, button.FontStretch),
+            button.FontSize, Brushes.White, 96);
+        var ink = text.BuildGeometry(new Point(0, 0)).Bounds;
+        var shift = (button.RenderTransform as TranslateTransform)?.Y ?? 0;
+        return (ink.Top + ink.Bottom) / 2 + shift;
     }
 
     // The line that showed hovered titles, the idle hint and the row hint is gone outright. The

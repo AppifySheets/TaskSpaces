@@ -49,10 +49,28 @@
                 <Button x:Name="BackButton" Content="↩" Width="18" FontSize="12"
                         Foreground="White" Background="Transparent" BorderThickness="0"
                         Padding="0" VerticalAlignment="Center" Click="OnBackClick"/>
-                <Button x:Name="MinimizeButton" Content="▁" Width="18" FontSize="12"
+                <!-- Petre, with the two buttons blown up: "these two aren't really aligned to one
+                     another, do align them." Measured rather than nudged by eye, at this button's own
+                     12pt in a 15.96 DIP line, as the ink each glyph actually paints:
+                       '↩'  ink 4.04 to 12.07,  centre 8.05
+                       '▁'  ink 14.00 to 15.53, centre 14.77   <- 6.7 DIP below the arrow
+                       '—'  ink 9.23 to 9.99,   centre 9.61
+                     A lower one eighth block sits ON the baseline floor by design, which is exactly
+                     what made it look dropped next to an arrow that sits mid line. The em dash is the
+                     nearest plain glyph to the arrow's centre, and the 1.56 DIP that remains is taken
+                     out by the transform below, so the two inks share a centre line.
+                     Plain Unicode rather than Segoe MDL2's ChromeMinimize: this file's MenuGlyph
+                     comment already rejected MDL2 here, because a private use codepoint that turns
+                     out wrong renders as a hollow box rather than as anything recognisable.
+                     BarMinimizeTests measures both glyphs and fails if they drift apart again. -->
+                <Button x:Name="MinimizeButton" Content="—" Width="18" FontSize="12"
                         Foreground="White" Background="Transparent" BorderThickness="0"
                         Padding="0" VerticalAlignment="Center" Click="OnMinimizeClick"
-                        ToolTip="Minimize the bar to a taskbar button"/>
+                        ToolTip="Minimize the bar to a taskbar button">
+                    <Button.RenderTransform>
+                        <TranslateTransform Y="-1.56"/>
+                    </Button.RenderTransform>
+                </Button>
             </StackPanel>
 
             <!-- One horizontal row per group (Pinned first, then every workspace, then
