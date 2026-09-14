@@ -54,6 +54,14 @@ object.
 
 ## Decisions already made, do not relitigate
 
+- **A version bump rides in the PR that earns it**, never in a release PR of its own. Every
+  release from 1.7.0 to 1.14.0 was a standalone one-line commit touching only
+  `Directory.Build.props`, and that habit was copied forward without anyone asking what it
+  bought: it costs a second merge before anything can ship, and there has never been a case
+  here where the fixes land and the version should not follow them. So bump `VersionPrefix`
+  in the same branch as the work, title the PR after the version it ships, and publish the
+  GitHub Release once it is merged. Petre, ending it: "change that convention, include
+  version bump with prs".
 - **Built on Windows' virtual desktops**, never `ShowWindow(SW_HIDE)`. Hidden windows can be
   orphaned by a crash; a virtual desktop cannot lose one. This is also why the app is
   Windows-only by design rather than by omission.
