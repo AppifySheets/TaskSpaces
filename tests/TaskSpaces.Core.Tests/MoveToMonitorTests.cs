@@ -25,6 +25,8 @@ public class MoveToMonitorTests
     Guid work;
     Guid personal;
     Guid target;
+    // The workspace you are standing in, as opposed to `work` which is its desktop.
+    Guid home;
 
     readonly FakeActivator activator = new();
 
@@ -39,6 +41,7 @@ public class MoveToMonitorTests
         work = here.DesktopId!.Value;
         personal = there.DesktopId!.Value;
         target = there.Id;
+        home = here.Id;
         desktops.CurrentDesktopId = work;
 
         monitor.InitialWindows.Add(code);
@@ -261,6 +264,9 @@ public class MoveToMonitorTests
     // about moving a window between screens WITHIN the workspace you are in, and it still does that.
     // A window sent somewhere you are not is by definition not the window you are about to use, and
     // this app's standing rule is that it never yanks the desktop.
+    //
+    // ...with exactly one exception, below: the window you were ACTIVE in, which you cannot still be
+    // about to use if you have just sent it away. Note this test's window is not that one.
     [Fact]
     public void A_window_moved_to_another_workspace_does_not_pull_you_after_it()
     {
@@ -311,5 +317,78 @@ public class MoveToMonitorTests
         Assert.Equal(new WindowRect(-2880, 540, -960, 1620), rect);
         // ...and nothing brought it to the front.
         Assert.Empty(activator.Activated);
+    }
+
+    // The one window that IS the exception, and the reason the rule above needed narrowing rather
+    // than keeping. Petre: "i think moving active windows to a different workspace doesn't always
+    // activate that workspace."
+    //
+    // The standing rule is that the app never yanks the desktop, and it still holds for every window
+    // you are not in: tidying three background windows onto another row must not drag you across the
+    // machine three times. But the window you are ACTIVE in is the one case where staying put is the
+    // surprising answer -- you have just sent away the thing you were looking at, so the desktop you
+    // are standing on is now emptier than when you started, and the window you wanted is elsewhere.
+    //
+    // "Active" is the app's own answer, the same one the bar draws its highlight from, which is what
+    // makes this predictable from the screen: follow the highlighted icon and you go with it. Note
+    // the bar cannot muddy it by being clicked, because WindowMonitor ignores our own hwnd, so
+    // Foreground() reports None for it and MarkActive never clears on None.
+    [Fact]
+    public void Dropping_the_window_you_are_in_takes_you_with_it()
+    {
+        monitor.ForegroundWindow = code.Handle;
+        var manager = Started();
+
+        Assert.True(manager.AssignWindow(code.Handle, target).IsSuccess);
+
+        Assert.Equal(personal, desktops.WindowPlacements[code.Handle]);
+        Assert.Equal([personal], desktops.Switches);
+    }
+
+    // ...and the window you followed is the one that has focus when you land. Without this the
+    // arrival's own focus restore answers instead, handing you whatever you were last using over
+    // there -- so the drop would take you to the right workspace and then put you in the wrong
+    // window.
+    [Fact]
+    public void The_window_you_followed_is_the_one_you_land_in()
+    {
+        monitor.ForegroundWindow = code.Handle;
+        var manager = Started();
+        // Somebody else was last active over there, which is what the ledger would otherwise restore.
+        var slack = Window(0x2, "slack");
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, slack));
+        desktops.WindowPlacements[slack.Handle] = personal;
+
+        Assert.True(manager.AssignWindow(code.Handle, target).IsSuccess);
+        desktops.CurrentDesktopId = personal;
+        desktops.CurrentChangedSubject.OnNext(personal);
+
+        Assert.Equal(code.Handle, activator.Activated.Last());
+    }
+
+    // An idle window is still the ordinary case, and it still leaves you where you are.
+    [Fact]
+    public void Dropping_a_window_you_are_not_in_leaves_you_where_you_are()
+    {
+        var manager = Started();
+
+        Assert.True(manager.AssignWindow(code.Handle, target).IsSuccess);
+
+        Assert.Equal(personal, desktops.WindowPlacements[code.Handle]);
+        Assert.Empty(desktops.Switches);
+    }
+
+    // Dropping the active window back on the row it already lives in asks for nothing, so it must not
+    // switch to the desktop you are already standing on: a pointless Switch would leave the follow
+    // armed with no arrival to spend it on.
+    [Fact]
+    public void Dropping_the_active_window_on_its_own_row_switches_nowhere()
+    {
+        monitor.ForegroundWindow = code.Handle;
+        var manager = Started();
+
+        Assert.True(manager.AssignWindow(code.Handle, home).IsSuccess);
+
+        Assert.Empty(desktops.Switches);
     }
 }

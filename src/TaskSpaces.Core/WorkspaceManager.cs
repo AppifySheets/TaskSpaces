@@ -86,6 +86,11 @@ public sealed class WorkspaceManager(
     // right now, so there is nothing to persist or reconcile.
     Maybe<WindowHandle> activeWindow = Maybe<WindowHandle>.None;
 
+    // A window a drop sent to another workspace while you were IN it, waiting for the arrival it
+    // caused. One-shot: taken on the next desktop change and never carried past it, so a switch this
+    // did not ask for cannot inherit it. See Follow.
+    Maybe<WindowHandle> followed = Maybe<WindowHandle>.None;
+
     // Petre: "when switching workspaces, i want you to activate the window which was last
     // active last time this workspace was active", and "so i know what i'm going to have
     // activated when i land on that workspace" -- the bar marks the same window, so this map
@@ -790,6 +795,13 @@ public sealed class WorkspaceManager(
 
         currentDesktopId = arriving;
 
+        // Taken here, before anything can return early, so the one-shot cannot survive an arrival and
+        // fire on an unrelated one later. A bounced arrival therefore spends it and does nothing with
+        // it, which is the same deal every other reaction in this method gets while the desktop is
+        // ping-ponging.
+        var sentHere = followed;
+        followed = Maybe<WindowHandle>.None;
+
         // Petre: "still that rapid changing workspaces... i want you to add protection so that rapid
         // moving from one to the other is caught by the app."
         //
@@ -821,7 +833,11 @@ public sealed class WorkspaceManager(
         // two would otherwise fight: the moved window is activated here and RestoreLastActive would
         // immediately hand focus back to whatever was last active. A window you have just sent to this
         // screen is the more useful answer to "what were you about to use".
-        if (!ApplyPendingMonitorMoves()) RestoreLastActive(arriving);
+        if (ApplyPendingMonitorMoves()) return;
+        // A window you followed here outranks the ledger for the same reason a landed monitor move
+        // does: you sent it a moment ago, so it is the answer to "what were you about to use".
+        if (sentHere.HasValue) activator?.Activate(sentHere.Value);
+        else RestoreLastActive(arriving);
     }
 
     // The last few desktop arrivals, and a cool-down once they start alternating.
@@ -1846,19 +1862,69 @@ public sealed class WorkspaceManager(
     // Doing the workspace move first means the screen move always sees the window on its FINAL
     // desktop, and MoveWindowToMonitor can then either do it now or hold it until that desktop is the
     // one you are standing on.
+    //
+    // `follows` is decided BEFORE anything moves, because the move itself changes what is active:
+    // sending the foreground window to another desktop cloaks it, and Windows hands the foreground
+    // to whatever was behind it. Asked here rather than inside Assign so it is read while the answer
+    // is still the one the drag started with.
     public Result AssignWindow(WindowHandle window, Guid workspaceId, int? monitor = null) =>
         knownWindows.TryGetValue(window, out var info)
-            // Explicitly moving a pinned window to ONE workspace is a statement that it
-            // should no longer be on ALL of them -- unpin first, then place (spec).
-            ? desktops.IsPinned(window)
-                .Bind(pinned => pinned ? desktops.Unpin(window) : Result.Success())
-                .Bind(() => Place(info, workspaceId))
-                // The one place a container learns its home (#132), because this is the one door every
-                // by-hand move comes through: dragging an icon between rows, and Manage's row menu.
-                // After the move rather than before, so a refused move teaches nothing.
-                .Tap(() => LearnContainer(info, workspaceId))
-                .Bind(() => monitor is { } screen ? MoveWindowToMonitor(window, screen) : Result.Success())
+            ? Assign(info, workspaceId, monitor, follows: SendingTheWindowYouAreIn(window, workspaceId))
             : Result.Failure("Window no longer exists.");
+
+    Result Assign(WindowInfo info, Guid workspaceId, int? monitor, bool follows) =>
+        // Explicitly moving a pinned window to ONE workspace is a statement that it
+        // should no longer be on ALL of them -- unpin first, then place (spec).
+        desktops.IsPinned(info.Handle)
+            .Bind(pinned => pinned ? desktops.Unpin(info.Handle) : Result.Success())
+            .Bind(() => Place(info, workspaceId))
+            // The one place a container learns its home (#132), because this is the one door every
+            // by-hand move comes through: dragging an icon between rows, and Manage's row menu.
+            // After the move rather than before, so a refused move teaches nothing.
+            .Tap(() => LearnContainer(info, workspaceId))
+            .Bind(() => monitor is { } screen ? MoveWindowToMonitor(info.Handle, screen) : Result.Success())
+            // LAST, after the screen move has been tried, so that move sees the window still on a
+            // desktop we have not left yet and holds itself for the arrival in the usual way. Doing
+            // it earlier would only race the switch.
+            .TapIf(follows, () => Follow(info.Handle, workspaceId));
+
+    // Petre: "i think moving active windows to a different workspace doesn't always activate that
+    // workspace."
+    //
+    // The standing rule is that this app never yanks the desktop, and it holds for every window you
+    // are not in: tidying three background windows onto another row must not drag you across the
+    // machine three times. The window you are ACTIVE in is the one case where staying put is the
+    // surprising answer, because you have just sent away the thing you were looking at.
+    //
+    // Two guards, both of them about not arming a switch that has nothing to spend itself on:
+    //
+    //   * ACTIVE is the app's own answer, the same one the bar draws its highlight from, which is
+    //     what makes this predictable from the screen -- follow the highlighted icon and you go with
+    //     it. The bar cannot muddy it by being clicked, because WindowMonitor ignores our own hwnd,
+    //     so Foreground() reports None for it and MarkActive never clears on None.
+    //   * ELSEWHERE. Dropping the active window back on the row it already lives in asks for
+    //     nothing, and switching to the desktop you are standing on raises no arrival, which would
+    //     leave the one-shot below armed for whatever switch came next.
+    bool SendingTheWindowYouAreIn(WindowHandle window, Guid workspaceId) =>
+        activeWindow.Equals(Maybe<WindowHandle>.From(window))
+        && Workspace(workspaceId).GetValueOrDefault()?.DesktopId is { } destination
+        && destination != desktops.CurrentDesktop().GetValueOrDefault();
+
+    // Arms the arrival, then switches. The one-shot is what makes the window you sent the window you
+    // land IN: without it the arrival's own focus restore answers instead, and the drop would take
+    // you to the right workspace and put you in the wrong window.
+    //
+    // Disarmed again if the switch never happens, so a refused switch cannot fire on some later
+    // arrival minutes away.
+    void Follow(WindowHandle window, Guid workspaceId)
+    {
+        followed = window;
+        Switch(workspaceId).TapError(error =>
+        {
+            followed = Maybe<WindowHandle>.None;
+            trace?.Invoke($"follow refused: {window.Value:X} -> {error}");
+        });
+    }
 
     // #89. Petre: "dropping the icon onto another monitor within the current workspace -- same drag,
     // same row: drag the icon across its own row's hairline to send the window to the other screen."
