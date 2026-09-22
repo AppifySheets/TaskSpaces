@@ -421,6 +421,51 @@ public class ContainerPlacementTests
         Assert.Empty(store.Stored.ContainerHomes);
     }
 
+    // Petre: "my rdp keeps jumping across spaces... that jumping should not happen mid-flight",
+    // "after minutes of the app / window being open".
+    //
+    // RDM's dashboard holds every session in one window and names the active one in its title, so
+    // clicking a tab announced a different container and the tier moved the window to that session's
+    // home. One window, no new information, and his desktop changing underneath him.
+    //
+    // So a tabbed app gets ONE look per window rather than one per container. A session window opened
+    // externally is unaffected: it is born with its session in the title, so its first look is the one
+    // that places it.
+    [Fact]
+    public void Switching_tabs_does_not_walk_a_window_between_workspaces()
+    {
+        taskSpaces = new Workspace(Guid.NewGuid(), "TaskSpace", Guid.NewGuid());
+        framework = new Workspace(Guid.NewGuid(), "framework", Guid.NewGuid());
+        new[] { taskSpaces, framework }.ToList()
+            .ForEach(w => desktops.Desktops.Add(new Abstractions.DesktopInfo(w.DesktopId!.Value, w.Name)));
+        desktops.CurrentDesktopId = framework.DesktopId!.Value;
+        store.Stored = AppState.Empty with
+        {
+            Workspaces = [taskSpaces, framework],
+            // Two sessions, two different homes -- the shape that made the window ping-pong.
+            ContainerHomes =
+            [
+                new ContainerHome("RemoteDesktopManager", "i7-petre", taskSpaces.Id),
+                new ContainerHome("RemoteDesktopManager", "app.rurua.ge", framework.Id),
+            ],
+        };
+
+        var manager = new WorkspaceManager(desktops, monitor, titles, store, ownProcessId: 4242);
+        Assert.True(manager.Start().IsSuccess);
+
+        WindowInfo Rdm(string title) => new(new WindowHandle(0x921), 5151, "RemoteDesktopManager",
+            @"C:\RDM\RemoteDesktopManager.exe", title, @"""C:\RDM\RemoteDesktopManager.exe""");
+
+        // Opens on the i7-petre tab and is placed by it, which is the feature working.
+        Appears(monitor, Rdm("Remote Desktop Manager [i7-petre]"));
+        Assert.Equal(taskSpaces.DesktopId, desktops.WindowPlacements[new WindowHandle(0x921)]);
+
+        // He clicks another session. Same window, minutes later.
+        Retitled(monitor, Rdm("Remote Desktop Manager [app.rurua.ge]"));
+
+        Assert.Equal(taskSpaces.DesktopId, desktops.WindowPlacements[new WindowHandle(0x921)]);
+    }
+
     // --- housekeeping -------------------------------------------------------------------------
 
     // A home pointing at a workspace that no longer exists would move a window to a desktop nothing

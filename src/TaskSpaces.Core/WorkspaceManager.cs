@@ -2215,9 +2215,24 @@ public sealed class WorkspaceManager(
     // A home whose workspace has since been deleted is ignored rather than obeyed. RemoveWorkspace
     // prunes these, so the only way to hold one is a hand-edited state.json, and moving a window to a
     // desktop nothing draws is worse than leaving it alone.
+    //
+    // ...and for a TABBED app the tier gets ONE look at the window, ever, rather than one per
+    // container. Petre: "my rdp keeps jumping across spaces", "that jumping should not happen
+    // mid-flight", "after minutes of the app / window being open". His dashboard holds every session
+    // in one window and names the active one in its title, so clicking a tab looked like new
+    // information and walked the window to that session's home:
+    //
+    //   22:52:38  read "Remote Desktop Manager [app.rurua.ge]" -> app.rurua.ge
+    //   22:52:42  read "Remote Desktop Manager [i7-petre]"     -> i7-petre
+    //   22:52:42  container RemoteDesktopManager/i7-petre -> Personal
+    //
+    // A session window opened externally keeps its own case: it is born with its session in the title,
+    // so its first look is the one that places it, and it never asks for a second.
     Maybe<Decision> ContainerPlacement(WindowInfo window) =>
         containerOf.TryGetValue(window.Handle, out var container)
         && !tookHome.Contains((window.Handle, container))
+        && !(TitleToken.ContainerFollowsTabs(window.ProcessName)
+             && tookHome.Any(spent => spent.Window == window.Handle))
         && State.ContainerHomes.FirstOrDefault(h => IsHomeFor(h, window.ProcessName, container)) is { } home
         && State.Workspaces.Any(w => w.Id == home.WorkspaceId)
             ? TakeHome(window, container, home.WorkspaceId)

@@ -84,6 +84,17 @@ public static class TitleToken
     // an app we do not track, or a window with no container yet. The second case matters --
     // a freshly opened VS Code is titled just "Visual Studio Code", and returning None for
     // it is what lets the folder-load a moment later be the thing that places the window.
+    // True when this app's container names the TAB you are looking at rather than what the window is.
+    // Remote Desktop Manager's dashboard hosts every session in one window and puts the active one in
+    // its title, so its container changes as you click around inside a window that has not moved and
+    // is not new. Petre: "my rdp keeps jumping across spaces... that jumping should not happen
+    // mid-flight", "after minutes of the app / window being open".
+    //
+    // The editors are deliberately NOT this. A VS Code window that loads another folder really has
+    // become a window about something else, and moving it then is a decision already made here.
+    public static bool ContainerFollowsTabs(string processName) =>
+        Apps.TryGetValue(processName, out var shape) && shape == Shape.Bracketed;
+
     public static Maybe<string> For(string processName, string title)
     {
         if (string.IsNullOrWhiteSpace(title) || !Apps.TryGetValue(processName, out var shape))
