@@ -2170,13 +2170,37 @@ public sealed class WorkspaceManager(
     // Never REMOVES a container. A window whose title we no longer recognise has not forgotten which
     // folder it has open -- VS Code rewrites its title constantly, and one uninformative rewrite must
     // not lose an answer that was correct. Same principle as never caching a lookup failure.
+    // Every distinct (window, title) this has already written a trace line for. The read itself is
+    // offered many times a minute -- VS Code retitles on every file you open -- so tracing each CALL
+    // would bury the log. One line per distinct title is bounded and is all the question needs.
+    readonly HashSet<(WindowHandle Window, string Title)> tracedReads = [];
+
     void NoteContainer(WindowInfo window)
     {
-        if (ledger.AppliedName(window.Handle).Map(applied => applied == window.Title).GetValueOrDefault(false))
-            return;
+        // Two ways a title can be OURS. The ledger knows when this run renamed the window, and that is
+        // the ordinary case. The second is a title left behind by a run that DIED: a crash or a forced
+        // kill skips RestoreAllTitles, so the window keeps our short name while the new run starts with
+        // an empty ledger and no way to know it wrote it. That mattered the moment the bracket rule
+        // below stopped being the only way a token could be read: without this, an RDM window still
+        // wearing "RDP" would be learned as a session called RDP, and the wrong home would stick.
+        var ours = ledger.AppliedName(window.Handle).Map(applied => applied == window.Title).GetValueOrDefault(false)
+                   || State.RenameRules.Any(rule => rule.ShortName.Equals(window.Title, StringComparison.OrdinalIgnoreCase));
+        var token = ours ? Maybe<string>.None : TitleToken.For(window.ProcessName, window.Title);
 
-        TitleToken.For(window.ProcessName, window.Title)
-            .Tap(container => containerOf[window.Handle] = container);
+        // Petre's Remote Desktop Manager sessions place on open for some windows and not others, and
+        // the log cannot currently say why: it records the DECISIONS (learned, placed) and nothing
+        // about the read they depend on. A window with no token is inert in both directions -- no home
+        // to place it by, nothing to learn when it is dragged -- and that silence looks identical to
+        // a window whose home simply says somewhere else.
+        //
+        // So the read says what it saw. `ours` means the title on offer is the short name WE wrote,
+        // which is not a folder and is skipped; `none` means the title was the app's own and still
+        // yielded nothing, which for a Bracketed app like RDM means the brackets were not there.
+        if (trace is not null && tracedReads.Add((window.Handle, window.Title)))
+            trace($"container read {window.ProcessName} \"{window.Title}\" -> " +
+                  (ours ? "ours, skipped" : token.GetValueOrDefault("none")));
+
+        token.Tap(container => containerOf[window.Handle] = container);
     }
 
     // The placement a window's container asks for, or None.

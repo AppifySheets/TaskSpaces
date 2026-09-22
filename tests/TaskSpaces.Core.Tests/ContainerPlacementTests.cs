@@ -1,4 +1,4 @@
-using TaskSpaces.Core.Domain;
+﻿using TaskSpaces.Core.Domain;
 using TaskSpaces.Core.Persistence;
 
 namespace TaskSpaces.Core.Tests;
@@ -384,6 +384,41 @@ public class ContainerPlacementTests
 
         var home = Assert.Single(store.Stored.ContainerHomes);
         Assert.Equal("TaskSpaces", home.Token);
+    }
+
+    // The other half of the rename trap, and the one a crash leaves behind. A run that DIES -- a real
+    // crash, or a forced kill -- never restores the titles it wrote, so the window keeps our short name
+    // while the next run starts with an empty ledger and no way to know it was ours. Petre lost two
+    // runs to that today.
+    //
+    // It only became dangerous when a bare title started counting as a container: an RDM window still
+    // wearing "RDP" would otherwise be learned as a session called RDP, and that wrong home would
+    // stick. The rename RULES are the memory the ledger has lost, so they answer instead.
+    [Fact]
+    public void A_title_left_behind_by_a_dead_run_is_not_a_container()
+    {
+        taskSpaces = new Workspace(Guid.NewGuid(), "TaskSpace", Guid.NewGuid());
+        framework = new Workspace(Guid.NewGuid(), "framework", Guid.NewGuid());
+        new[] { taskSpaces, framework }.ToList()
+            .ForEach(w => desktops.Desktops.Add(new Abstractions.DesktopInfo(w.DesktopId!.Value, w.Name)));
+        desktops.CurrentDesktopId = framework.DesktopId!.Value;
+        store.Stored = AppState.Empty with
+        {
+            Workspaces = [taskSpaces, framework],
+            RenameRules = [new Rules.RenameRule(Rules.RuleMatchKind.ProcessName, "RemoteDesktopManager", "RDP")],
+        };
+
+        var manager = new WorkspaceManager(desktops, monitor, titles, store, ownProcessId: 4242);
+        Assert.True(manager.Start().IsSuccess);
+
+        // The window comes back from a killed run already wearing the short name.
+        var stranded = new WindowInfo(new WindowHandle(0x920), 5150, "RemoteDesktopManager",
+            @"C:\RDM\RemoteDesktopManager.exe", "RDP", @"""C:\RDM\RemoteDesktopManager.exe""");
+        Appears(monitor, stranded);
+
+        Assert.True(manager.AssignWindow(stranded.Handle, taskSpaces.Id).IsSuccess);
+
+        Assert.Empty(store.Stored.ContainerHomes);
     }
 
     // --- housekeeping -------------------------------------------------------------------------

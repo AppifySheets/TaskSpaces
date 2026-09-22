@@ -68,7 +68,10 @@ public static class TitleToken
     // Trailing app names to discard before taking the container. Without this, VS Code's
     // container would always come out as "Visual Studio Code".
     static readonly IReadOnlyList<string> AppNameTails =
-        ["Visual Studio Code", "Microsoft Visual Studio", "Visual Studio", "Cursor", "VSCodium", "Windsurf"];
+        ["Visual Studio Code", "Microsoft Visual Studio", "Visual Studio", "Cursor", "VSCodium", "Windsurf",
+         // Not a tail for anyone -- RDM puts its name FIRST -- but the bare-title fallback below needs
+         // the same list of "this is the app, not a container".
+         "Remote Desktop Manager"];
 
     // Split on the delimiter WITH its surrounding spaces, never on the bare character.
     // "Corne-Config" is one word and splitting on a lone '-' would shred it into
@@ -86,10 +89,31 @@ public static class TitleToken
         if (string.IsNullOrWhiteSpace(title) || !Apps.TryGetValue(processName, out var shape))
             return Maybe<string>.None;
 
+        // Brackets first, then the bare title. Remote Desktop Manager writes BOTH shapes and the
+        // difference is not cosmetic: its dashboard is "Remote Desktop Manager [Dashboard]", while a
+        // session window it opens externally is titled with the session name ALONE -- "i7-petre".
+        //
+        // Measured, after the log was made to say what the read saw (Petre: "rdp that was opened
+        // externally from rdm should be moved to gepha workspace on open", and then "why didn't it?"):
+        //
+        //   container read RemoteDesktopManager "Remote Desktop Manager [Dashboard]" -> Dashboard
+        //   container read RemoteDesktopManager "i7-petre"                           -> none
+        //
+        // A bracket-only rule therefore reads the one window nobody needs placed and misses every
+        // window that is the point of the feature. The whole title is the session name when there are
+        // no brackets, so that is what it means.
+        //
+        // Safe for the OTHER shapes precisely because it is not offered to them: a bare "Visual Studio
+        // Code" must stay None so the folder-load a moment later is what places the window, and that
+        // path is untouched below.
+        // ...with the app's OWN name still meaning nothing, exactly as a bare "Visual Studio Code"
+        // does. RDM shows that title between opening the window and connecting the session.
         if (shape == Shape.Bracketed)
             return Bracketed.Match(title) is { Success: true } match
                 ? Clean(match.Groups["container"].Value)
-                : Maybe<string>.None;
+                : AppNameTails.Contains(title.Trim(), StringComparer.OrdinalIgnoreCase)
+                    ? Maybe<string>.None
+                    : Clean(title);
 
         var segments = Delimiters.Split(title)
             .Select(segment => segment.Trim())

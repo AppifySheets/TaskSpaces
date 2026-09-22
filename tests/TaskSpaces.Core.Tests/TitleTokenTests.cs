@@ -1,4 +1,4 @@
-using TaskSpaces.Core.Rules;
+﻿using TaskSpaces.Core.Rules;
 
 namespace TaskSpaces.Core.Tests;
 
@@ -76,6 +76,22 @@ public class TitleTokenTests
     [Fact]
     public void Remote_Desktop_Manager_with_no_session_has_no_container() =>
         Assert.False(TitleToken.For("RemoteDesktopManager", "Remote Desktop Manager").HasValue);
+
+    // ...and the shape RDM actually uses for a session opened EXTERNALLY, which is the bare session
+    // name with no brackets at all. Petre: "rdp that was opened externally from rdm should be moved to
+    // gepha workspace on open", and then "why didn't it?" -- because a bracket-only rule read his
+    // dashboard and missed every session window. His log, once the read was traced:
+    //
+    //   container read RemoteDesktopManager "Remote Desktop Manager [Dashboard]" -> Dashboard
+    //   container read RemoteDesktopManager "i7-petre"                           -> none
+    [Fact]
+    public void An_externally_opened_session_is_titled_with_the_session_name_alone() =>
+        Assert.Equal("i7-petre", TitleToken.For("RemoteDesktopManager", "i7-petre").Value);
+
+    // The dashboard keeps its own answer, brackets and all, so the two windows stay distinguishable.
+    [Fact]
+    public void The_dashboard_is_still_read_from_its_brackets() =>
+        Assert.Equal("Dashboard", TitleToken.For("RemoteDesktopManager", "Remote Desktop Manager [Dashboard]").Value);
 
     // ---- The allowlist ------------------------------------------------------------
 
