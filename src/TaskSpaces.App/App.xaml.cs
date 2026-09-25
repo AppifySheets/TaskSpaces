@@ -15,6 +15,7 @@ using TaskSpaces.Windows.Activation;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Diagnostics;
 using TaskSpaces.Windows.Monitoring;
+using TaskSpaces.Windows.Recovery;
 using TaskSpaces.Windows.Renaming;
 
 namespace TaskSpaces.App;
@@ -574,6 +575,20 @@ public partial class App : Application
         // user it is already running has no business rewriting where startup points. Only the
         // instance that actually takes ownership gets to claim it.
         StartupRegistration.ReassertIfEnabled();
+
+        // ...and in the same breath, ask Windows to bring the app back if it DIES. Petre: "maybe you
+        // could add a simple monitor job which will start the taskspaces when it dies", and, on the
+        // cause, "it usually dies because of memory problems, i guess, but restarting is good" -- which
+        // the dumps bear out. See CrashRestart for why this is one call to Windows rather than a
+        // watchdog process: a crash and the tray's Exit must not look the same, and only WER knows the
+        // difference without us keeping a second piece of state about our own life.
+        //
+        // Also placed after the single-instance guard, for the same reason the line above is: the copy
+        // that bows out is not the copy worth restarting.
+        //
+        // Traced, not surfaced. A machine where this is unavailable still runs the app perfectly; it
+        // simply has to be started by hand, which is where we already were.
+        CrashRestart.Register().TapError(error => ClickTrace.Write(error));
 
         // Reviewer (fix round 1, Critical, last-ditch backstop): an unhandled exception on
         // the dispatcher thread -- e.g. the ArgumentException a duplicate-name dictionary
