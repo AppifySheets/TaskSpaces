@@ -303,22 +303,42 @@ single ~77 MB exe in `artifacts/publish`.
   ```
 
   Everything the bar's right-click menus do has a command too: renaming and reordering
-  workspaces, grouping them, colours, deleting, naming an unnamed desktop, and the window
-  renames. `help` lists them all. The running copy prints that list itself, so it always
-  matches the version you have.
+  workspaces, grouping them, colours, deleting, switching, naming an unnamed desktop, the
+  window renames, pinning, and minimizing the bar. Each one runs the same code as its menu
+  item. `help` lists them all, and the running copy prints that list itself, so it always
+  matches the version you have. A few more, with `$ts` standing for the batch file:
 
-  `workspaces`, `windows` and `desktops` print JSON. `create <name>` makes a workspace, and is
-  not an error when it already exists. A new workspace goes at the end of the bar unless you
-  say where: `--group <group>` puts it at the bottom of that group, `--position <n>` puts it
-  at row n counting a whole group as one row, and `--before` or `--after <workspace>` work
-  like the menu's Insert before and Insert after. `move <workspace>` picks windows with `--title <text>`,
-  which also searches the title a window had before TaskSpaces shortened it, or with
-  `--hwnd <handle>` taken from `windows`. A move is all or nothing: when any selector finds no
-  window, nothing moves and the exit code is 3. `--wait` keeps retrying that case, which
-  covers an editor that is still opening. `help` lists the rest. The batch file is there
-  because PowerShell does not wait for a windowed program it calls directly; the exe itself
-  also takes `ctl <command>` if you call it from Git Bash or cmd. Only your own Windows
-  account can reach the running copy.
+  ```powershell
+  $ts = "$env:APPDATA\TaskSpaces\taskspaces.cmd"
+  & $ts workspaces                          # JSON: name, group, row, colour, current
+  & $ts create Review --after Services      # beside Services, inside its group
+  & $ts reorder Review end                  # to the bottom of its group
+  & $ts group-leave Review                  # out of the group
+  & $ts color Review teal
+  & $ts move Review --hwnd 0x51107A --no-follow
+  & $ts delete Review                       # refused while it still has windows
+  ```
+
+  A new workspace goes at the end of the bar unless you say where: `--group <group>` puts it
+  at the bottom of that group, `--position <n>` puts it at row n counting a whole group as
+  one row, and `--before` or `--after <workspace>` work like the menu's Insert before and
+  Insert after. `create` is not an error when the workspace already exists.
+
+  `move <workspace>` picks windows with `--title <text>`, which also searches the title a
+  window had before TaskSpaces shortened it, or with `--hwnd <handle>` taken from `windows`.
+  A move is all or nothing: when any selector finds no window, nothing moves and the exit
+  code is 3. `--wait` keeps retrying that case, which covers an editor that is still
+  opening. Moving the window you are in takes you along, as a drag on the bar does. Add
+  `--no-follow` to stay put, which you want for a window a script has just opened, because
+  that window always has focus.
+
+  `delete` closes nothing unless you add `--close-windows`. The menu asks before closing;
+  a command cannot ask, so you have to say it.
+
+  The batch file exists because PowerShell does not wait for a windowed program it calls
+  directly, so it would get no output and no exit code. From Git Bash or cmd you can also
+  call the exe itself with `ctl <command>`. Exit codes are 0 done, 1 refused, 2 TaskSpaces
+  is not running, and 3 no window matched.
 
 ## Why this matters
 
@@ -491,6 +511,12 @@ you do not have.
   by a tool with its own `--user-data-dir` is a different app from the one you start yourself,
   and gets its own place, with the per-session part of the directory ignored so it keeps that
   place from one run to the next.
+- **Other programs ask the running copy rather than touching anything themselves.** The app
+  owns its saved state, the virtual desktops and the window list, so a second process editing
+  any of them would race it. It listens on a named pipe that only your own Windows account
+  can open, and `taskspaces.cmd`, or the exe started with `ctl`, sends one command at a time
+  and prints the answer. Commands run on the app's own UI thread, through the same code the
+  bar's menus use.
 - Everything is persisted, so your workspaces, groups, window names, colours, the bar's width,
   position and settings, and your shortcut survive both an app restart and a reboot.
 

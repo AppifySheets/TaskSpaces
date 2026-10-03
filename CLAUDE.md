@@ -10,11 +10,11 @@ Unnamed ones still exist and the bar shows them separately, so the two words are
 interchangeable: "virtual desktop" is the familiar anchor, "workspace" is the app's
 object.
 
-## Current state (as of 2026-08-11)
+## Current state (as of 2026-10-03)
 
-- **Shipped and in daily use.** Everything is on `main`; **v1.8.0** is released. One branch
-  per topic, PR, merge, and no long-lived feature branch. Sixty PRs merged so far.
-- **Tests: about 630 green**, the great majority in `TaskSpaces.Core.Tests` and a few dozen
+- **Shipped and in daily use.** Everything is on `main`; **v1.17.0** is released. One branch
+  per topic, PR, merge, and no long-lived feature branch. About 180 PRs merged so far.
+- **Tests: about 980 green**, the great majority in `TaskSpaces.Core.Tests` and over a hundred
   in `TaskSpaces.Windows.Tests` (which constructs real WPF windows on an STA thread per
   test). Do not trust this number to the digit; run the suite. The routine command, and the
   default: `dotnet test TaskSpaces.sln --filter "Category!=Integration"`
@@ -105,6 +105,22 @@ object.
   window's AppUserModelID. Read that comment before replacing it with something cheaper.
 - **The band carries a dark rim** for the same reason the attention dot does: no palette is
   legible on artwork nobody chose (sky blue vanished on an Edge icon).
+- **Other programs drive the app through a named pipe, never by touching its state** (#180).
+  The running copy owns state.json, the desktops and the window list, so a second process
+  editing them would race it. `ControlPipeServer` listens CurrentUserOnly; the same exe started
+  as `ctl <command>` is the client (the release is one file, so no second exe), and
+  `%APPDATA%\TaskSpaces\taskspaces.cmd` wraps it because PowerShell does not wait for a GUI exe
+  (measured: no output, no exit code). Requests run on the UI thread via the dispatcher.
+  - Every menu command has a remote twin calling the same `WorkspaceManager` method.
+    `ControlUsage` is the one list of them: `help` prints it and a test fails if a dispatched
+    command is missing. Add a menu item, add its command there.
+  - A move is all or nothing on its selectors (exit 3, nothing created), and `--wait` retries
+    only that. Following the active window stays the default; `--no-follow` is the opt-out.
+  - `delete` never closes windows without `--close-windows`. The tray's Manage, updates and
+    Exit are deliberately not exposed.
+  - To test it live, `taskspaces.cmd help` against the running build. Move a throwaway window
+    you opened yourself, by the hwnd that appeared, with `--no-follow`: a fresh window has
+    focus, and without it the move takes Petre's screen along (it did, once).
 
 ## Instrumentation, and start with it
 
