@@ -1917,9 +1917,15 @@ public sealed class WorkspaceManager(
     // sending the foreground window to another desktop cloaks it, and Windows hands the foreground
     // to whatever was behind it. Asked here rather than inside Assign so it is read while the answer
     // is still the one the drag started with.
-    public Result AssignWindow(WindowHandle window, Guid workspaceId, int? monitor = null) =>
+    //
+    // `allowFollow: false` turns that rule off for one move, and only the remote control asks for it
+    // (`move --no-follow`). Petre: "can you open a browser window and put it to the workspace without
+    // following the workspace?" A window a script has just opened always has focus, so without this
+    // every agent that opens something and files it away would drag him across the machine with it.
+    // A drag on the bar never passes it, so the rule there is unchanged.
+    public Result AssignWindow(WindowHandle window, Guid workspaceId, int? monitor = null, bool allowFollow = true) =>
         knownWindows.TryGetValue(window, out var info)
-            ? Assign(info, workspaceId, monitor, follows: SendingTheWindowYouAreIn(window, workspaceId))
+            ? Assign(info, workspaceId, monitor, follows: allowFollow && SendingTheWindowYouAreIn(window, workspaceId))
             : Result.Failure("Window no longer exists.");
 
     Result Assign(WindowInfo info, Guid workspaceId, int? monitor, bool follows) =>

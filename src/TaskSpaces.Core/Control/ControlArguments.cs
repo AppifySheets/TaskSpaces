@@ -29,7 +29,7 @@ public sealed record CreateRequest(string Name, Placement Placement);
 
 // The `move` command, parsed. Handles and titles are the two ways to name a window, and a request may
 // mix them; every one of them has to find a window or nothing moves (see RemoteControl.Move).
-public sealed record MoveRequest(string Workspace, bool Create, Placement Placement, IReadOnlyList<WindowHandle> Handles, IReadOnlyList<string> Titles)
+public sealed record MoveRequest(string Workspace, bool Create, Placement Placement, IReadOnlyList<WindowHandle> Handles, IReadOnlyList<string> Titles, bool NoFollow = false)
 {
     public bool NamesNoWindow => Handles.Count == 0 && Titles.Count == 0;
 }
@@ -52,7 +52,7 @@ public static class ControlArguments
 
     // Everything `create` and `move` accept after their first argument, gathered before it is judged,
     // so each refusal can name the actual conflict rather than the first option that happened to be odd.
-    sealed record Options(bool Create, IReadOnlyList<Placement> Placements, IReadOnlyList<WindowHandle> Handles, IReadOnlyList<string> Titles)
+    sealed record Options(bool Create, IReadOnlyList<Placement> Placements, IReadOnlyList<WindowHandle> Handles, IReadOnlyList<string> Titles, bool NoFollow = false)
     {
         public static Options None { get; } = new(false, [], [], []);
     }
@@ -61,7 +61,7 @@ public static class ControlArguments
     public static Result<CreateRequest> ParseCreate(IReadOnlyList<string> args) =>
         FirstArgument(args, "create needs a workspace name, e.g. create wt-login --group EC")
             .Bind(name => Gather(Options.None, args.Skip(1).ToArray())
-                .Ensure(o => !o.Create && o.Handles.Count == 0 && o.Titles.Count == 0,
+                .Ensure(o => !o.Create && !o.NoFollow && o.Handles.Count == 0 && o.Titles.Count == 0,
                     "create only takes a placement (--group, --position, --before or --after); use move to move windows.")
                 .Bind(OnePlacement)
                 .Map(placement => new CreateRequest(name, placement)));
@@ -75,7 +75,7 @@ public static class ControlArguments
                 // exists would leave the caller believing the row had moved; `reorder` does that.
                 .Ensure(o => o.Create || o.Placements.Count == 0,
                     "--group, --position, --before and --after only apply with --create. To move an existing workspace use reorder or group-join.")
-                .Bind(o => OnePlacement(o).Map(placement => new MoveRequest(name, o.Create, placement, o.Handles, o.Titles))));
+                .Bind(o => OnePlacement(o).Map(placement => new MoveRequest(name, o.Create, placement, o.Handles, o.Titles, o.NoFollow))));
 
     static Result<string> FirstArgument(IReadOnlyList<string> args, string usage) =>
         args.Count == 0 || string.IsNullOrWhiteSpace(args[0]) || args[0].StartsWith("--", StringComparison.Ordinal)
@@ -98,6 +98,9 @@ public static class ControlArguments
     {
         [] => so,
         ["--create", .. var tail] => Gather(so with { Create = true }, tail),
+        // Leave the caller where they are even when the window being moved is the one they are in. See
+        // WorkspaceManager.AssignWindow for the rule this switches off.
+        ["--no-follow", .. var tail] => Gather(so with { NoFollow = true }, tail),
         ["--title", var text, .. var tail] when Named(text) => Gather(so with { Titles = [.. so.Titles, text] }, tail),
         ["--hwnd", var raw, .. var tail] => Handle(raw).Bind(handle => Gather(so with { Handles = [.. so.Handles, handle] }, tail)),
         ["--group", var group, .. var tail] when Named(group) => Gather(With(so, new Placement.InGroup(group.Trim())), tail),

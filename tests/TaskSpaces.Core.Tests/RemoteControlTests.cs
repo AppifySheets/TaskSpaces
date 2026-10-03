@@ -163,6 +163,38 @@ public class RemoteControlTests
         Assert.Equal(DesktopOf(manager, "Login"), desktops.WindowPlacements[code.Handle]);
     }
 
+    // A remote move of the window you are IN follows it, exactly as a drag on the bar does: that is the
+    // existing rule (the window you are in takes you with it), and the default does not change here.
+    [Fact]
+    public void Moving_the_window_you_are_in_takes_you_along_as_a_drag_does()
+    {
+        var code = Code(0x10, "wt-login");
+        monitor.ForegroundWindow = code.Handle;
+        var manager = Started(code);
+        Run(manager, "create", "Login");
+
+        Assert.Equal(ControlReply.Ok, Run(manager, "move", "Login", "--hwnd", "0x10").ExitCode);
+
+        Assert.Equal([DesktopOf(manager, "Login")!.Value], desktops.Switches);
+    }
+
+    // Petre: "can you open a browser window and put it to the workspace without following the
+    // workspace?" A window an agent has just opened HAS focus, so without this it always drags you to
+    // wherever the agent put it.
+    [Fact]
+    public void No_follow_moves_the_window_you_are_in_and_leaves_you_where_you_are()
+    {
+        var code = Code(0x10, "wt-login");
+        monitor.ForegroundWindow = code.Handle;
+        var manager = Started(code);
+        Run(manager, "create", "Login");
+
+        Assert.Equal(ControlReply.Ok, Run(manager, "move", "Login", "--hwnd", "0x10", "--no-follow").ExitCode);
+
+        Assert.Equal(DesktopOf(manager, "Login"), desktops.WindowPlacements[code.Handle]);
+        Assert.Empty(desktops.Switches);
+    }
+
     [Fact]
     public void Move_needs_at_least_one_selector()
     {

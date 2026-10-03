@@ -21,8 +21,9 @@ public static class ControlUsage
         ]),
         new("Creating, and moving windows", [
             new("create", "<name> [placement]", "create a workspace; already existing is not an error"),
-            new("move", "<workspace> [--create [placement]] (--title <text> | --hwnd <handle>)...",
-                "move windows; every selector must match or nothing moves (exit 3)"),
+            new("move", "<workspace> [--create [placement]] [--no-follow] (--title <text> | --hwnd <handle>)...",
+                "move windows; every selector must match or nothing moves (exit 3). Moving the window you are\n"
+                + "      in takes you along, as a drag does; --no-follow leaves you where you are"),
         ]),
         new("Workspace row menu", [
             new("rename", "<workspace> <new name>", "Rename…"),

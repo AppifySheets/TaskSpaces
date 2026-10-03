@@ -47,7 +47,7 @@ public sealed partial class RemoteControl
             found =>
             {
                 var outcomes = chosen
-                    .Select(w => (Window: w, Result: manager.AssignWindow(w.Handle, found.Workspace.Id)))
+                    .Select(w => (Window: w, Result: manager.AssignWindow(w.Handle, found.Workspace.Id, allowFollow: !request.NoFollow)))
                     .ToList();
                 var failed = outcomes.Where(o => o.Result.IsFailure).ToList();
                 return new ControlReply(failed.Count == 0 ? ControlReply.Ok : ControlReply.Failed, Serialize(new
