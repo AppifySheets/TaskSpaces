@@ -16,6 +16,11 @@ public class WorkspaceManagerTests
     static WindowInfo Chrome(nint hwnd = 0x10, string title = "Some Page - Chrome") =>
         new(new WindowHandle(hwnd), 100, "chrome", @"C:\chrome.exe", title, "chrome.exe --profile-directory=Default");
 
+    // The tests about the ROSTER use an editor rather than a browser, because a browser is never
+    // rostered: its windows stay where they were opened (see RosterIdentity.StaysWhereOpened).
+    static WindowInfo Rider(nint hwnd = 0x10, string title = "Some.sln - Rider") =>
+        new(new WindowHandle(hwnd), 100, "rider64", @"C:\rider64.exe", title, "rider64.exe Some.sln");
+
     (WorkspaceManager manager, Workspace work) StartedWithWorkWorkspace(params object[] rules)
     {
         var work = new Workspace(Guid.NewGuid(), "Work", null);
@@ -52,12 +57,12 @@ public class WorkspaceManagerTests
     public void Appeared_window_matching_rule_is_moved_and_inventoried()
     {
         var (manager, work) = StartedWithWorkWorkspace();
-        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "rider64")], []);
 
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Rider()));
 
         Assert.Equal(work.DesktopId, desktops.WindowPlacements[new WindowHandle(0x10)]);
-        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\rider64.exe");
     }
 
     [Fact]
@@ -129,7 +134,7 @@ public class WorkspaceManagerTests
     public void MoveToDesktop_moves_window_and_drops_its_workspace_membership()
     {
         var (manager, work) = StartedWithWorkWorkspace();
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Rider()));
         Assert.True(manager.AssignWindow(new WindowHandle(0x10), work.Id).IsSuccess);
 
         var main = desktops.Create("Main").Value;
@@ -138,7 +143,7 @@ public class WorkspaceManagerTests
         Assert.Equal(main.Id, desktops.WindowPlacements[new WindowHandle(0x10)]);
         // The ROSTER entry deliberately survives -- the app still belongs to the workspace
         // (▶ Start relaunches it); only the live placement changed.
-        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\rider64.exe");
     }
 
     [Fact]
@@ -217,10 +222,10 @@ public class WorkspaceManagerTests
         // emptied on close. The roster spec inverts this on purpose -- a workspace lists
         // what BELONGS to it even when it isn't running (that's what ▶ Start launches).
         var (manager, work) = StartedWithWorkWorkspace();
-        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Chrome()));
-        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "rider64")], []);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Rider()));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Disappeared, Rider()));
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\rider64.exe");
     }
 
     [Fact]
@@ -467,13 +472,13 @@ public class WorkspaceManagerTests
         // bookkeeping (knownWindows/memberships), but the roster entry belongs to the
         // workspace regardless of whether the window is currently showing anywhere.
         var (manager, work) = StartedWithWorkWorkspace();
-        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "chrome")], []);
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Chrome()));
-        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe");
+        manager.SetRules([new WorkspaceRule(work.Id, RuleMatchKind.ProcessName, "rider64")], []);
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Rider()));
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\rider64.exe");
 
-        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Chrome()));
+        monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Hidden, Rider()));
 
-        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\chrome.exe"); // roster entry stays
+        Assert.Contains(store.Stored.Inventory[work.Id], e => e.ProcessPath == @"C:\rider64.exe"); // roster entry stays
         Assert.DoesNotContain(manager.KnownWindows, w => w.Handle == new WindowHandle(0x10)); // dropped from known windows
     }
 

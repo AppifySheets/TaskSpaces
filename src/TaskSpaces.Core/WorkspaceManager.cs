@@ -3143,6 +3143,10 @@ public sealed class WorkspaceManager(
         // Win+R -- dropping a Run dialog on a row would otherwise teach it again, and there is no UI
         // that removes a roster entry once written.
         if (RosterIdentity.IsShell(window.ProcessPath)) return;
+        // Browsers, terminals and pickers, for the same reason: their windows stay where they were
+        // opened, so a drag moves the one window and teaches nothing about the next (see
+        // RosterIdentity.StaysWhereOpened).
+        if (RosterIdentity.StaysWhereOpened(window.ProcessPath, window.CommandLine)) return;
         AddEntry(workspaceId, new InventoryEntry(window.ProcessPath, window.CommandLine,
             ledger.OriginalTitle(window.Handle).GetValueOrDefault(window.Title)));
     }
@@ -3196,8 +3200,13 @@ public sealed class WorkspaceManager(
     // None for our OWN windows (see IsOurs), which is what keeps TaskSpaces out of
     // PinnedApps/DetachedApps: pinning the Manage window by hand still pins it in Windows,
     // it just isn't remembered as a standing instruction to re-pin us at every launch.
+    //
+    // None as well for an app whose windows stay where they were opened (see
+    // RosterIdentity.StaysWhereOpened). Pinning one Edge window by hand pins that window; remembered,
+    // it would pin every Edge window opened afterwards, which is the opposite of staying put.
     Maybe<InventoryEntry> EntryFor(WindowHandle window) =>
         !IsOurs(window) && knownWindows.TryGetValue(window, out var info) && info.ProcessPath is not null
+        && !RosterIdentity.StaysWhereOpened(info.ProcessPath, info.CommandLine)
             ? new InventoryEntry(info.ProcessPath, info.CommandLine, ledger.OriginalTitle(window).GetValueOrDefault(info.Title))
             : Maybe<InventoryEntry>.None;
 

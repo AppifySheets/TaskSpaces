@@ -155,8 +155,17 @@ public class SharedIdentityPlacementTests
     // does, since not one of them passes --profile-directory. The past successes were the launched-by
     // tier catching it whenever he happened to be standing somewhere else.
     //
-    // These two tests are the whole fix seen from the outside: the automated window is placed even with
-    // ordinary browser windows live, and an ordinary window is still left where it was opened.
+    // That fix gave the automated browser an identity of its own so memory could send it to the
+    // workspace it had been dragged to. It is reversed now, and on purpose: "if claude starts a browser
+    // window, it needs to stay in the same workspace as the claude code is in." Memory knew ONE
+    // workspace for every automated session, so with sessions in several workspaces it sent all of
+    // them to whichever row the last one was dragged to. Browser windows now stay where they were
+    // opened (see RosterIdentity.StaysWhereOpened), and the launched-by tier is what sends a browser
+    // to the workspace of the session that started it.
+    //
+    // So the test below now pins the opposite of what it used to: memory leaves an automated window
+    // alone too. BrowserContent still reads --user-data-dir and RosterIdentityTests still cover it, but
+    // the only live windows that reach it now are installed web apps, which keep an identity.
     const string ChromePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
 
     static WindowInfo Chrome(nint hwnd, string args) =>
@@ -166,7 +175,7 @@ public class SharedIdentityPlacementTests
         Chrome(hwnd, $@"--user-data-dir=C:\x\ms-playwright-mcp\mcp-chrome-{session} --enable-automation");
 
     [Fact]
-    public void An_automated_browser_window_is_placed_even_with_ordinary_ones_open()
+    public void An_automated_browser_window_is_left_where_it_opened_like_any_browser_window()
     {
         // Two ordinary Chrome windows are live, and one automated one has been taught to live in
         // Personal, exactly as his roster records it ("dice to seed - Google Chrome").
@@ -179,7 +188,7 @@ public class SharedIdentityPlacementTests
 
         monitor.Subject.OnNext(new WindowEvent(WindowEventKind.Appeared, Automated(0x904, "5adf218")));
 
-        Assert.Equal(personal.DesktopId, desktops.WindowPlacements[Automated(0x904, "5adf218").Handle]);
+        Assert.False(desktops.WindowPlacements.ContainsKey(Automated(0x904, "5adf218").Handle));
     }
 
     [Fact]
