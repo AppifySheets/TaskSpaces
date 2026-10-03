@@ -749,6 +749,11 @@ public partial class App : Application
             }).Task,
             ClickTrace.On ? ClickTrace.Write : null);
 
+        // ...and the fixed path callers use to reach it (see ControlCommandLine.WriteShim for why it is
+        // a batch file). Traced, not surfaced: losing it costs the convenience path, not the control.
+        try { ControlCommandLine.WriteShim(stateDir, Environment.ProcessPath ?? ""); }
+        catch (Exception ex) { ClickTrace.Write($"control shim not written: {ex.Message}"); }
+
         trayIcon = new TaskbarIcon
         {
             // The real app icon, replacing the generic SystemIcons.Application placeholder.

@@ -293,6 +293,24 @@ single ~77 MB exe in `artifacts/publish`.
   separately: open that folder again, anywhere, and the window goes to its own workspace.
   You never have to set this up. It learns from where your windows actually sit, once a
   position has held still, and from anything you drag by hand.
+- Scripts and coding agents can drive it. While TaskSpaces runs it keeps a small batch file
+  at `%APPDATA%\TaskSpaces\taskspaces.cmd` that passes a command to the running copy, so an
+  agent that has just set up a git worktree can give it a workspace of its own and move the
+  editor there:
+
+  ```powershell
+  & "$env:APPDATA\TaskSpaces\taskspaces.cmd" move wt-login --create --title wt-login --wait 20
+  ```
+
+  `workspaces` and `windows` print JSON. `create <name>` makes a workspace, and is not an
+  error when it already exists. `move <workspace>` picks windows with `--title <text>`,
+  which also searches the title a window had before TaskSpaces shortened it, or with
+  `--hwnd <handle>` taken from `windows`. A move is all or nothing: when any selector finds no
+  window, nothing moves and the exit code is 3. `--wait` keeps retrying that case, which
+  covers an editor that is still opening. `help` lists the rest. The batch file is there
+  because PowerShell does not wait for a windowed program it calls directly; the exe itself
+  also takes `ctl <command>` if you call it from Git Bash or cmd. Only your own Windows
+  account can reach the running copy.
 
 ## Why this matters
 

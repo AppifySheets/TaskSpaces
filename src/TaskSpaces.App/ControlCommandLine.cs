@@ -65,6 +65,49 @@ static class ControlCommandLine
         writer.WriteLine(reply.Output);
     }
 
+    // %APPDATA%\TaskSpaces\taskspaces.cmd: ONE fixed path that reaches whichever exe is running.
+    //
+    // Two problems, one file. The release exe is named after its version and can live anywhere, so a
+    // caller has no stable name to type. And PowerShell does not wait for a GUI exe it calls directly:
+    // measured, `$out = & TaskSpaces.App.exe ctl workspaces` captured nothing and left $LASTEXITCODE
+    // empty, while the reply turned up on screen a moment later. cmd running a batch file DOES wait for a
+    // GUI program, and the same command through this file came back with its output and exit code from
+    // PowerShell, Git Bash and cmd alike, quoted multi-word arguments included.
+    //
+    // Rewritten at every start (only when it would change), so after an update it points at the new
+    // exe, and a copy run from somewhere else takes it over while it is the one running.
+    public const string ShimName = "taskspaces.cmd";
+
+    public static string ShimContent(string exePath) =>
+        string.Join("\r\n",
+            "@rem Written by TaskSpaces at startup; points at the copy that last started. Do not edit.",
+            "@rem Usage: taskspaces ctl help",
+            // %* forwards the arguments exactly as typed, quotes and all. Percent signs in the path are
+            // doubled because cmd expands %NAME% even inside quotes.
+            $"@\"{exePath.Replace("%", "%%")}\" ctl %*",
+            "@exit /b %ERRORLEVEL%",
+            "");
+
+    public static void WriteShim(string folder, string exePath)
+    {
+        var path = Path.Combine(folder, ShimName);
+        var content = ShimContent(exePath);
+        if (File.Exists(path) && File.ReadAllText(path) == content) return;
+        Directory.CreateDirectory(folder);
+        // In the OEM code page, because that is what cmd reads a batch file in. ASCII would turn any
+        // non-ASCII letter in the path into a question mark and the shim would point nowhere.
+        File.WriteAllText(path, content, Oem);
+    }
+
+    static Encoding Oem
+    {
+        get
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+        }
+    }
+
     const int AttachParentProcess = -1;
 
     [DllImport("kernel32.dll", SetLastError = true)]
