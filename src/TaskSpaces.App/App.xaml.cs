@@ -12,6 +12,7 @@ using TaskSpaces.Core.Persistence;
 using TaskSpaces.Core.Time;
 using TaskSpaces.Core.Updates;
 using TaskSpaces.Windows.Activation;
+using TaskSpaces.Windows.Control;
 using TaskSpaces.Windows.Desktops;
 using TaskSpaces.Windows.Diagnostics;
 using TaskSpaces.Windows.Monitoring;
@@ -26,6 +27,9 @@ public partial class App : Application
 {
     TaskbarIcon? trayIcon;
     WorkspaceManager? manager;
+    // The remote control's listening end (`TaskSpaces.exe ctl ...` from another process). See
+    // ControlCommandLine for the asking end and RemoteControl for the commands.
+    ControlPipeServer? controlServer;
     WindowMonitor? monitor;
     // Flashing taskbar buttons. Held for the process lifetime like `monitor`: it owns a real
     // hwnd registered with the shell, and letting it go would silently stop the notification
@@ -508,6 +512,16 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // `TaskSpaces.exe ctl <command>` is a CLIENT of the running copy, not an app start, so it is
+        // answered before everything below: before the single-instance guard (this process is a second
+        // instance by definition and would be told so), before tracing announces a session, and before
+        // any tray icon, hook or window could exist. It asks, prints, and exits with the reply's code.
+        if (ControlCommandLine.Wants(e.Args))
+        {
+            Shutdown(ControlCommandLine.Run(e.Args));
+            return;
+        }
+
         // SINGLE INSTANCE, and it must be the very first thing that happens.
         //
         // Petre hit the visible symptom: "TaskSpaces could not register these keyboard
@@ -713,6 +727,27 @@ public partial class App : Application
             attentionMonitor.Start().TapError(err =>
                 System.Diagnostics.Debug.WriteLine($"TaskSpaces: notification badges unavailable: {err}"));
         }
+
+        // The remote control: other processes (an agent setting up a worktree, a script) asking this
+        // instance to list, create and move. Opened once the manager has loaded state and seen the
+        // windows, so the first request is answered from the real picture rather than an empty one.
+        //
+        // Every request is run on THIS thread through the dispatcher, because the manager is not
+        // thread-safe and its virtual-desktop calls are STA COM. InvokeAsync rather than Invoke, so a
+        // request queues behind whatever the UI is doing instead of running inline inside it (the
+        // bar's rebuild is already guarded against one kind of re-entrancy; this adds no new kind).
+        //
+        // Opened in compatibility mode too: the listings still answer there, and a move that cannot be
+        // made says so, which beats "TaskSpaces is not running" while its tray icon is in plain view.
+        var control = new Core.Control.RemoteControl(manager);
+        controlServer = new ControlPipeServer(ControlCommandLine.PipeName,
+            args => Dispatcher.InvokeAsync(() =>
+            {
+                var reply = control.Execute(args);
+                ClickTrace.Write($"ctl {string.Join(' ', args)} -> {reply.ExitCode}");
+                return reply;
+            }).Task,
+            ClickTrace.On ? ClickTrace.Write : null);
 
         trayIcon = new TaskbarIcon
         {
@@ -1253,6 +1288,8 @@ public partial class App : Application
             window.Close();
         }
 
+        // First, so no remote command can start moving windows while the rest is being taken down.
+        controlServer?.Dispose();
         manager?.RestoreAllTitles();  // leave every window as we found it
         monitor?.Dispose();
         hotkeys?.Dispose(); // unregisters RegisterHotKey chords before the process exits

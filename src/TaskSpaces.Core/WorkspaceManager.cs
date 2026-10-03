@@ -143,6 +143,23 @@ public sealed class WorkspaceManager(
     public IObservable<Unit> StateChanged => stateChanged.AsObservable();
     public IReadOnlyList<WindowInfo> KnownWindows => knownWindows.Values.ToList();
 
+    // The title a window had before this app shortened it, or None when it was never renamed.
+    //
+    // For the remote control (Control/RemoteControl): an agent asking to move "the window on the
+    // wt-login worktree" searches for the folder name, and once a rename rule has turned a VS Code
+    // title into "VS" the folder name only survives here.
+    public Maybe<string> OriginalTitle(WindowHandle window) => ledger.OriginalTitle(window);
+
+    // The workspace a window LIVES in, or None for a window on an unnamed desktop, a pinned one, or one
+    // that closed mid-question. Answered the way the bar answers it: a window borrowed for a nested
+    // workspace still belongs to the desktop it came from (see WindowsByWorkspace).
+    public Maybe<Workspace> WorkspaceOf(WindowHandle window) =>
+        desktops.IsPinned(window).GetValueOrDefault(false) && !borrowed.ContainsKey(window)
+            ? Maybe<Workspace>.None
+            : (borrowed.TryGetValue(window, out var home) ? Result.Success(home) : desktops.DesktopOf(window))
+                .Map(desktop => State.Workspaces.TryFirst(w => w.DesktopId == desktop))
+                .GetValueOrDefault(Maybe<Workspace>.None);
+
     public Result Start() =>
         LoadState()
             .Bind(Reconcile)
