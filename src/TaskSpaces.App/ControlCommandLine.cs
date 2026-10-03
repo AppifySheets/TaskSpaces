@@ -81,7 +81,7 @@ static class ControlCommandLine
     public static string ShimContent(string exePath) =>
         string.Join("\r\n",
             "@rem Written by TaskSpaces at startup; points at the copy that last started. Do not edit.",
-            "@rem Usage: taskspaces ctl help",
+            "@rem Usage: taskspaces help",
             // %* forwards the arguments exactly as typed, quotes and all. Percent signs in the path are
             // doubled because cmd expands %NAME% even inside quotes.
             $"@\"{exePath.Replace("%", "%%")}\" ctl %*",
