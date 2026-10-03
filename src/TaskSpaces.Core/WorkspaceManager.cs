@@ -1132,6 +1132,39 @@ public sealed class WorkspaceManager(
             .Map(d => new Workspace(Guid.NewGuid(), name, d.Id) { GroupId = groupId })
             .Tap(w => Persist(State with { Workspaces = Inserted(w, Math.Clamp(index, 0, State.Workspaces.Count)) }));
 
+    // A new workspace at the bottom of a group, which is where MoveIntoGroup puts a joiner, so a row
+    // created into a group and a row moved into one end up in the same place. For the remote control's
+    // `create --group` (Petre: "when adding a new workspace, we should say in which group and, if
+    // neither, at what position").
+    public Result<Workspace> AddWorkspaceToGroup(string name, Guid groupId) =>
+        InsertWorkspace(name, AfterLastMemberOf(groupId, State.Workspaces), groupId);
+
+    // A new ungrouped workspace at a 1-based TOP-LEVEL row of the bar, counting a whole group's box as
+    // one row (see Blocks). So no row number can land it between two members of a group. It takes the
+    // place of whatever was drawn at that row, which moves down one; past the last row is the end.
+    //
+    // Inserted before the FIRST list entry of the block at that row, rather than at a sum of block
+    // sizes, so it stays right even for a state.json whose groups are not contiguous in the list.
+    public Result<Workspace> AddWorkspaceAtRow(string name, int row) =>
+        InsertWorkspace(name, ListIndexOfRow(row));
+
+    int ListIndexOfRow(int row) =>
+        Blocks(State) is var blocks && row >= 1 && row <= blocks.Count
+            ? blocks[row - 1].Min(w => State.Workspaces.ToList().FindIndex(x => x.Id == w.Id))
+            : State.Workspaces.Count;
+
+    // Every virtual desktop Windows has right now, named or not, in Windows' own order. For the remote
+    // control's `desktops` and `name-desktop`, which need to reach the unnamed ones the bar shows
+    // separately (the row menu's "Name this desktop…").
+    public Result<IReadOnlyList<DesktopInfo>> LiveDesktops() => desktops.GetDesktops();
+
+    // The 1-based top-level row a workspace is drawn in. A grouped workspace answers its group's row.
+    // Reported back by the remote control, so a caller can see where something actually landed.
+    public Maybe<int> RowOf(Guid workspaceId) =>
+        Blocks(State).Select((block, at) => (block, at))
+            .TryFirst(x => x.block.Any(w => w.Id == workspaceId))
+            .Map(x => x.at + 1);
+
     IReadOnlyList<Workspace> Inserted(Workspace workspace, int index)
     {
         var next = State.Workspaces.ToList();

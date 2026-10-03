@@ -299,11 +299,19 @@ single ~77 MB exe in `artifacts/publish`.
   editor there:
 
   ```powershell
-  & "$env:APPDATA\TaskSpaces\taskspaces.cmd" move wt-login --create --title wt-login --wait 20
+  & "$env:APPDATA\TaskSpaces\taskspaces.cmd" move wt-login --create --group EC --title wt-login --wait 20
   ```
 
-  `workspaces` and `windows` print JSON. `create <name>` makes a workspace, and is not an
-  error when it already exists. `move <workspace>` picks windows with `--title <text>`,
+  Everything the bar's right-click menus do has a command too: renaming and reordering
+  workspaces, grouping them, colours, deleting, naming an unnamed desktop, and the window
+  renames. `help` lists them all. The running copy prints that list itself, so it always
+  matches the version you have.
+
+  `workspaces`, `windows` and `desktops` print JSON. `create <name>` makes a workspace, and is
+  not an error when it already exists. A new workspace goes at the end of the bar unless you
+  say where: `--group <group>` puts it at the bottom of that group, `--position <n>` puts it
+  at row n counting a whole group as one row, and `--before` or `--after <workspace>` work
+  like the menu's Insert before and Insert after. `move <workspace>` picks windows with `--title <text>`,
   which also searches the title a window had before TaskSpaces shortened it, or with
   `--hwnd <handle>` taken from `windows`. A move is all or nothing: when any selector finds no
   window, nothing moves and the exit code is 3. `--wait` keeps retrying that case, which
