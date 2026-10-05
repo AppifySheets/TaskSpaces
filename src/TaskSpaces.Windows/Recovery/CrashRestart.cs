@@ -32,6 +32,12 @@ namespace TaskSpaces.Windows.Recovery;
 // RESTART_NO_REBOOT is set because the app already manages its own run-at-startup registration (see
 // StartupRegistration). Without it, a reboot while the app was running would bring back both copies
 // and one of them would meet the single-instance guard and put up a message box.
+//
+// NO LONGER THE FIRST LINE OF DEFENCE. All of the above holds only where WER is switched on, and on
+// Petre's machine it is not (HKLM ...\Windows Error Reporting\Disabled = 1): measured with a probe,
+// no crash of any kind came back, and the app's 5 Oct death stayed dead. The crash handler now starts
+// its own successor (CrashRelaunch) and withdraws this registration when it does. What this still
+// covers is a death the handler never sees, a native fault or a hang, on machines where WER is on.
 public static class CrashRestart
 {
     // 0x8 = RESTART_NO_REBOOT. Crash, hang and patch restarts are all left ON.
@@ -51,4 +57,16 @@ public static class CrashRestart
         RegisterApplicationRestart(null, RestartNoReboot) is var hr && hr == 0
             ? Result.Success()
             : Result.Failure($"Automatic restart after a crash is unavailable (HRESULT 0x{hr:X8}).");
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern int UnregisterApplicationRestart();
+
+    // Called once the crash handler has started a successor of its own (CrashRelaunch). On a machine
+    // where WER is switched on, leaving the registration in place would have WER start a SECOND copy
+    // after the dump, and that one would meet the single-instance guard and put up "already running".
+    // Only after a successful relaunch: when ours failed, WER is still the backstop worth keeping.
+    public static Result Unregister() =>
+        UnregisterApplicationRestart() is var hr && hr == 0
+            ? Result.Success()
+            : Result.Failure($"Could not withdraw the WER restart registration (HRESULT 0x{hr:X8}).");
 }

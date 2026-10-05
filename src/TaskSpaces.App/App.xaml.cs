@@ -437,6 +437,34 @@ public partial class App : Application
     // ever fires.
     static System.Threading.Timer? shutdownWatchdog;
 
+    // When this copy started, for CrashRelaunch's one-minute rule. Taken when the App type is first
+    // touched, which is the start of Main, and kept as a tick count so the crash handler has nothing
+    // to ask the OS for while the process is failing.
+    static readonly long startedAtTicks = Environment.TickCount64;
+
+    // One relaunch per process, whichever handler gets there first. A dispatcher exception that is
+    // left unhandled reaches the AppDomain handler as well, and two successors would be one too many.
+    static int relaunchClaimed;
+
+    // Starts the next copy after a crash and reports whether it did. Every step is traced, because
+    // the only witness to a crash handler is the log it leaves behind.
+    static bool RelaunchAfterCrash(Exception? fault)
+    {
+        if (System.Threading.Interlocked.Exchange(ref relaunchClaimed, 1) == 1)
+            return false;
+
+        ClickTrace.Write($"crash: {fault?.GetType().Name}: {fault?.Message}");
+        var lived = TimeSpan.FromMilliseconds(Environment.TickCount64 - startedAtTicks);
+        var started = CrashRelaunch.Start(Environment.ProcessPath, lived);
+        ClickTrace.Write(started.IsSuccess ? $"crash: started the next copy after {lived.TotalMinutes:N0} min" : $"crash: {started.Error}");
+
+        // With our own successor on its way, WER (where it is switched on) must not start another.
+        if (started.IsSuccess)
+            CrashRestart.Unregister().TapError(ClickTrace.Write);
+
+        return started.IsSuccess;
+    }
+
     static void EndIfShutdownHangs() =>
         shutdownWatchdog = new System.Threading.Timer(
             _ =>
@@ -559,9 +587,19 @@ public partial class App : Application
         // Ten seconds is a shutdown, not a download -- the old instance has already finished
         // fetching by the time it starts this one, and all it has left to do is dispose a tray icon
         // and restore window titles.
-        if (!isOnlyInstance && e.Args.Contains(AwaitPreviousSwitch))
+        //
+        // A copy started by a CRASH waits the same way, for longer. Its predecessor is not shutting
+        // down, it is being dumped: LocalDumps wrote two 28 MB dumps four seconds apart on Petre's
+        // machine before the process was gone, and the mutex is only released when it is. Sixty
+        // seconds is generous for that and still finite, so a predecessor that somehow never dies
+        // leaves this copy saying "already running" rather than waiting forever.
+        var afterCrash = e.Args.Contains(CrashRelaunch.Switch);
+        if (afterCrash)
+            ClickTrace.Write("started after a crash: waiting for the previous copy to be gone");
+
+        if (!isOnlyInstance && (e.Args.Contains(AwaitPreviousSwitch) || afterCrash))
         {
-            var deadline = DateTime.UtcNow.AddSeconds(10);
+            var deadline = DateTime.UtcNow.AddSeconds(afterCrash ? 60 : 10);
             while (!isOnlyInstance && DateTime.UtcNow < deadline)
             {
                 // Disposed and re-created rather than waited on: this process never owned the
@@ -632,11 +670,39 @@ public partial class App : Application
                 return;
             }
 
-            manager?.RestoreAllTitles();
+            // Guarded, because the commonest death here is OutOfMemoryException, and a restore that
+            // throws inside this handler would skip the relaunch below, which matters more: the
+            // successor re-applies every rename on its own start anyway.
+            try { manager?.RestoreAllTitles(); }
+            catch (Exception restoreFailed) { ClickTrace.Write($"crash: restoring titles threw {restoreFailed.GetType().Name}"); }
+
+            // "taskspaces terminated and didn't restart": start the next copy ourselves, because WER
+            // does not on a machine where it is switched off (see CrashRelaunch).
+            //
+            // Then FailFast rather than letting the exception carry on, and the difference was
+            // measured. The fatal exceptions arrive inside a window procedure the kernel called (the
+            // 5 Oct one was a tray-menu popup being sized by SetWindowPos), so letting it continue
+            // rethrows it through native frames: the process faults a second time with 0xc000041d,
+            // writes a second dump, and the event log never gets a stack. FailFast ends it in one step
+            // and puts the exception's stack in the Application log (.NET Runtime, event 1025), with
+            // the dump still written by LocalDumps.
+            //
+            // The message box only where no successor was started. A modal dialog while the next copy
+            // waits would hold the restart hostage to someone clicking OK, and the bar disappearing
+            // and coming back says what happened without one.
+            if (RelaunchAfterCrash(args.Exception))
+                Environment.FailFast($"TaskSpaces crashed and started its successor: {args.Exception.Message}", args.Exception);
+
             MessageBox.Show($"TaskSpaces hit an unexpected error and must close:\n{args.Exception.Message}",
                 "TaskSpaces", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = false; // let it die -- titles are already restored
         };
+
+        // A crash on any OTHER thread never reaches the dispatcher handler above, so it gets the same
+        // relaunch here. Nothing else: the runtime ends the process as soon as this returns, and
+        // touching the workspace model from this thread would race the UI thread that owns it. Titles
+        // are left as they are, and the successor re-applies them.
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => RelaunchAfterCrash(args.ExceptionObject as Exception);
 
         var stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskSpaces");
         var statePath = Path.Combine(stateDir, "state.json");
