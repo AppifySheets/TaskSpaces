@@ -456,6 +456,10 @@ public sealed class WorkspaceManager(
             .ToList();
 
         adopted.ForEach(w => { knownWindows[w.Handle] = w; NoteContainer(w); });
+        // Treated as windows that only opened where they are, because an adopted window may be brand new
+        // (about one arrival in nine on Petre's machine comes this way) and nothing here can tell. Wrong in
+        // this direction, an old window merely waits for a move before it teaches (see SnapshotContainerHomes).
+        var recorded = RecordOpenings(adopted);
 
         // Materialised before removing anything, because OnDisappeared writes to the dictionary this
         // reads. It also does the rest of a close: the ledger, memberships and the detached set all
@@ -485,8 +489,9 @@ public sealed class WorkspaceManager(
                           $"dropped [{string.Join(", ", dead.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}] " +
                           $"hidden [{string.Join(", ", hidden.Select(w => $"{w.Handle.Value:X}/{w.ProcessName}"))}]");
 
-        // OnDisappeared pulses for itself, so an adoption is the only change left to announce.
-        if (adopted.Count > 0) stateChanged.OnNext(Unit.Default);
+        // OnDisappeared pulses for itself, so an adoption is the only change left to announce, and
+        // recording its openings above has already announced it through Persist when it wrote anything.
+        if (adopted.Count > 0 && !recorded) stateChanged.OnNext(Unit.Default);
     }
 
     // Our own windows never enter the list through the event path (see IsOurs), and a repair must not
@@ -2504,11 +2509,20 @@ public sealed class WorkspaceManager(
     // --- windows that only opened where they are ----------------------------------------------------
 
     // Called for every arrival, so it must be idempotent: a window coming back from the tray, or one that
-    // became taskbar-worthy late, arrives here again and must not be recorded twice.
-    void RecordOpening(WindowInfo window)
+    // became taskbar-worthy late, arrives here again and must not be recorded twice. A batch, so a repair
+    // sweep adopting several windows writes state.json once. True when it wrote, which also means it
+    // pulsed, so the repair sweep does not announce the same adoption twice.
+    void RecordOpening(WindowInfo window) => RecordOpenings([window]);
+
+    bool RecordOpenings(IReadOnlyList<WindowInfo> windows)
     {
-        if (IsOurs(window.Handle) || State.OpenedWindows.Any(opened => opened.Window == window.Handle.Value)) return;
-        Persist(State with { OpenedWindows = [.. State.OpenedWindows, new OpenedWindow(window.Handle.Value, window.ProcessId, null)] });
+        var fresh = windows
+            .Where(window => !IsOurs(window.Handle) && State.OpenedWindows.All(opened => opened.Window != window.Handle.Value))
+            .Select(window => new OpenedWindow(window.Handle.Value, window.ProcessId, null))
+            .ToList();
+        if (fresh.Count > 0)
+            Persist(State with { OpenedWindows = [.. State.OpenedWindows, .. fresh] });
+        return fresh.Count > 0;
     }
 
     void ForgetOpening(WindowHandle handle)

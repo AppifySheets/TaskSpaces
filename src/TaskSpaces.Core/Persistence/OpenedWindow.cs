@@ -1,6 +1,8 @@
 namespace TaskSpaces.Core.Persistence;
 
-// A window the app watched OPEN, and the desktop it was first seen on.
+// A window the app watched OPEN, and the desktop it was first seen on. Also every window the repair
+// sweep adopts after start, because a missed arrival looks exactly like that (WorkspaceManager.
+// RepairWindowList has the numbers).
 //
 // Petre: "rider jumped to services, why?" Because days earlier Rider had opened the freight solution
 // while he was standing in Services, and the snapshot learned that position as the solution's home

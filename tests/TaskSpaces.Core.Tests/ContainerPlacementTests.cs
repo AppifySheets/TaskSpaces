@@ -269,6 +269,27 @@ public class ContainerPlacementTests
         Assert.Empty(store.Stored.OpenedWindows);
     }
 
+    // Not every new window arrives as an event. Measured on Petre's machine: about one in nine reached
+    // the app through RepairWindowList's adoption instead (330 adoptions against 2,610 arrivals,
+    // eight of them VS Code windows), and a window opened minimised to test this one did exactly that.
+    // An adopted window may be new or hours old, and the app cannot tell which, so it is treated as one
+    // that only opened where it is: the cost of being wrong that way is a window that teaches once it
+    // is moved, where the cost the other way is the wrong home this whole ruling is about.
+    [Fact]
+    public void A_window_the_repair_sweep_finds_teaches_nothing_until_moved()
+    {
+        var manager = Started();
+
+        // Missed as an event; the five-second repair finds it.
+        desktops.WindowPlacements[new WindowHandle(0x936)] = taskSpaces.DesktopId!.Value;
+        monitor.InitialWindows.Add(Rider(0x936, "app.srline.ge – Startup.cs"));
+        manager.RepairWindowList();
+
+        Enumerable.Range(0, 5).ToList().ForEach(_ => manager.SnapshotContainerHomes());
+
+        Assert.Empty(store.Stored.ContainerHomes);
+    }
+
     // A closed window's record goes with it, or state.json would collect one for every window ever opened.
     [Fact]
     public void Closing_a_window_forgets_where_it_opened()
