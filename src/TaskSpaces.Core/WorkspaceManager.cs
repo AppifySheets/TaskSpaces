@@ -170,6 +170,9 @@ public sealed class WorkspaceManager(
                 // rewrites them ("VSC"), and the folder each window has open is unreadable from then on
                 // (#132).
                 monitor.Snapshot().ToList().ForEach(w => { knownWindows[w.Handle] = w; NoteContainer(w); });
+                // The windows a previous run watched open, checked against what is actually open now.
+                // Needs the list just built, and has to happen before the first sweep can learn anything.
+                ForgetOpeningsThatAreGone();
                 // A file written before folder naming existed can hold exact-title renames for an app that
                 // is now named by its folder, and those two records can only argue (#136). Dropped once, on
                 // load, so state.json stops carrying the contradiction rather than the app having to skip
@@ -301,6 +304,10 @@ public sealed class WorkspaceManager(
     void OnAppeared(WindowInfo window)
     {
         knownWindows[window.Handle] = window;
+
+        // Opened while we watched, so where it sits says where Petre was standing rather than where its
+        // project lives, until it is moved (see SnapshotContainerHomes).
+        RecordOpening(window);
 
         // Before any tier runs: a window that arrives with a folder already loaded (an editor
         // relaunched by hand, a window that became taskbar-worthy late) has its container read now.
@@ -688,6 +695,9 @@ public sealed class WorkspaceManager(
         // carries the answer across restarts anyway.
         containerOf.Remove(window.Handle);
         tookHome.RemoveWhere(pair => pair.Window == window.Handle);
+        // Persisted, unlike the two above, so it would otherwise outlive the window in state.json and
+        // hand its "only opened there" to whatever window gets this handle next.
+        ForgetOpening(window.Handle);
 
         // Fix wave (reviewer, Important): same rationale as OnHidden above -- a closed
         // window's running-row must disappear from any open panel/Windows tab, and a
@@ -2443,10 +2453,22 @@ public sealed class WorkspaceManager(
     //   * A folder open in TWO workspaces at once. There is no single answer, and this codebase does not
     //     toss coins: the same reasoning already governs placement memory and the launched-by tier.
     //   * A window on a desktop no workspace owns. That is not a home, it is somewhere else.
+    //   * A window that OPENED while the app was watching and has not been moved since. Petre: "rider
+    //     jumped to services, why?", then "it had a title that belongs to freight, didn't it?" It did.
+    //     Days earlier Rider had opened the freight solution while he stood in Services, and with no
+    //     home yet there was nothing to correct it, so sixteen seconds later this learned that the
+    //     solution lives in Services. The ordering argument above only protects a container that
+    //     already has a home; for one without, where a window opens is wherever he happened to be.
+    //     Windows already open when the app starts are still learned from where they sit, which is
+    //     the "they are in the correct places now" case this method was asked for. See OpenedWindow.
     public void SnapshotContainerHomes()
     {
+        NoteWhereOpenedWindowsAre();
+        var onlyOpenedThere = State.OpenedWindows.Select(opened => opened.Window).ToHashSet();
+
         var facts = knownWindows.Values
             .Where(window => !IsOurs(window.Handle) && containerOf.ContainsKey(window.Handle))
+            .Where(window => !onlyOpenedThere.Contains(window.Handle.Value))
             .Select(window => (Window: window, Container: containerOf[window.Handle], Holder: WorkspaceHolding(window)))
             .Where(fact => fact.Holder is { } id && State.Workspaces.Any(w => w.Id == id))
             .Select(fact => (fact.Window, fact.Container, Workspace: fact.Holder!.Value))
@@ -2477,6 +2499,69 @@ public sealed class WorkspaceManager(
             $"container learned {home.ProcessName}/{home.Container} lives in " +
             $"{Workspace(home.Workspace).GetValueOrDefault()?.Name ?? "?"}"));
         RecordHomes(learned);
+    }
+
+    // --- windows that only opened where they are ----------------------------------------------------
+
+    // Called for every arrival, so it must be idempotent: a window coming back from the tray, or one that
+    // became taskbar-worthy late, arrives here again and must not be recorded twice.
+    void RecordOpening(WindowInfo window)
+    {
+        if (IsOurs(window.Handle) || State.OpenedWindows.Any(opened => opened.Window == window.Handle.Value)) return;
+        Persist(State with { OpenedWindows = [.. State.OpenedWindows, new OpenedWindow(window.Handle.Value, window.ProcessId, null)] });
+    }
+
+    void ForgetOpening(WindowHandle handle)
+    {
+        if (State.OpenedWindows.All(opened => opened.Window != handle.Value)) return;
+        Persist(State with { OpenedWindows = State.OpenedWindows.Where(opened => opened.Window != handle.Value).ToList() });
+    }
+
+    // On start: keep a record only while its handle still names a live window of the SAME process. A
+    // window we list must match on process id, because after a reboot the number can belong to an
+    // unrelated window that really was open before we started. One we do not list but that is alive
+    // is minimised to the tray, and keeps its record: it has not been moved by going there.
+    void ForgetOpeningsThatAreGone()
+    {
+        var live = State.OpenedWindows
+            .Where(opened => knownWindows.TryGetValue(new WindowHandle((nint)opened.Window), out var window)
+                ? window.ProcessId == opened.ProcessId
+                : monitor.IsAlive(new WindowHandle((nint)opened.Window)))
+            .ToList();
+        if (live.Count != State.OpenedWindows.Count)
+            Persist(State with { OpenedWindows = live });
+    }
+
+    // First look: note the desktop. A later look that finds it on another desktop means it was moved,
+    // by anyone, and from then on it is an ordinary window whose position teaches. A window Windows will
+    // not place on a desktop (not yet shown, pinned, or closing) is simply asked again next sweep.
+    //
+    // Desktops rather than workspaces, so a window that opened on an unnamed desktop and was then moved
+    // into a workspace counts as moved.
+    void NoteWhereOpenedWindowsAre()
+    {
+        if (State.OpenedWindows.Count == 0) return;
+
+        var looked = State.OpenedWindows
+            .Select(opened => (Opened: opened, Now: desktops.DesktopOf(new WindowHandle((nint)opened.Window))))
+            .ToList();
+
+        looked
+            .Where(look => look.Now.IsSuccess && look.Opened.FirstSeenOn is { } first && first != look.Now.Value)
+            .ToList()
+            .ForEach(look => trace?.Invoke($"container: {look.Opened.Window:X} moved since it opened, so its position now teaches"));
+
+        var next = looked
+            .Select(look =>
+                !look.Now.IsSuccess ? look.Opened
+                : look.Opened.FirstSeenOn is null ? look.Opened with { FirstSeenOn = look.Now.Value }
+                : look.Opened.FirstSeenOn == look.Now.Value ? look.Opened
+                : null)
+            .OfType<OpenedWindow>()
+            .ToList();
+
+        if (!next.SequenceEqual(State.OpenedWindows))
+            Persist(State with { OpenedWindows = next });
     }
 
     // Screen moves waiting for their window to be reachable (#89). Live-only: a drop is a statement

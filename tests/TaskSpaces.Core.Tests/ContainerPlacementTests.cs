@@ -91,14 +91,16 @@ public class ContainerPlacementTests
     // on its own would memorise a reboot pile; a snapshot that needs a position to survive two sweeps
     // cannot, because the container tier corrects a window the moment it appears. The test below
     // (Correcting_a_pile_beats_learning_it) is the one that holds that race in place.
+    //
+    // ALREADY OPEN when the app started, and that qualifier is the later ruling below: a window that
+    // opens while the app is watching only teaches once it has been moved (see
+    // Where_a_window_happens_to_open_is_not_where_it_lives).
     [Fact]
     public void A_window_that_stays_put_teaches_where_its_folder_lives()
     {
-        var manager = Started();
-
         // Sitting in framework, seen, known, drawn in that row. Nobody dragged it through the bar.
+        var manager = Started(Code(0x902, LoadedTaskSpaces));
         desktops.WindowPlacements[new WindowHandle(0x902)] = framework.DesktopId!.Value;
-        Appears(monitor, Code(0x902, LoadedTaskSpaces));
 
         manager.SnapshotContainerHomes();
         manager.SnapshotContainerHomes();
@@ -113,9 +115,8 @@ public class ContainerPlacementTests
     [Fact]
     public void One_sweep_is_not_enough_for_a_position_to_be_believed()
     {
-        var manager = Started();
+        var manager = Started(Code(0x903, LoadedTaskSpaces));
         desktops.WindowPlacements[new WindowHandle(0x903)] = framework.DesktopId!.Value;
-        Appears(monitor, Code(0x903, LoadedTaskSpaces));
 
         manager.SnapshotContainerHomes();
         Assert.Empty(store.Stored.ContainerHomes);
@@ -135,11 +136,9 @@ public class ContainerPlacementTests
     [Fact]
     public void A_folder_open_in_two_workspaces_at_once_teaches_nothing()
     {
-        var manager = Started();
+        var manager = Started(Code(0x904, LoadedTaskSpaces), Code(0x905, LoadedTaskSpaces));
         desktops.WindowPlacements[new WindowHandle(0x904)] = framework.DesktopId!.Value;
         desktops.WindowPlacements[new WindowHandle(0x905)] = taskSpaces.DesktopId!.Value;
-        Appears(monitor, Code(0x904, LoadedTaskSpaces));
-        Appears(monitor, Code(0x905, LoadedTaskSpaces));
 
         manager.SnapshotContainerHomes();
         manager.SnapshotContainerHomes();
@@ -151,14 +150,138 @@ public class ContainerPlacementTests
     [Fact]
     public void A_window_outside_every_workspace_teaches_nothing()
     {
-        var manager = Started();
+        var manager = Started(Code(0x906, LoadedTaskSpaces));
         desktops.WindowPlacements[new WindowHandle(0x906)] = Guid.NewGuid(); // a plain, unnamed desktop
-        Appears(monitor, Code(0x906, LoadedTaskSpaces));
 
         manager.SnapshotContainerHomes();
         manager.SnapshotContainerHomes();
 
         Assert.Empty(store.Stored.ContainerHomes);
+    }
+
+    // Petre: "rider jumped to services, why?", then "it had a title that belongs to freight, didn't it?"
+    //
+    // It did, and the app had learned otherwise. Days earlier he was standing in Services when Rider
+    // opened the freight solution (repos\freight.ge, whose solution is called app.srline.ge). Nothing
+    // had ever taught that container, so nothing corrected the window, and sixteen seconds later the
+    // snapshot recorded "rider64/app.srline.ge lives in Services". Today a Rider window for it opened
+    // while he stood in freight, and the container tier took it to Services.
+    //
+    // The ordering argument above only protects a container that already has a home. For one with no
+    // home, where a window OPENS is wherever he happened to be standing, which is not a choice. So a
+    // window that opened while the app was watching teaches nothing until it has been moved.
+    static WindowInfo Rider(nint hwnd, string title) =>
+        new(new WindowHandle(hwnd), 61504, "rider64", @"C:\JetBrains\Rider\bin\rider64.exe", title, null);
+
+    [Fact]
+    public void Where_a_window_happens_to_open_is_not_where_it_lives()
+    {
+        var manager = Started();
+
+        // Standing in TaskSpace (Services, on his machine); Rider opens the solution there.
+        desktops.WindowPlacements[new WindowHandle(0x930)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Rider(0x930, "app.srline.ge – Startup.cs"));
+
+        // Far more than the two sweeps a settled position needs: it was there all afternoon.
+        Enumerable.Range(0, 5).ToList().ForEach(_ => manager.SnapshotContainerHomes());
+
+        Assert.Empty(store.Stored.ContainerHomes);
+    }
+
+    // ...whereas a move is a statement, whoever made it. A drag through the bar already teaches at once;
+    // this is the move the app never sees (Task View, Win+Ctrl+arrows), which the snapshot exists for.
+    [Fact]
+    public void A_window_moved_after_it_opened_teaches_where_it_went()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x931)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Rider(0x931, "app.srline.ge – Startup.cs"));
+        manager.SnapshotContainerHomes();
+
+        desktops.WindowPlacements[new WindowHandle(0x931)] = framework.DesktopId!.Value;
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+
+        Assert.Equal(framework.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
+    }
+
+    // Once moved, the window is an ordinary one: taking it BACK to where it opened is a choice too.
+    [Fact]
+    public void Moving_a_window_back_to_where_it_opened_teaches_that()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x932)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Rider(0x932, "app.srline.ge – Startup.cs"));
+        manager.SnapshotContainerHomes();
+
+        desktops.WindowPlacements[new WindowHandle(0x932)] = framework.DesktopId!.Value;
+        manager.SnapshotContainerHomes();
+        desktops.WindowPlacements[new WindowHandle(0x932)] = taskSpaces.DesktopId!.Value;
+        manager.SnapshotContainerHomes();
+        manager.SnapshotContainerHomes();
+
+        Assert.Equal(taskSpaces.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
+    }
+
+    // The app restarts far more often than a Rider window closes: crashes, updates, a relaunch by hand.
+    // A restarted app sees every window as "already open", and those ARE learned from where they sit,
+    // so if it forgot which ones it had watched open, the first restart would learn today's mistake
+    // after all. Which windows opened under watch is kept in state.json for that reason.
+    [Fact]
+    public void A_restart_still_knows_which_windows_only_opened_where_they_are()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x933)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Rider(0x933, "app.srline.ge – Startup.cs"));
+        manager.SnapshotContainerHomes();
+
+        // Restart: same window, same process, still sitting where it opened.
+        var reopened = new FakeMonitor();
+        reopened.InitialWindows.Add(Rider(0x933, "app.srline.ge – Startup.cs"));
+        var restarted = new WorkspaceManager(desktops, reopened, new FakeTitles(), store, ownProcessId: 4242);
+        Assert.True(restarted.Start().IsSuccess);
+
+        Enumerable.Range(0, 5).ToList().ForEach(_ => restarted.SnapshotContainerHomes());
+
+        Assert.Empty(store.Stored.ContainerHomes);
+    }
+
+    // Window handles are recycled. After a reboot the same number can belong to another process
+    // entirely, and that window was genuinely open before the app started, so it is learned as usual.
+    [Fact]
+    public void A_recycled_handle_does_not_inherit_the_record()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x934)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Rider(0x934, "app.srline.ge – Startup.cs"));
+        manager.SnapshotContainerHomes();
+
+        // Another process, same hwnd, open before this start.
+        var reopened = new FakeMonitor();
+        reopened.InitialWindows.Add(Code(0x934, LoadedTaskSpaces));
+        var restarted = new WorkspaceManager(desktops, reopened, new FakeTitles(), store, ownProcessId: 4242);
+        Assert.True(restarted.Start().IsSuccess);
+
+        restarted.SnapshotContainerHomes();
+        restarted.SnapshotContainerHomes();
+
+        Assert.Equal(taskSpaces.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
+        Assert.Empty(store.Stored.OpenedWindows);
+    }
+
+    // A closed window's record goes with it, or state.json would collect one for every window ever opened.
+    [Fact]
+    public void Closing_a_window_forgets_where_it_opened()
+    {
+        var manager = Started();
+        desktops.WindowPlacements[new WindowHandle(0x935)] = taskSpaces.DesktopId!.Value;
+        Appears(monitor, Rider(0x935, "app.srline.ge – Startup.cs"));
+        manager.SnapshotContainerHomes();
+        Assert.Single(store.Stored.OpenedWindows);
+
+        Closed(monitor, Rider(0x935, "app.srline.ge – Startup.cs"));
+
+        Assert.Empty(store.Stored.OpenedWindows);
     }
 
     // THE RACE, and the reason a snapshot is safe at all. A reboot puts every window in one workspace;
@@ -170,10 +293,8 @@ public class ContainerPlacementTests
         var manager = Started();
 
         // Taught, however that happened: this folder lives in TaskSpace.
-        desktops.WindowPlacements[new WindowHandle(0x907)] = taskSpaces.DesktopId!.Value;
         Appears(monitor, Code(0x907, LoadedTaskSpaces));
-        manager.SnapshotContainerHomes();
-        manager.SnapshotContainerHomes();
+        Assert.True(manager.AssignWindow(new WindowHandle(0x907), taskSpaces.Id).IsSuccess);
         Assert.Equal(taskSpaces.Id, Assert.Single(store.Stored.ContainerHomes).WorkspaceId);
         Closed(monitor, Code(0x907, LoadedTaskSpaces));
 
@@ -197,10 +318,8 @@ public class ContainerPlacementTests
     public void Restarting_into_a_pile_takes_the_windows_home()
     {
         var manager = Started();
-        desktops.WindowPlacements[new WindowHandle(0x908)] = taskSpaces.DesktopId!.Value;
         Appears(monitor, Code(0x908, LoadedTaskSpaces));
-        manager.SnapshotContainerHomes();
-        manager.SnapshotContainerHomes();
+        Assert.True(manager.AssignWindow(new WindowHandle(0x908), taskSpaces.Id).IsSuccess);
         Closed(monitor, Code(0x908, LoadedTaskSpaces));
 
         // Restart, with the editor already open and its window piled in framework.

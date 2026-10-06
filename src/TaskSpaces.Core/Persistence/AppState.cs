@@ -122,6 +122,12 @@ public sealed record AppState(
     // migration -- same pattern as everything above it.
     public IReadOnlyList<ContainerHome> ContainerHomes { get; init; } = [];
 
+    // The windows the app watched open and that have not been moved since, which the snapshot above
+    // therefore does not learn from: where a window opens is where Petre happened to be standing, not
+    // where its project lives. See OpenedWindow for why this has to survive a restart. Same
+    // init-property/no-migration pattern as everything above it.
+    public IReadOnlyList<OpenedWindow> OpenedWindows { get; init; } = [];
+
     // Apps whose windows are named after the CONTAINER each one has open (#136), by process name.
     // Petre: "that rename to SPS is bad. let's do smart-rename for windows that are in folders."
     //
