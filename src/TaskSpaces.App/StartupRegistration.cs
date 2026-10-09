@@ -1,3 +1,5 @@
+using System.Reflection;
+using CSharpFunctionalExtensions;
 using Microsoft.Win32;
 
 namespace TaskSpaces.App;
@@ -11,8 +13,27 @@ public static class StartupRegistration
     public static bool IsEnabled =>
         Registry.CurrentUser.OpenSubKey(RunKey)?.GetValue(Name) is not null;
 
-    public static void Enable() =>
-        Registry.CurrentUser.CreateSubKey(RunKey).SetValue(Name, $"\"{Environment.ProcessPath}\"");
+    // Petre: "taskspaces didn't start with windows". The entry pointed at the TEST HOST. ManageWindow
+    // ticks its "Start with Windows" box from the registry when it is built, that raises Checked, and
+    // Enable wrote Environment.ProcessPath, which under a test run is testhost.exe. Three test classes
+    // build a ManageWindow, so every run of the suite repointed his real login entry; the next app
+    // start put it back, so it only showed when the machine rebooted between a test run and an app
+    // start. Measured: one run of ManageSettingsTabTests turned the value into testhost.exe.
+    //
+    // So only the app itself writes or removes the entry, decided by the entry assembly rather than by
+    // the exe's file name: the release exe is called TaskSpaces-1.17.1-win-x64.exe and the debug build
+    // TaskSpaces.App.exe, but both have TaskSpaces.App as their entry assembly, single-file included.
+    // A test host refuses Disable as well as Enable, because a test that unticks the box would
+    // otherwise delete the real registration outright.
+    public static bool IsTheApp(string? entryAssembly) => entryAssembly == "TaskSpaces.App";
+
+    static Result OwnedByThisProcess() =>
+        Result.SuccessIf(IsTheApp(Assembly.GetEntryAssembly()?.GetName().Name),
+            "only TaskSpaces itself registers or unregisters its start with Windows");
+
+    public static Result Enable() =>
+        OwnedByThisProcess().Tap(() =>
+            Registry.CurrentUser.CreateSubKey(RunKey).SetValue(Name, $"\"{Environment.ProcessPath}\""));
 
     // Petre, on the update flow (#71): "after a portable swap to a new file/path, that value still
     // points at the OLD exe."
@@ -37,6 +58,7 @@ public static class StartupRegistration
         if (IsEnabled) Enable();
     }
 
-    public static void Disable() =>
-        Registry.CurrentUser.CreateSubKey(RunKey).DeleteValue(Name, throwOnMissingValue: false);
+    public static Result Disable() =>
+        OwnedByThisProcess().Tap(() =>
+            Registry.CurrentUser.CreateSubKey(RunKey).DeleteValue(Name, throwOnMissingValue: false));
 }
