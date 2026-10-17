@@ -77,6 +77,14 @@
                  unbound desktops with windows), populated in code-behind (Rebuild). -->
             <StackPanel x:Name="Rows"/>
 
+            <!-- The current workspace's windows with their titles, below every row (Petre: "same as it
+                 is now but at the bottom", "so workspaces don't change sizes every time i click them").
+                 A panel of its own rather than one more child of Rows, because it is not a workspace row:
+                 everything that walks Rows (ring painting, hover, row lookups) means the rows, and a
+                 second element carrying the current workspace's name would be found twice. Filled in
+                 RebuildCore. -->
+            <StackPanel x:Name="CurrentList"/>
+
         </StackPanel>
     </Border>
 </Window>

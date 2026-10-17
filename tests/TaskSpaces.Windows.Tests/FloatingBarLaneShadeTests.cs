@@ -167,6 +167,130 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
         Assert.Empty(bar.LitWashes(row));
     });
 
+    // Petre: "can we try to recreate the actual taskbar in the workspace?", "with window titles, vertically
+    // arranged", "active workspace only", then "same as it is now but at the bottom". The workspace you
+    // are on is listed at the bottom of the bar, one window per line in its screen's column, each with its
+    // title.
+    [Fact]
+    public void The_current_workspace_lists_one_titled_window_per_line_in_its_screens_column() => StaThread.Run(() =>
+    {
+        // Three windows: two on screen 1, one on screen 2.
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true);
+
+        var titles = Bar.TitlesIn(bar.TitledList());
+        output.WriteLine(string.Join(" | ", titles.Select(t => $"{t.Text}@{t.X:0},{t.Y:0}")));
+
+        Assert.Equal(["App 1", "App 2", "App 3"], titles.Select(t => t.Text));
+        // Screen 1's two windows one above the other, in the same column...
+        Assert.Equal(titles[0].X, titles[1].X, 1);
+        Assert.True(titles[1].Y > titles[0].Y);
+        // ...and screen 2's in the other column, on the first line.
+        Assert.True(titles[2].X > titles[0].X + 40);
+        Assert.Equal(titles[0].Y, titles[2].Y, 1);
+    });
+
+    // Petre: "i want to show the pinned windows in the active taskspace as well, so the beeper." A pinned
+    // window joins the titled list at the end of its screen's column, marked with a pin, and stays in the
+    // pinned row too.
+    [Fact]
+    public void The_titled_list_includes_pinned_windows_marked_with_a_pin() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true, withPinned: true);
+
+        var titles = Bar.TitlesIn(bar.TitledList());
+        output.WriteLine(string.Join(" | ", titles.Select(t => $"{t.Text}@{t.X:0},{t.Y:0}")));
+
+        // Screen 1's column: the workspace's two windows, then the pinned one; screen 2's: App 3.
+        Assert.Equal(["App 1", "App 2", "📌 Beeper", "App 3"], titles.Select(t => t.Text));
+        Assert.Equal(titles[0].X, titles[2].X, 1);
+        // ...and it is still in the pinned row.
+        Assert.Contains(bar.Icons(bar.RowContainer("Pinned")), icon =>
+            System.Windows.Automation.AutomationProperties.GetName(icon) == "Beeper");
+    });
+
+    // Petre: "make the expanded workspace stand out from the rest", and from the mockups he picked a bar in
+    // the workspace's colour down the list's left edge: the spine a nested row wears, drawn by the same code.
+    [Fact]
+    public void The_list_wears_a_spine_down_its_left_edge() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true);
+        var list = bar.TitledList();
+
+        // Visible: the drag marker is also a thin left-aligned Border in the same grid, hidden until a drag.
+        var spine = list.Children.OfType<Border>().SingleOrDefault(b =>
+            b is { Child: null, HorizontalAlignment: HorizontalAlignment.Left, Width: > 0 and < 5, Background: not null, Visibility: Visibility.Visible });
+        Assert.NotNull(spine);
+        Assert.Equal(list.RowDefinitions.Count, Grid.GetRowSpan(spine));
+    });
+
+    // Petre: "let's attempt expanding the current workspace, instead of adding a new bar below it". With
+    // that setting the current workspace's OWN row is the titled list, and the bottom panel is empty.
+    [Fact]
+    public void With_the_setting_the_current_workspaces_own_row_expands() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true, expandRow: true);
+
+        Assert.Equal(["App 1", "App 2", "App 3"], Bar.TitlesIn(bar.RowContainer("Busy")).Select(t => t.Text));
+        Assert.Empty(bar.CurrentListPanel().Children);
+    });
+
+    // "clicking the workspace expands it below its current position but keeps the position of the top,
+    // until i leave the floating window". With the pointer on the bar, switching away leaves the row you
+    // were on expanded, so nothing above the new one shrinks; leaving the bar collapses it.
+    [Fact]
+    public void An_expanded_row_stays_expanded_until_the_pointer_leaves_the_bar() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true, expandRow: true);
+        bar.Enter();
+
+        Assert.True(bar.Manager.Switch(bar.EmptyWorkspace).IsSuccess);
+        bar.Pulse();
+        Assert.NotEmpty(Bar.TitlesIn(bar.RowContainer("Busy")));
+
+        bar.Leave();
+        Assert.Empty(Bar.TitlesIn(bar.RowContainer("Busy")));
+    });
+
+    // "dragging and dropping a window from expanded workspace to another shouldn't collapse anything", "until
+    // i leave the floating window, nothing should collapse". A drag's modal loop reads to WPF as the pointer
+    // leaving; that must not let go. When the drag ends somewhere off the bar, it does.
+    [Fact]
+    public void A_drag_does_not_release_the_hold_until_it_ends_off_the_bar() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true, expandRow: true);
+        bar.Enter();
+        Assert.True(bar.Manager.Switch(bar.EmptyWorkspace).IsSuccess);
+        bar.Pulse();
+
+        // A drag in flight: the flag the drag source's own callbacks set (the real drag runs inside
+        // Windows' modal OLE loop, which a test cannot drive).
+        bar.SetField("draggingWindow", true);
+        bar.Leave();
+        Assert.NotEmpty(Bar.TitlesIn(bar.RowContainer("Busy")));
+
+        // The drag ends with the pointer off the bar (it is parked off screen), so the hold lets go.
+        bar.SetField("draggingWindow", false);
+        bar.Call("ReleaseHeldRows");
+        bar.Leave();
+        Assert.Empty(Bar.TitlesIn(bar.RowContainer("Busy")));
+    });
+
+    // "so workspaces don't change sizes every time i click them": every workspace row stays icons, the one
+    // you are on included, so standing on a workspace leaves its row exactly as tall as it was.
+    [Fact]
+    public void A_workspace_row_stays_icons_and_keeps_its_height_when_you_stand_on_it() => StaThread.Run(() =>
+    {
+        double HeightOfBusy(bool standOnBusy)
+        {
+            using var bar = TwoScreens(busyIcons: 3, standOnBusy: standOnBusy);
+            var row = bar.RowContainer("Busy");
+            Assert.Empty(Bar.TitlesIn(row));
+            return row.ActualHeight;
+        }
+
+        Assert.Equal(HeightOfBusy(standOnBusy: false), HeightOfBusy(standOnBusy: true), 1);
+    });
+
     // One display: one lane, nothing to tell apart, so nothing is shaded.
     [Fact]
     public void One_screen_shades_nothing() => StaThread.Run(() =>
@@ -179,14 +303,20 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
     // Two displays, which is what turns the lanes on at all; one workspace holding busyIcons windows and
     // one holding nothing. The last window goes on the second screen so the busy row uses both lanes,
     // and the rest on the first.
-    static Bar TwoScreens(int busyIcons, bool oneWithNoMonitor = false, bool everythingOnOneScreen = false)
+    // `standOnBusy` makes Busy the CURRENT workspace, which draws it as the titled list rather than as an
+    // icon row. Off by default: every test here but the titled ones is about icon rows, so they stand on
+    // the empty workspace and leave Busy as an ordinary row.
+    // `withPinned` adds one window pinned to every desktop, on screen 1, named "Beeper".
+    // `expandRow` turns on AppState.ExpandCurrentWorkspace: the current workspace's own row expands into
+    // the titled list instead of the list sitting at the bottom of the bar.
+    static Bar TwoScreens(int busyIcons, bool oneWithNoMonitor = false, bool everythingOnOneScreen = false, bool standOnBusy = false, bool withPinned = false, bool expandRow = false)
     {
         var busyDesktop = Guid.NewGuid();
         var emptyDesktop = Guid.NewGuid();
         var busy = new Workspace(Guid.NewGuid(), "Busy", busyDesktop);
         var empty = new Workspace(Guid.NewGuid(), "Empty", emptyDesktop);
 
-        var desktops = new PulsingDesktops { CurrentId = busyDesktop };
+        var desktops = new PulsingDesktops { CurrentId = standOnBusy ? busyDesktop : emptyDesktop };
         desktops.Desktops.Add(new DesktopInfo(busyDesktop, "Busy"));
         desktops.Desktops.Add(new DesktopInfo(emptyDesktop, "Empty"));
 
@@ -202,6 +332,14 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
             if (oneWithNoMonitor && i == busyIcons - 1) return;
             placement.Add((window.Handle, i == busyIcons && !everythingOnOneScreen ? 2 : 1));
         });
+
+        if (withPinned)
+        {
+            var beeper = new WindowInfo(new WindowHandle(0x500), 500, "Beeper", @"C:\Beeper.exe", "Beeper", null);
+            monitor.Initial.Add(beeper);
+            desktops.PinnedWindows.Add(beeper.Handle);
+            placement.Add((beeper.Handle, 1));
+        }
 
         var screens = new StubScreens { Facts = TwoDisplays(placement) };
         // A STORED WIDTH, because that is the bar Petre runs and it selects a different layout: with
@@ -224,6 +362,7 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
             {
                 Workspaces = [busy, empty],
                 FloatingBar = new FloatingBarState(0, 0, true) { Width = 160 },
+                ExpandCurrentWorkspace = expandRow,
             },
         };
         var manager = new WorkspaceManager(desktops, monitor, new StubTitles(), store, screenLayout: screens);
@@ -235,7 +374,9 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
         bar.Show();
         // SizeToContent: nothing in the tree has a height until a layout pass has run.
         bar.UpdateLayout();
-        return new Bar(bar);
+        // A rebuild the way the running app gets one after a switch: a window event. The fake desktops
+        // change the current desktop on Switch but send no notification of their own.
+        return new Bar(bar, manager, empty.Id, () => monitor.Pump.OnNext(new WindowEvent(WindowEventKind.Activated, monitor.Initial[0])));
     }
 
     static ScreenFacts TwoDisplays(IReadOnlyList<(WindowHandle Window, int Monitor)> frontToBack) =>
@@ -257,8 +398,39 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
             " rowWidth=" + RowWidth.ToString("0.##") + " rounded=" + RoundedBottomRight;
     }
 
-    sealed class Bar(FloatingBar bar) : IDisposable
+    sealed class Bar(FloatingBar bar, WorkspaceManager? manager = null, Guid emptyWorkspace = default, Action? pulse = null) : IDisposable
     {
+        public WorkspaceManager Manager => manager!;
+
+        public Guid EmptyWorkspace => emptyWorkspace;
+
+        // ...and a layout pass after it: rows built by a rebuild have no visual tree to search until one runs,
+        // which the app gets for free and a test has to ask for.
+        public void Pulse()
+        {
+            pulse?.Invoke();
+            bar.UpdateLayout();
+        }
+
+        // For state only a modal loop or a private callback can set (a drag in flight, and its finish).
+        const System.Reflection.BindingFlags Private = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+
+        public void SetField(string name, object value) => typeof(FloatingBar).GetField(name, Private)!.SetValue(bar, value);
+
+        public void Call(string method) => typeof(FloatingBar).GetMethod(method, Private)!.Invoke(bar, null);
+
+        // The pointer arriving on, and leaving, the bar window, as WPF raises them. Leaving is deferred in the
+        // bar (it re-checks where the pointer really is on the next dispatcher turn), so the queue is drained
+        // here; the real pointer is nowhere near a bar parked off screen, so the re-check agrees it left.
+        public void Enter() => bar.RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseEnterEvent });
+
+        public void Leave()
+        {
+            bar.RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseLeaveEvent });
+            bar.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            bar.UpdateLayout();
+        }
+
         public void Dispose() => bar.Close();
 
         public List<Shade> Shades() =>
@@ -272,11 +444,37 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
                 })
                 .ToList();
 
-        // The Grid a row is built around, which is what carries the row's hover handlers.
+        // The Grid a row is built around, which is what carries the row's hover handlers. The FIRST one
+        // with that name: the current workspace's titled list at the bottom of the bar carries its
+        // workspace's name too (see TitledList).
         public Grid RowContainer(string label) =>
-            ((Panel)bar.FindName("Rows")!).Children.OfType<Border>()
-                .Select(b => b.Child).OfType<Grid>()
-                .Single(g => System.Windows.Automation.AutomationProperties.GetName(g) == label);
+            Containers().First(g => System.Windows.Automation.AutomationProperties.GetName(g) == label);
+
+        // Every row container in Rows, top to bottom (separators skipped).
+        public List<Grid> RowsInOrder() => Containers().ToList();
+
+        public Panel CurrentListPanel() => (Panel)bar.FindName("CurrentList")!;
+
+        // The current workspace's titled list, in its own panel below every workspace row.
+        public Grid TitledList() =>
+            ((Panel)bar.FindName("CurrentList")!).Children.OfType<Border>().Select(b => b.Child).OfType<Grid>().Single();
+
+        IEnumerable<Grid> Containers() =>
+            ((Panel)bar.FindName("Rows")!).Children.OfType<Border>().Select(b => b.Child).OfType<Grid>();
+
+        // The window titles drawn in a row: TextBlocks inside a lane's icon buttons (the caption's text is
+        // outside every lane), with where each one starts, ordered by column and then down the column.
+        public static List<(string Text, double X, double Y)> TitlesIn(Grid row) =>
+            Descendants(row).OfType<DockPanel>()
+                .SelectMany(lane => Descendants(lane).OfType<Button>())
+                // The title is the text that trims; a window with no icon draws a one-letter placeholder,
+                // which is a TextBlock too, and does not.
+                .SelectMany(button => Descendants(button).OfType<TextBlock>().Where(t => t.TextTrimming == TextTrimming.CharacterEllipsis))
+                .Select(t => (t.Text, Origin: t.TransformToAncestor(row).Transform(new Point(0, 0))))
+                .Select(t => (t.Text, t.Origin.X, t.Origin.Y))
+                .OrderBy(t => Math.Round(t.X / 20))
+                .ThenBy(t => t.Y)
+                .ToList();
 
         // The row's icon buttons: the ones inside a lane, as opposed to the caption's button above them.
         public List<Button> Icons(DependencyObject row) =>

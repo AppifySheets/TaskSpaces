@@ -150,6 +150,15 @@ public sealed record AppState(
     // everything above it.
     public IReadOnlyList<string> IconOrder { get; init; } = [];
 
+    // Where the current workspace's titled list is: the workspace's OWN ROW expands into it (true), or it
+    // is a separate section at the bottom of the bar below every row (false, the default). Petre: "let's
+    // try both", then, of the first version of "true" (a section right under the row), "let's attempt
+    // expanding the current workspace, instead of adding a new bar below it", "but holding positions".
+    // Both kept so he can compare them on his own bar; the one he does not keep can go once he has. Either
+    // way the bar's top edge stays put (see FloatingBar.AnchorFromPosition), and an expanded row stays put
+    // while the pointer is over the bar. Same init-property/no-migration pattern.
+    public bool ExpandCurrentWorkspace { get; init; }
+
     // Petre: "i want it configurable" -- the Alt+Tab-style workspace switcher's chord.
     //
     // Stored as the TEXT the user typed, not as a parsed Chord: state.json stays readable
