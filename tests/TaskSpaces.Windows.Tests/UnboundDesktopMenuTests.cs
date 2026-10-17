@@ -80,7 +80,7 @@ public class UnboundDesktopMenuTests
         var harness = Harness.Build(withUnnamedDesktop: true);
         using var bar = harness.ShowBar();
 
-        Assert.Equal(["Name this desktop…", "New workspace…", "Minimize bar"],
+        Assert.Equal(["Name this desktop…", "New workspace…", "Dock to screen edge", "Minimize bar"],
             HeadersOf(RowLabelled(bar.Rows, "Desktop 1").ContextMenu!));
     });
 

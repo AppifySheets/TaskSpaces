@@ -207,6 +207,16 @@ public sealed record AppState(
     // without it: no request leaves the machine, and nothing is announced.
     public bool CheckForUpdates { get; init; } = true;
 
+    // Whether the bar docks to a screen edge as an app bar, the way the taskbar does, so windows keep
+    // clear of it (see the docking section of FloatingBar). Petre, once it worked: "make this a config
+    // setting and disable by default" ("docking i mean").
+    //
+    // OFF by default, so nobody's screen loses a strip they did not ask to give up. A setting rather than
+    // a menu item: it is a choice about how the app sits on the desk, made once, not something reached
+    // for in passing. Which edge is decided when it docks (the side the bar is nearer to) and remembered
+    // in FloatingBarState.DockedEdge while docked.
+    public bool DockBar { get; init; }
+
     // The groups workspaces belong to (#42 anchored, #84 anchorless). Membership lives on the
     // workspace as GroupId; this holds the group's own name and its anchor, if it has one.
     //
@@ -369,4 +379,14 @@ public sealed record FloatingBarState(double Left, double Top, bool Visible)
     // Window.Width on the next start. Changing the scale therefore keeps the bar the same size on
     // screen rather than rescaling a number that was chosen by eye at the old scale.
     public double? Width { get; init; }
+
+    // Docked to a screen edge as an app bar, the way the taskbar is: "left" or "right" of the screen the
+    // bar is on, or null when it floats. Petre: "can i dock the app floating window like taskbar, to the
+    // side of the screen, and have windows respect it?"
+    //
+    // While docked, Left/Top/Right/Bottom above keep the FLOATING position, not the docked one, so
+    // undocking puts the bar back where it floated before. The docked geometry is not stored at all: it
+    // is asked of the shell every time, because what the shell grants depends on what else is docked.
+    // Same init-property/no-migration pattern as the rest of this record.
+    public string? DockedEdge { get; init; }
 }

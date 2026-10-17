@@ -124,6 +124,9 @@ public partial class FloatingBar : Window
             // carries no window news at all, so if this came second a rebuild would run for nothing
             // before the visible part happened.
             ApplyAppearance();
+            // The docking setting, followed here so every way of changing it (Manage, the remote
+            // command) reaches the bar the same way.
+            FollowDockSetting();
             if (IsVisible) Rebuild();
         }));
 
@@ -151,7 +154,9 @@ public partial class FloatingBar : Window
             if (IconCache.HasPendingIcons && IsVisible) Rebuild();
             else iconWatch.Stop();
         };
-        Closed += (_, _) => { iconWatch.Stop(); fadeDelay.Stop(); subscription?.Dispose(); };
+        // appBar.Remove gives the docked strip back on a normal exit. A crash is covered by the shell
+        // itself, which was measured reclaiming a dead app bar's strip within a second (see AppBar).
+        Closed += (_, _) => { iconWatch.Stop(); fadeDelay.Stop(); subscription?.Dispose(); appBar?.Remove(); };
     }
 
     // --- fading while the pointer is elsewhere ---------------------------------------
@@ -319,7 +324,22 @@ public partial class FloatingBar : Window
         ClickTrace.Write("bar restore");
         Rebuild();
         Show();
-        PositionFromState();
+
+        // Docked when it was minimized: dock again, keeping the floating position it already holds.
+        // Running the floating placement first would place a full-height window and then remember THAT
+        // as where the bar floats.
+        if (dockedEdge is { } current)
+            DockTo(current).TapError(error => ClickTrace.Write($"dock on restore failed: {error}"));
+        else
+        {
+            PositionFromState();
+            // Docking switched on in settings: dock, from the floating position just restored, which is
+            // what DockTo keeps for undocking. A dock that fails leaves the bar floating, which is a
+            // working bar, so the failure is traced rather than shown.
+            if (manager.State.DockBar)
+                DockToEdge().TapError(error => ClickTrace.Write($"dock on show failed: {error}"));
+        }
+
         Save();
     }
 
@@ -388,6 +408,9 @@ public partial class FloatingBar : Window
         // Not while the user is dragging the bar: DragMove's native loop owns the window's
         // position, and a SetWindowPos arriving mid-drag fights it.
         if (!IsVisible || moving) return;
+        // Nor while a full-screen app is up and the bar is docked: the shell has told it to step out of
+        // the way (see OnFullScreenApp), and climbing back on top every second would undo that.
+        if (fullScreenAppOpen) return;
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == nint.Zero) return;
         // SWP_NOACTIVATE is the load-bearing flag: without it this would yank focus off
@@ -395,6 +418,163 @@ public partial class FloatingBar : Window
         NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
+
+    // --- docked to a screen edge ------------------------------------------------------------------
+    //
+    // Petre: "can i dock the app floating window like taskbar, to the side of the screen, and have
+    // windows respect it?", then "instead of the taskbar, always visible". Docked, the bar is an app bar
+    // (see AppBar for what was measured before any of this was written): a full-height strip on the left
+    // or right edge of its screen that Windows takes out of the work area, so maximized windows, Snap and
+    // new windows stay clear of it.
+    //
+    // What changes while docked, and why each:
+    //   * The window is the full height of the screen and as wide as the bar, with the bar's background
+    //     all the way down, so it reads as one strip. Rows stay at the top.
+    //   * It cannot be MOVED (left drag, middle drag): its place is the edge, and moving a reserved strip
+    //     would leave the reservation behind. Undock to move it.
+    //   * Its WIDTH can still be dragged, and the reservation follows when the drag ends.
+    //   * Minimizing it to its taskbar button gives the strip back; restoring docks it again.
+    //   * A full-screen app (a video, a game) makes it step out of the topmost band until it closes.
+    //   * A display change docks it again on whatever screen it is on, with the shell's fresh answer.
+    //
+    // The floating position is kept while docked (see Save), so undocking puts the bar back where it
+    // floated before.
+
+    // "left" or "right" while docked, null while floating. A string because that is what is persisted
+    // (FloatingBarState.DockedEdge) and nothing else needs it to be more.
+    string? dockedEdge;
+
+    public bool Docked => dockedEdge is not null;
+
+    AppBar? appBar;
+
+    // Where the bar floated before it was docked, so Save can keep persisting THAT while docked and
+    // undocking can return to it. Null while floating.
+    FloatingBarState? floatingBeforeDock;
+
+    // Set by the shell's full-screen notification while docked; stops ReclaimTopmost.
+    bool fullScreenAppOpen;
+
+    // Re-entrancy guard: docking moves the window, and the shell answers moves with notifications that
+    // ask us to dock again.
+    bool docking;
+
+    // Docking is a SETTING (AppState.DockBar, off by default; Petre: "make this a config setting and
+    // disable by default"), set in Manage or with `taskspaces.cmd bar dock|undock`. The bar follows it
+    // whenever the state pulses, and only while it is on screen: a minimized bar has given its strip back
+    // and docks again when it is restored (see ShowBar).
+    void FollowDockSetting()
+    {
+        if (!IsVisible || Minimized) return;
+        if (manager.State.DockBar && !Docked)
+            DockToEdge().TapError(error => ClickTrace.Write($"dock failed: {error}"));
+        else if (!manager.State.DockBar && Docked)
+            UndockFromEdge();
+    }
+
+    // Docks to the edge it was docked on last time, if that is remembered, otherwise to whichever side of
+    // its screen the bar is nearer to, so a bar parked at the right edge docks right without being asked.
+    Result DockToEdge()
+    {
+        if (Docked) return Result.Success();
+        if (StoredPlacement()?.DockedEdge is ("left" or "right") and var remembered) return DockTo(remembered);
+        if (MonitorBounds(Left, Top) is not { } screen) return Result.Failure("Could not tell which screen the bar is on.");
+        var middle = Left + ActualWidth / 2;
+        return DockTo(middle > (screen.Left + screen.Right) / 2 ? "right" : "left");
+    }
+
+    Result UndockFromEdge()
+    {
+        if (!Docked) return Result.Success();
+        appBar?.Remove();
+        dockedEdge = null;
+        fullScreenAppOpen = false;
+        Root.CornerRadius = new CornerRadius(8);
+
+        // Back to following its content in height; the width stays the one chosen.
+        SizeToContent = SizeToContent.Height;
+        Height = double.NaN;
+        UpdateLayout();
+
+        PositionFrom(floatingBeforeDock ?? StoredPlacement());
+        floatingBeforeDock = null;
+        Save();
+        return Result.Success();
+    }
+
+    // Reserves the strip and moves the window into it. Also the way to RE-dock, after a width drag, a
+    // display change or a notification that something else on the edge moved.
+    Result DockTo(string edge)
+    {
+        if (docking) return Result.Success();
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero) return Result.Failure("The bar has no window yet.");
+
+        docking = true;
+        try
+        {
+            // Captured once, on the way in: a re-dock must not overwrite it with docked geometry.
+            if (!Docked) floatingBeforeDock = FloatingState();
+
+            appBar ??= new AppBar(hwnd,
+                onPositionChanged: () => Dispatcher.BeginInvoke(new Action(() => { if (dockedEdge is { } e) DockTo(e); })),
+                onFullScreen: OnFullScreenApp);
+
+            // The shell works in physical pixels, WPF in DIPs; the monitor's own DPI converts between
+            // them, for the reason MonitorBounds gives (a window-scoped DPI can be stale).
+            var monitor = NativeMethods.MonitorFromWindow(hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            var info = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+            if (!NativeMethods.GetMonitorInfo(monitor, ref info)) return Result.Failure("Could not read the bar's screen.");
+            NativeMethods.GetDpiForMonitor(monitor, NativeMethods.MDT_EFFECTIVE_DPI, out var dpiX, out var dpiY);
+            var scaleX = dpiX / 96.0;
+            var scaleY = dpiY / 96.0;
+
+            var widthDips = double.IsNaN(Width) ? ActualWidth : Width;
+            var granted = appBar.Dock(edge == "left" ? AppBar.Edge.Left : AppBar.Edge.Right,
+                new AppBar.Rect(info.rcMonitor.Left, info.rcMonitor.Top, info.rcMonitor.Right, info.rcMonitor.Bottom),
+                (int)Math.Round(widthDips * scaleX));
+
+            dockedEdge = edge;
+            anchorRight = null;
+            anchorBottom = null;
+            Root.CornerRadius = new CornerRadius(0);
+
+            // Manual in both axes: the height is the screen's now, not the content's.
+            SizeToContent = SizeToContent.Manual;
+            Left = granted.L / scaleX;
+            Top = granted.T / scaleY;
+            Width = (granted.R - granted.L) / scaleX;
+            Height = (granted.B - granted.T) / scaleY;
+
+            Save();
+            return Result.Success();
+        }
+        finally
+        {
+            docking = false;
+        }
+    }
+
+    // Out of the topmost band while a full-screen app is up, back in when it closes. Only meaningful
+    // while docked, which is the only time the shell sends it.
+    void OnFullScreenApp(bool open)
+    {
+        fullScreenAppOpen = open;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero) return;
+        NativeMethods.SetWindowPos(hwnd, open ? HWND_NOTOPMOST : NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+    }
+
+    static readonly nint HWND_NOTOPMOST = -2;
+
+    // The bar's floating geometry as it would be saved, for keeping it while docked.
+    FloatingBarState FloatingState() => new(Left, Top, !Minimized)
+    {
+        Right = anchorRight,
+        Bottom = anchorBottom,
+        Width = double.IsNaN(Width) ? null : Width,
+    };
 
     // Petre: "the bar shouldn't be hidden, it should be impossible to hide that floating bar,
     // that's the app."
@@ -429,6 +609,9 @@ public partial class FloatingBar : Window
         Minimized = true;
         ClickTrace.Write("bar minimize");
         ClearInfo(); // a popup is its own window: hiding the bar does not take it with it
+        // A hidden bar must not keep its strip: that would be an empty band nothing can be put in. The
+        // edge is remembered (dockedEdge stays set and is saved), and ShowBar docks it again.
+        appBar?.Remove();
         Hide();
         Save();
     }
@@ -722,8 +905,16 @@ public partial class FloatingBar : Window
             // Finished exactly like a move does: the user has chosen a geometry, so snap to any
             // edge it now reaches and re-derive the growth anchor from where it ended up -- a bar
             // widened away from the right edge grows leftwards from a different x than before.
-            SnapToEdges();
-            Save();
+            //
+            // Docked, the strip is reserved again at the new width instead, once, when the drag ends:
+            // re-reserving on every mouse move would make every maximized window on the screen reflow
+            // with it.
+            if (dockedEdge is { } edge) Report(DockTo(edge));
+            else
+            {
+                SnapToEdges();
+                Save();
+            }
         }
         FlushDeferredRebuild();
     }
@@ -1031,6 +1222,10 @@ public partial class FloatingBar : Window
             && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
         dragStart = null;
 
+        // Docked: its place is the edge, and moving a reserved strip would leave the reservation behind.
+        // Undock to move it.
+        if (Docked) return;
+
         // If the press landed on an icon Button, ButtonBase.OnMouseLeftButtonDown
         // already called CaptureMouse() on it (same mechanism WindowGroupsView.
         // SetupDragSource documents at length). Releasing that capture before
@@ -1084,6 +1279,7 @@ public partial class FloatingBar : Window
     bool MiddleDragging(MouseEventArgs e)
     {
         if (e.MiddleButton != MouseButtonState.Pressed || middleStart is not { } start) return false;
+        if (Docked) return false; // docked bars do not move; see the left-drag path
 
         NativeMethods.GetCursorPos(out var cursor);
         if (!middleDragging)
@@ -5146,7 +5342,7 @@ public partial class FloatingBar : Window
                 : manager.DeleteWorkspaceClosingWindows(workspaceId));
         });
 
-        AddMinimizeItem(menu);
+        AddBarItems(menu);
         return menu;
     }
 
@@ -5171,9 +5367,24 @@ public partial class FloatingBar : Window
     // Not added to IconMenu: that menu is already the longest of the three, and every item on it
     // acts on one window. A command that made the whole bar vanish sitting under the same right
     // click as "Close window" is a mis-aim waiting to happen.
-    void AddMinimizeItem(ContextMenu menu)
+    //
+    // ...and docking, which acts on the bar for the same reason. Petre: "add dock as the rightclick
+    // option", after it became a setting. So it is both: this item flips the SAME setting Manage's
+    // checkbox shows (AppState.DockBar), and the bar follows the setting, so the two can never disagree.
+    // One item that flips, like Minimize row / Restore row height.
+    void AddBarItems(ContextMenu menu)
     {
         menu.Items.Add(new Separator());
+
+        var docked = manager.State.DockBar;
+        var dock = new MenuItem
+        {
+            Header = docked ? "Undock from screen edge" : "Dock to screen edge",
+            Icon = MenuGlyph(docked ? "⇱" : "⇥"),
+        };
+        dock.Click += (_, _) => Report(manager.SetDockBar(!docked));
+        menu.Items.Add(dock);
+
         var minimize = new MenuItem { Header = "Minimize bar", Icon = MenuGlyph("▁") };
         minimize.Click += (_, _) => MinimizeRequested?.Invoke();
         menu.Items.Add(minimize);
@@ -5203,7 +5414,7 @@ public partial class FloatingBar : Window
         add.Click += (_, _) => InsertAt(manager.State.Workspaces.Count, null);
         menu.Items.Add(add);
 
-        AddMinimizeItem(menu);
+        AddBarItems(menu);
         return menu;
     }
 
@@ -5516,7 +5727,11 @@ public partial class FloatingBar : Window
     // Fix: query the MONITOR's own DPI directly (GetDpiForMonitor, Shcore.dll) using
     // the SAME HMONITOR already returned by MonitorFromPoint below, instead of asking
     // the window. A monitor-scoped query has no per-window negotiation state to race.
-    void PositionFromState()
+    void PositionFromState() => PositionFrom(StoredPlacement());
+
+    // The same placement from a given state, so undocking can return to the floating position it kept
+    // (see UndockFromEdge) through exactly the code a restore uses.
+    void PositionFrom(FloatingBarState? stored)
     {
         // The position remembered for THIS arrangement of monitors wins over the last position on any
         // arrangement (#150). At the desk that is the same thing; after an RDP connect from the laptop
@@ -5525,7 +5740,6 @@ public partial class FloatingBar : Window
         //
         // Falls back to the single stored position for a layout never parked on, which is every layout
         // until this ships and the only honest answer for a new one.
-        var stored = StoredPlacement();
         if (MonitorBounds(stored?.Left ?? 0, stored?.Top ?? 0) is not { } work)
         {
             // Best-effort fallback if the API ever fails -- better than crashing the show.
@@ -5637,6 +5851,10 @@ public partial class FloatingBar : Window
         // the loop closes after one pass. With SizeToContent still owning the width there is nothing
         // to re-flow against anyway; the wrap falls back to its fixed five-per-line rule.
         if (e.WidthChanged && !double.IsNaN(Width)) Relayout();
+
+        // Docked, the size is the shell's to give, not the content's to grow into, so there is no edge to
+        // hold still and nothing to clamp.
+        if (Docked) return;
 
         if (moving) return;
         if (MonitorBounds(Left, Top) is not { } work) return;
@@ -5795,6 +6013,14 @@ public partial class FloatingBar : Window
             }
         }
 
+        // Docked: ask the shell again on whatever screen the bar is on now. Windows has already moved a
+        // window whose screen went away onto one that exists, so "the screen it is on" is always real.
+        if (dockedEdge is { } edge && !Minimized)
+        {
+            DockTo(edge).TapError(error => ClickTrace.Write($"re-dock after layout change failed: {error}"));
+            return;
+        }
+
         PositionFromState();
         // Records that the bar has been on this layout, so the next change away and back restores what
         // is on screen now rather than falling back to another layout's position.
@@ -5811,12 +6037,18 @@ public partial class FloatingBar : Window
     // content happened to measure on the day, which is the opposite of following the content.
     // The layout key rides along so the same position is remembered twice: once as "the last position"
     // and once as "the position on this arrangement of monitors" (#150).
-    void Save() => manager.SaveFloatingBar(new FloatingBarState(Left, Top, !Minimized)
-    {
-        Right = anchorRight,
-        Bottom = anchorBottom,
-        Width = double.IsNaN(Width) ? null : Width,
-    }, LayoutKey());
+    //
+    // Docked, it saves the FLOATING position it kept (see DockTo) plus the edge, so a restart docks again
+    // and an undock after the restart still knows where the bar floated. The width is the live one either
+    // way: a width dragged while docked is the bar's width when it floats again too.
+    void Save() => manager.SaveFloatingBar(Docked
+        ? (floatingBeforeDock ?? FloatingState()) with
+        {
+            Visible = !Minimized,
+            Width = double.IsNaN(Width) ? null : Width,
+            DockedEdge = dockedEdge,
+        }
+        : FloatingState(), LayoutKey());
 
     // Owned by the bar for the same reason PromptDialog.Ask now takes an owner: this window
     // is Topmost, so an unowned message box can open behind it and strand the user with an

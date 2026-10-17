@@ -117,15 +117,17 @@ public sealed partial class RemoteControl
 
     // Minimize bar is the app's business, not the manager's (the bar swaps for a stand-in), so the app
     // hands in how to do it. Null in tests and anywhere the bar does not exist.
-    ControlReply Bar(string state) =>
-        setBarVisible is null
-            ? ControlReply.Fail("The bar cannot be controlled from here.")
-            : state.ToLowerInvariant() switch
-            {
-                "minimize" => Reply(setBarVisible(false), () => new { bar = "minimized" }),
-                "restore" => Reply(setBarVisible(true), () => new { bar = "restored" }),
-                _ => ControlReply.Fail(ControlUsage.LineFor("bar")),
-            };
+    // `dock` and `undock` set the docking SETTING (Manage's checkbox), which the bar follows; they need no
+    // window of their own, so they answer even where the bar cannot be minimized from here.
+    ControlReply Bar(string state) => state.ToLowerInvariant() switch
+    {
+        "dock" => Reply(manager.SetDockBar(true), () => new { bar = "docked" }),
+        "undock" => Reply(manager.SetDockBar(false), () => new { bar = "undocked" }),
+        "minimize" or "restore" when setBarVisible is null => ControlReply.Fail("The bar cannot be controlled from here."),
+        "minimize" => Reply(setBarVisible!(false), () => new { bar = "minimized" }),
+        "restore" => Reply(setBarVisible!(true), () => new { bar = "restored" }),
+        _ => ControlReply.Fail(ControlUsage.LineFor("bar")),
+    };
 
     // The palette's names, a #RRGGBB of your own (what the Custom… picker stores), "none" for the
     // Transparent entry, or "default" for By position, which is the absence of a colour.

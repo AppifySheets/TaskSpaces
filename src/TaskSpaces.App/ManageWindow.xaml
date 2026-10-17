@@ -37,6 +37,12 @@
         <CheckBox x:Name="StartWithWindows" DockPanel.Dock="Bottom" Margin="8"
                   Content="Start TaskSpaces with Windows"
                   Checked="OnStartupToggled" Unchecked="OnStartupToggled"/>
+        <!-- Docking the bar as an app bar (AppState.DockBar). Off by default; Petre: "make this a config
+             setting and disable by default". Beside the other choices about how the app sits on the
+             desk rather than in a tab, because it is one of those. -->
+        <CheckBox x:Name="DockBar" DockPanel.Dock="Bottom" Margin="8,0,8,0"
+                  Content="Dock the bar to the edge of its screen, like the taskbar (windows keep clear of it)"
+                  Checked="OnDockBarToggled" Unchecked="OnDockBarToggled"/>
         <TabControl>
             <TabItem Header="Workspaces">
                 <DockPanel Margin="8">

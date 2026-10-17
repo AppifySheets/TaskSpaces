@@ -389,6 +389,21 @@ public class RemoteControlMenuTests
         Assert.Equal([false, true], asked);
     }
 
+    // Docking is a setting (Manage's checkbox, off by default); `bar dock|undock` flips it, and the bar
+    // follows the setting on its own.
+    [Fact]
+    public void Bar_dock_and_undock_flip_the_docking_setting()
+    {
+        var manager = Started();
+        Assert.False(manager.State.DockBar);
+
+        Ok(Run(manager, "bar", "dock"));
+        Assert.True(manager.State.DockBar);
+
+        Ok(Run(manager, "bar", "undock"));
+        Assert.False(manager.State.DockBar);
+    }
+
     [Fact]
     public void A_known_command_with_the_wrong_arguments_prints_its_own_usage_line()
     {

@@ -52,6 +52,8 @@ public partial class ManageWindow : Window
         // SetCheckForUpdates ignores a value that has not changed rather than writing state.json
         // every time this window opens.
         CheckForUpdates.IsChecked = manager.State.CheckForUpdates;
+        // Same pattern, and the same reason it is harmless: SetDockBar ignores an unchanged value.
+        DockBar.IsChecked = manager.State.DockBar;
         // #82. Read from the assembly at runtime, never written as a literal here: the whole reason
         // the question needs answering in the UI is that #71 leaves several versioned exes side by
         // side, and a number typed into the source would report the build it was written in rather
@@ -326,6 +328,10 @@ public partial class ManageWindow : Window
     // composition root for no outcome anybody would notice.
     void OnCheckForUpdatesToggled(object s, RoutedEventArgs e) =>
         manager.SetCheckForUpdates(CheckForUpdates.IsChecked == true).TapError(err => MessageBox.Show(err));
+
+    // The bar follows the setting from the state pulse this sends (FloatingBar.FollowDockSetting).
+    void OnDockBarToggled(object s, RoutedEventArgs e) =>
+        manager.SetDockBar(DockBar.IsChecked == true).TapError(err => MessageBox.Show(err));
 
     // --- the Settings tab (#151) -----------------------------------------------------------------
     //

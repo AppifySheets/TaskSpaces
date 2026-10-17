@@ -1649,6 +1649,14 @@ public sealed class WorkspaceManager(
             ? Result.Success()
             : Result.Success().Tap(() => Persist(State with { CheckForUpdates = enabled }));
 
+    // The docking setting (AppState.DockBar). The bar follows it from the pulse Persist sends, so Manage,
+    // `taskspaces.cmd bar dock|undock` and anything else that sets it all go through one path. A no-op
+    // when unchanged, for the reason SetCheckForUpdates gives.
+    public Result SetDockBar(bool docked) =>
+        State.DockBar == docked
+            ? Result.Success()
+            : Result.Success().Tap(() => Persist(State with { DockBar = docked }));
+
     // The Settings tab's four dials (#151). Petre: "make things configurable, like dimming opacity,
     // timeout, etc."
     //
