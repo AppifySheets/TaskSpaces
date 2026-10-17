@@ -304,6 +304,14 @@ public sealed class WindowMonitor : IWindowMonitor, IDisposable
                     events.OnNext(new WindowEvent(WindowEventKind.Moved, moved));
                     break;
 
+                // ...and the start of that drag. Petre: "can i drag and drop the current window, with its
+                // header, to the workspace?" The bar watches the cursor from here until MOVESIZEEND, so a
+                // window dragged by its own title bar can be dropped on a workspace row. It decides nothing
+                // here either; the manager ignores it, and only the bar listens (see App).
+                case EVENT_SYSTEM_MOVESIZESTART when known.TryGetValue(hwnd, out var starting):
+                    events.OnNext(new WindowEvent(WindowEventKind.MoveStarted, starting));
+                    break;
+
                 // A window went down or came back up. Petre: "the icon doesn't always dim when
                 // it's minimized, or doesn't always brighten up when it's un-minimized."
                 //

@@ -28,7 +28,9 @@ namespace TaskSpaces.Core.Domain;
 // ALREADY true, and MINIMIZEEND likewise with it already false -- despite MINIMIZESTART being
 // documented as "about to be minimized". So a rebuild triggered by either one reads the settled
 // state, and no delay or retry is needed.
-public enum WindowEventKind { Appeared, TitleChanged, Hidden, Disappeared, Activated, Moved, MinimizeChanged }
+// MoveStarted: the user began dragging (or resizing) a window; Moved is the matching end. The bar uses the
+// pair to let a window be dragged by its own title bar onto a workspace row (FloatingBar's header drop).
+public enum WindowEventKind { Appeared, TitleChanged, Hidden, Disappeared, Activated, Moved, MinimizeChanged, MoveStarted }
 
 // What WindowMonitor emits. TitleChanged matters twice: rename rules may now match,
 // and apps that rewrite their own titles must have our short name re-applied.

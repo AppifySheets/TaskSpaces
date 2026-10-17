@@ -247,6 +247,10 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
         bar.Pulse();
         Assert.NotEmpty(Bar.TitlesIn(bar.RowContainer("Busy")));
 
+        // Just after leaving, within the grace (the trip to grab a window's title bar): still held.
+        bar.LeaveWithoutWaiting();
+        Assert.NotEmpty(Bar.TitlesIn(bar.RowContainer("Busy")));
+
         bar.Leave();
         Assert.Empty(Bar.TitlesIn(bar.RowContainer("Busy")));
     });
@@ -270,9 +274,62 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
 
         // The drag ends with the pointer off the bar (it is parked off screen), so the hold lets go.
         bar.SetField("draggingWindow", false);
-        bar.Call("ReleaseHeldRows");
         bar.Leave();
         Assert.Empty(Bar.TitlesIn(bar.RowContainer("Busy")));
+    });
+
+    // "re collapses": a trip from the bar to a window's title bar can outlast any grace (the log had one of
+    // eight seconds), so a title-bar drag starting soon after a release puts the released rows back.
+    [Fact]
+    public void A_title_bar_drag_soon_after_leaving_puts_the_released_rows_back() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true, expandRow: true);
+        bar.Enter();
+        Assert.True(bar.Manager.Switch(bar.EmptyWorkspace).IsSuccess);
+        bar.Pulse();
+
+        bar.Leave(); // the grace ran out on the way to the title bar
+        Assert.Empty(Bar.TitlesIn(bar.RowContainer("Busy")));
+
+        bar.Window.OnWindowDragStarted(new WindowHandle(101));
+        bar.Window.UpdateLayout();
+        Assert.NotEmpty(Bar.TitlesIn(bar.RowContainer("Busy")));
+    });
+
+    // "re collapses": a window leaving the expanded row (here by a title-bar drop) used to take its line with
+    // it, so the row shrank under the pointer. While the hold lasts its line stays, faded; leaving the bar
+    // lets the row close up.
+    [Fact]
+    public void A_window_leaving_an_expanded_row_keeps_its_line_until_the_pointer_leaves() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true, expandRow: true);
+        bar.Enter();
+
+        bar.HeaderDrop("Empty", new WindowHandle(101));
+        bar.Pulse();
+        Assert.Equal(["App 1", "App 2", "App 3"], Bar.TitlesIn(bar.RowContainer("Busy")).Select(t => t.Text));
+
+        bar.Leave();
+        bar.Pulse();
+        Assert.Equal(["App 2", "App 3"], Bar.TitlesIn(bar.RowContainer("Busy")).Select(t => t.Text));
+    });
+
+    // A window dragged by its own title bar and dropped on a row (Petre: "move to another workspace by
+    // dragging a window") moves there WITHOUT taking you along: "don't follow the workspace, move it out of
+    // the current workspace, stay on the current workspace". The drag itself runs in Windows' move loop and
+    // needs the real cursor, so this calls the row's drop directly, which is what the end of a drag does.
+    [Fact]
+    public void A_title_bar_drop_moves_the_window_and_does_not_follow_it() => StaThread.Run(() =>
+    {
+        using var bar = TwoScreens(busyIcons: 3, standOnBusy: true);
+        var window = new WindowHandle(101); // App 1, on Busy, the workspace you are standing on
+
+        // Made the window you are IN, which is exactly when an icon drop would take you along with it.
+        bar.Pulse();
+        bar.HeaderDrop("Empty", window);
+
+        Assert.Equal(bar.EmptyDesktop, bar.Desktops.Placements[window]);
+        Assert.Empty(bar.Desktops.Switched);
     });
 
     // "so workspaces don't change sizes every time i click them": every workspace row stays icons, the one
@@ -376,7 +433,8 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
         bar.UpdateLayout();
         // A rebuild the way the running app gets one after a switch: a window event. The fake desktops
         // change the current desktop on Switch but send no notification of their own.
-        return new Bar(bar, manager, empty.Id, () => monitor.Pump.OnNext(new WindowEvent(WindowEventKind.Activated, monitor.Initial[0])));
+        return new Bar(bar, manager, empty.Id, () => monitor.Pump.OnNext(new WindowEvent(WindowEventKind.Activated, monitor.Initial[0])),
+            desktops, emptyDesktop);
     }
 
     static ScreenFacts TwoDisplays(IReadOnlyList<(WindowHandle Window, int Monitor)> frontToBack) =>
@@ -398,8 +456,25 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
             " rowWidth=" + RowWidth.ToString("0.##") + " rounded=" + RoundedBottomRight;
     }
 
-    sealed class Bar(FloatingBar bar, WorkspaceManager? manager = null, Guid emptyWorkspace = default, Action? pulse = null) : IDisposable
+    sealed class Bar(FloatingBar bar, WorkspaceManager? manager = null, Guid emptyWorkspace = default, Action? pulse = null,
+        PulsingDesktops? desktops = null, Guid emptyDesktop = default) : IDisposable
     {
+        public PulsingDesktops Desktops => desktops!;
+
+        public FloatingBar Window => bar;
+
+        public Guid EmptyDesktop => emptyDesktop;
+
+        // What the end of a title-bar drag over the named row does, called directly: the row's registered
+        // header drop, with no screen aimed.
+        public void HeaderDrop(string label, WindowHandle window)
+        {
+            var targets = (System.Collections.IEnumerable)typeof(FloatingBar).GetField("headerDropTargets", Private)!.GetValue(bar)!;
+            var target = targets.Cast<object>().Single(t => (string)t.GetType().GetProperty("Label")!.GetValue(t)! == label);
+            var drop = (Action<WindowHandle, int?>)target.GetType().GetProperty("Drop")!.GetValue(target)!;
+            drop(window, null);
+        }
+
         public WorkspaceManager Manager => manager!;
 
         public Guid EmptyWorkspace => emptyWorkspace;
@@ -424,7 +499,17 @@ public class FloatingBarLaneShadeTests(ITestOutputHelper output)
         // here; the real pointer is nowhere near a bar parked off screen, so the re-check agrees it left.
         public void Enter() => bar.RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseEnterEvent });
 
+        // The pointer leaving, and then the release's grace running out (called directly rather
+        // than waited for).
         public void Leave()
+        {
+            LeaveWithoutWaiting();
+            Call("ReleaseHeldRowsNow");
+            bar.UpdateLayout();
+        }
+
+        // The pointer leaving, with the grace still running.
+        public void LeaveWithoutWaiting()
         {
             bar.RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseLeaveEvent });
             bar.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);

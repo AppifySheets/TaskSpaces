@@ -2036,6 +2036,19 @@ public sealed class WorkspaceManager(
     public Result MoveWindowToMonitor(WindowHandle window, int monitorNumber) =>
         MoveWindowToMonitor(window, monitorNumber, announce: true);
 
+    // For a window dragged by its own title bar onto a workspace row (FloatingBar's header drop): where it
+    // was when the drag began, and putting it back there before it goes to the other workspace. Petre: "go
+    // back to where it was but in a new workspace". Through the same IScreenLayout the monitor moves use,
+    // so a snapped or maximized window is brought down and placed the careful way (see MoveTo); the window
+    // is still on the desktop you are standing on at that moment, so its show state may change.
+    public Maybe<WindowRect> RectOfWindow(WindowHandle window) =>
+        screenLayout?.RectOf(window) ?? Maybe<WindowRect>.None;
+
+    public Result PutWindowBack(WindowHandle window, WindowRect rect) =>
+        screenLayout is null
+            ? Result.Failure("Window positions are unavailable on this Windows build.")
+            : screenLayout.MoveTo(window, rect, mayChangeShowState: true);
+
     // `announce` pulses the surfaces when the outcome is known. True for a drop, where the row has to
     // show the answer at once. False for the retry tick, which would otherwise rebuild the bar once a
     // second for as long as one window refused to move -- and nothing on screen changes between

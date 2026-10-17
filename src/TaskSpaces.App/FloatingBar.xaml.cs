@@ -92,10 +92,17 @@ public partial class FloatingBar : Window
         // released when it leaves.
         MouseEnter += (_, _) =>
         {
+            if (!hoveringBar && ClickTrace.On) ClickTrace.Write("hold taken: pointer on the bar");
             hoveringBar = true;
             if (liveListTarget is { } live) heldExpanded.Add(live);
         };
         MouseLeave += (_, _) => ReleaseHeldRows();
+        releaseGrace.Tick += (_, _) => ReleaseHeldRowsNow();
+
+        // See foregroundZoom: what a title-bar drag needs to know about the window before the drag began.
+        foregroundZoomSampler.Tick += (_, _) => SampleForegroundZoom();
+        foregroundZoomSampler.Start();
+        Closed += (_, _) => { foregroundZoomSampler.Stop(); releaseGrace.Stop(); headerDragWatch.Stop(); };
 
         // The grace, and then the slow fade (#46). One-shot: Stop() first, so a fade that is
         // interrupted and later restarted always gets the full grace rather than whatever was left of
@@ -1010,21 +1017,17 @@ public partial class FloatingBar : Window
         // is allowed to reorder a frozen row.
         if (hoveredRow is { } held && held.Key == groupKey) return;
 
-        var wasHolding = hoveredRow is not null;
         hoveredRow = (groupKey, rowKey, RowOrderFreeze.Capture(displayed));
-        // The hover ring (#41). Painted here rather than waiting for the rebuild below, because
-        // arriving from OUTSIDE the bar rebuilds nothing -- there is no previous row to re-sort --
-        // and that is the commonest way a row is entered.
+        // The hover ring (#41), painted at once.
         ApplyCandidate();
-        // A rebuild triggered by the POINTER rather than by a window event, which is new since
-        // this bug was last looked at: moving from one row to another re-sorts the row just left.
-        // If a click can be lost by arriving during that, this line will sit immediately before
-        // the press that goes missing.
-        if (ClickTrace.On && wasHolding) ClickTrace.Write($"enter-row rebuild for={groupKey}");
-        // Moving straight from one row to another: the row just left has to re-sort now, and its
-        // own MouseLeave cannot do it -- by the time that deferred check runs, the freeze belongs
-        // to this row and it will (correctly) leave it alone.
-        if (wasHolding) Rebuild();
+        // NO REBUILD any more. This used to rebuild here, so that the row just left could re-sort into the
+        // z-order it had been frozen against. Rows no longer sort by z-order (WorkspaceManager.Know: first
+        // seen, moved only by dragging), so there is nothing to re-sort, and the rebuild was pure cost: a
+        // full overview query, a few hundred milliseconds on Petre's machine, on EVERY row the pointer
+        // crossed. "i think i'm still seeing missed clicks", "maybe the ui is stuck": his trace had thirteen
+        // of these rebuilds in two and a half seconds of moving the pointer down the bar, with the UI thread
+        // busy for most of it, and a click that lands during one can be lost. The hover ring still follows
+        // the pointer through ApplyCandidate above, which needs no rebuild.
     }
 
     // Deferred to the next dispatcher turn, and that is the load-bearing part of this whole
@@ -1040,7 +1043,9 @@ public partial class FloatingBar : Window
         if (hoveredRow is not { } held || held.Key != groupKey) return; // another row already owns the freeze
         if (HoveredRowKey() == groupKey) return;                        // still inside it; the container was merely rebuilt
         hoveredRow = null;
-        Rebuild(); // the promotion the user has been waiting for, served the moment they step off
+        // No rebuild: there is no z-order promotion to serve any more (see EnterRow). The hover ring is
+        // repainted without one.
+        ApplyCandidate();
     }
 
     // The icon ring's half of the same trap (#67), deferred for exactly the reason above: a
@@ -1533,6 +1538,8 @@ public partial class FloatingBar : Window
     {
         Rows.Children.Clear();
         CurrentList.Children.Clear(); // the titled list below the rows, rebuilt with them
+        headerDropTargets.Clear();    // re-registered by every row as it is built (see GroupRow)
+        ghostLines.Clear();           // re-derived by HeldLines as the expanded rows are built
         // The rows these pointed at have just been thrown away, so every entry is now a Border
         // that is no longer in the tree. Repopulated as the new rows are built.
         rowRings.Clear();
@@ -1747,7 +1754,9 @@ public partial class FloatingBar : Window
                     // The screen comes from WHERE in the row it was dropped (#89), and null means
                     // the row had no split to aim at, which is the workspace-only move it always was.
                     onDrop: (h, screen) => Report(manager.AssignWindow(h, g.Workspace.Id, screen)),
-                    g.Running,
+                    // An expanded row keeps a window that has left it as a faded line while the hold lasts
+                    // (see HeldLines); an icon row shows its windows as they are.
+                    Expanded(g.Workspace.Id) ? HeldLines(g.Workspace.Id, g.Running) : g.Running,
                     // Every member wears the GROUP's lane colour rather than its own. Colour is what
                     // groups things on this bar, so giving a member a colour of its own would be the
                     // surface saying "unrelated" while the layout says "belongs to". Inside a box the
@@ -1830,7 +1839,7 @@ public partial class FloatingBar : Window
                     switchTo: g.DesktopId == Guid.Empty ? null : () => manager.SwitchToDesktop(g.DesktopId),
                     groupKey: DraggedWindow.DesktopGroupKey(g.DesktopId),
                     onDrop: g.DesktopId == Guid.Empty ? null : (h, _) => Report(manager.MoveToDesktop(h, g.DesktopId)),
-                    g.Windows,
+                    Expanded(g.DesktopId) ? HeldLines(g.DesktopId, g.Windows) : g.Windows,
                     // Same Guid.Empty rule a third time, and for the third reason: Unplaced is not a
                     // desktop, so there is nothing to name (#149).
                     desktopId: g.DesktopId == Guid.Empty ? null : g.DesktopId,
@@ -1865,7 +1874,7 @@ public partial class FloatingBar : Window
                     ? GroupRow(here.Workspace.Name, here.Workspace.Name, isCurrent: false, switchTo: null,
                         groupKey: CurrentListGroupKey,
                         onDrop: (h, screen) => Report(manager.AssignWindow(h, here.Workspace.Id, screen)),
-                        here.Running,
+                        HeldLines(here.Workspace.Id, here.Running),
                         tint: currentTint,
                         // MADE TO STAND OUT from the rows (Petre: "make the expanded workspace stand out from the
                         // rest", and from four mockups he picked this one, then "make the left accent bar much
@@ -1878,7 +1887,7 @@ public partial class FloatingBar : Window
                         ? GroupRow(desktop.Name, desktop.Name, isCurrent: false, switchTo: null,
                             groupKey: CurrentListGroupKey,
                             onDrop: (h, _) => Report(manager.MoveToDesktop(h, desktop.DesktopId)),
-                            desktop.Windows,
+                            HeldLines(desktop.DesktopId, desktop.Windows),
                             titledList: true)
                         : null;
             if (list is not null)
@@ -2156,6 +2165,14 @@ public partial class FloatingBar : Window
                 {
                     var button = IconButton(groupLabel, groupKey, r);
                     if (titled && button is Button item) Titled(item, r);
+                    // A window that has left this row while the hold lasts (see HeldLines): its line stays,
+                    // faded, so the row keeps its height, and takes no clicks or drags, since the window is
+                    // somewhere else now.
+                    if (titled && ghostLines.Contains(r.Window.Handle) && button is UIElement ghost)
+                    {
+                        ghost.Opacity = 0.3;
+                        ghost.IsHitTestVisible = false;
+                    }
                     // The row's shrink, applied per ICON. A LayoutTransform rather than a smaller
                     // icon size: the icon's own pixels come from a cache keyed by size, and asking
                     // for a second size per row would double that cache to make a row shorter.
@@ -3275,6 +3292,19 @@ public partial class FloatingBar : Window
                 icon.MouseLeave += (_, _) => Hover(true);
             });
         }
+
+        // A window dragged by its OWN TITLE BAR can be dropped here too (see the header-drop section). It
+        // moves the window WITHOUT following it, unlike an icon drop of the window you are in: Petre, "don't
+        // follow the workspace, move it out of the current workspace, stay on the current workspace". The
+        // pinned row pins it; an unnamed desktop's row moves it there. The titled list at the bottom is the
+        // workspace you are already on, so it takes nothing.
+        Action<WindowHandle, int?>? headerDrop =
+            rowKey is { } workspace ? (h, screen) => Report(manager.AssignWindow(h, workspace, screen, allowFollow: false))
+            : desktopId is { } desktopTarget ? (h, _) => Report(manager.MoveToDesktop(h, desktopTarget))
+            : pinned ? (h, screen) => Report(manager.PinWindow(h).Bind(() => screen is { } s ? manager.MoveWindowToMonitor(h, s) : Result.Success()))
+            : null;
+        if (headerDrop is not null)
+            headerDropTargets.Add(new HeaderDropTarget(container, groupKey, groupLabel, idle, headerDrop));
 
         if (onDrop is not null)
         {
@@ -4556,14 +4586,288 @@ public partial class FloatingBar : Window
     // Deferred to the next dispatcher turn so a rebuild in progress has finished. Rebuilds only when
     // something other than the current workspace was being held open, which is the only case where letting
     // go changes anything on screen.
-    void ReleaseHeldRows() => Dispatcher.BeginInvoke(new Action(() =>
+    //
+    // And not at once: after a GRACE (see releaseGrace), re-checked then. Petre, dropping a window dragged by its
+    // own title bar: "it collapses expanded workspaces when i drop it", "shouldn't". To grab a title bar the
+    // pointer has to leave the bar first, so an immediate release let go of everything on the way to the
+    // very drag that was coming back. The grace covers that trip, and a title-bar drag in progress holds
+    // like an icon drag does (see OnWindowDragStarted).
+    void ReleaseHeldRows()
     {
-        if (!hoveringBar || draggingWindow || openMenu?.IsOpen == true || PointerOnBar()) return;
+        releaseGrace.Stop();
+        releaseGrace.Start();
+    }
+
+    // Two seconds. A timer alone cannot cover the trip from the bar to a window's title bar: Petre's took
+    // two and a half seconds once and eight the next time, against a six-second grace, and the rows
+    // collapsed both times ("workspace still collapses", "re collapses"). So the grace is short again, which
+    // tidies up promptly when he really leaves, and a title-bar drag that follows puts the released rows
+    // back (RestoreReleasedRows).
+    readonly System.Windows.Threading.DispatcherTimer releaseGrace = new() { Interval = TimeSpan.FromSeconds(2) };
+
+    void ReleaseHeldRowsNow()
+    {
+        releaseGrace.Stop();
+        if (!hoveringBar || draggingWindow || headerDrag is not null || openMenu?.IsOpen == true || PointerOnBar()) return;
         hoveringBar = false;
-        var stale = heldExpanded.Any(id => id != liveListTarget);
+        // Faded lines left by windows that went elsewhere also only go on a rebuild (see HeldLines).
+        var stale = heldExpanded.Any(id => id != liveListTarget) || ghostLines.Count > 0;
+        // Kept, so a title-bar drag that starts soon after can put these rows back (see RestoreReleasedRows).
+        lastReleased = (heldExpanded.ToList(), DateTime.UtcNow);
+        if (ClickTrace.On) ClickTrace.Write($"hold released rows={heldExpanded.Count} stale={stale}");
         heldExpanded.Clear();
         if (stale) Rebuild();
-    }));
+    }
+
+    // THE LINES of an expanded row, held while the hold lasts. Petre, after a title-bar drop moved a window
+    // out of the expanded row he was on: "re collapses". The row had lost a line, so it was one line
+    // shorter and everything below it moved up under the pointer. Nothing had been released (the log said
+    // "hold released rows=1": only the current row was ever held); the window had simply left.
+    //
+    // So while the hold lasts, a window that has left an expanded row keeps its line there, faded and inert
+    // (see LineOf), in its old place, and the row keeps its height. A window that ARRIVES is added at the end
+    // as usual. When the hold is let go, the next rebuild draws the rows as they really are, all at once.
+    //
+    // Keyed by workspace or desktop id. shownLines is what each expanded row showed at its last build, which
+    // is exactly what is on screen, so no separate snapshot is needed when the hold begins.
+    readonly Dictionary<Guid, IReadOnlyList<WindowRow>> shownLines = [];
+    readonly HashSet<WindowHandle> ghostLines = [];
+
+    IReadOnlyList<WindowRow> HeldLines(Guid rowId, IReadOnlyList<WindowRow> now)
+    {
+        var lines = hoveringBar && shownLines.TryGetValue(rowId, out var before)
+            ? Merge(before, now)
+            : now;
+        shownLines[rowId] = lines;
+        return lines;
+
+        // The lines shown before, each replaced by its live row if the window is still here and kept as a
+        // ghost if it has gone, then any window that is new to the row.
+        IReadOnlyList<WindowRow> Merge(IReadOnlyList<WindowRow> shown, IReadOnlyList<WindowRow> live)
+        {
+            var current = live.ToDictionary(r => r.Window.Handle);
+            var kept = shown.Select(r => current.GetValueOrDefault(r.Window.Handle) ?? r).ToList();
+            shown.Where(r => !current.ContainsKey(r.Window.Handle)).ToList().ForEach(r => ghostLines.Add(r.Window.Handle));
+            return kept.Concat(live.Where(r => shown.All(s => s.Window.Handle != r.Window.Handle))).ToList();
+        }
+    }
+
+    // The rows that were expanded when the hold was last let go, and when. Petre: "re collapses". The
+    // grace on leaving cannot be long enough for every trip from the bar to a window's title bar (the log
+    // had one of eight seconds), so a title-bar drag that starts within RestoreWindow of a release puts the
+    // released rows back, at the moment the drag starts. The pointer is on the window's title bar then, not
+    // on the bar, so the rows change while nothing is being aimed at them, and the bar is back as it was
+    // by the time the pointer arrives.
+    (IReadOnlyList<Guid> Rows, DateTime At)? lastReleased;
+    static readonly TimeSpan RestoreWindow = TimeSpan.FromSeconds(30);
+
+    void RestoreReleasedRows()
+    {
+        if (hoveringBar || lastReleased is not { } released || DateTime.UtcNow - released.At > RestoreWindow) return;
+        hoveringBar = true;
+        released.Rows.ToList().ForEach(id => heldExpanded.Add(id));
+        lastReleased = null;
+        if (ClickTrace.On) ClickTrace.Write($"hold restored for title-bar drag rows={heldExpanded.Count}");
+        Rebuild();
+    }
+
+    // --- dropping a window by its own title bar ----------------------------------------------------
+    //
+    // Petre: "can i drag and drop the current window, with its header, to the workspace?", "move to another
+    // workspace by dragging a window", "go back to where it was but in a new workspace", and "don't follow
+    // the workspace, move it out of the current workspace, stay on the current workspace".
+    //
+    // Windows runs a title-bar drag in its own move loop, so the bar sees none of it as WPF input. What it
+    // does see, through the window monitor, is the drag's start and end (EVENT_SYSTEM_MOVESIZESTART/END,
+    // handed over by App). Between the two, a short timer reads the cursor and lights the workspace row it
+    // is over, exactly as an icon drag does: the row's highlight, the screen half when the row is split, and
+    // the info line. If the drag ends over a row, the window is put back where it was when the drag began
+    // (re-maximized if it was maximized), and only then moved to that workspace, on the aimed screen, with
+    // you staying where you are. Ending anywhere else is an ordinary window move and nothing is done.
+    //
+    // RESIZING fires the same two events. A drag whose window changed size, and did not start maximized
+    // (Windows un-maximizes a maximized window as soon as it is dragged), is a resize and never drops.
+    //
+    // The timer runs only during a drag, at about 30 checks a second, and does nothing else.
+
+    // A row that takes a title-bar drop: its container, keys and resting background, and what a drop does.
+    sealed record HeaderDropTarget(Grid Container, string GroupKey, string Label, Brush Idle, Action<WindowHandle, int?> Drop);
+
+    readonly List<HeaderDropTarget> headerDropTargets = [];
+
+    // The drag in progress: which window, where it was, whether it was maximized, and the row under the
+    // cursor right now.
+    (WindowHandle Window, WindowRect Start, bool WasMaximized)? headerDrag;
+    HeaderDropTarget? headerAim;
+
+    // Whether this drag is a RESIZE (a border drag) rather than a title-bar one, decided ONCE, at the start,
+    // from where the cursor was on the window: a title-bar drag starts near the top of the window but not on
+    // its very edge; anything else is the border.
+    //
+    // Two size-based tests came first and both were wrong, measured on Petre's drags of an Outlook PWA:
+    // judging by the size at the END read every drop as a resize, because Snap resizes the window on
+    // release, before the end event arrives ("it activates half window mode"); judging by a size change
+    // DURING the drag read dragging a snapped window as a resize, because un-snapping restores its size.
+    bool headerDragIsResize;
+
+    // The row (and screen half) the cursor was over at the last tick, which is what a release uses. NOT a
+    // fresh look at release time: the end of the drag rebuilds the bar, and the new rows have no layout yet
+    // when the end event is handled, so a fresh look found nothing even with the cursor on a row. The trace
+    // said exactly that: "over row=freight", then "end onBar=True row=none". The last tick is at most 33 ms
+    // old.
+    int? headerAimScreen;
+
+    readonly System.Windows.Threading.DispatcherTimer headerDragWatch = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    bool headerDragWatchWired;
+
+    // Whether the window in front was maximized, sampled every 200 ms, for a drag's "was it maximized"
+    // (see OnWindowDragStarted). The window you drag by its title bar is almost always the one in front,
+    // because pressing on its title bar brings it there. Two cheap calls per sample and no hook; started
+    // with the bar and never stopped, since a drag can begin at any moment.
+    (nint Window, bool Zoomed, DateTime At)? foregroundZoom;
+
+    readonly System.Windows.Threading.DispatcherTimer foregroundZoomSampler = new() { Interval = TimeSpan.FromMilliseconds(200) };
+
+    void SampleForegroundZoom()
+    {
+        // Not while a drag is in progress: by then the window has been un-maximized, and overwriting the
+        // last sample taken before the drag is exactly the information this exists to keep.
+        if (headerDrag is not null) return;
+        var front = NativeMethods.GetForegroundWindow();
+        foregroundZoom = front == nint.Zero ? null : (front, NativeMethods.IsZoomed(front), DateTime.UtcNow);
+    }
+
+    public void OnWindowDragStarted(WindowHandle window)
+    {
+        if (!IsVisible || Minimized) return;
+
+        // A title-bar drag holds the expanded rows like being on the bar does: the pointer left the bar to
+        // grab the title bar, and the release that started then is called off (see ReleaseHeldRows), or,
+        // if it has already happened, undone (see RestoreReleasedRows).
+        releaseGrace.Stop();
+        RestoreReleasedRows();
+
+        if (manager.RectOfWindow(window) is not { HasValue: true } start) return;
+
+        // Maximized NOW, or when last sampled as the window in front (see foregroundZoom). Windows
+        // un-maximizes a window the moment it is dragged, and this event is delivered a little after
+        // that, so IsZoomed alone loses the race: Petre, "it loses fullscreen", "if i move it from
+        // fullscreen". The log showed it: maximized=False with the restored size, on a window that was
+        // maximized when he grabbed it.
+        var wasMaximized = NativeMethods.IsZoomed(window.Value)
+            || foregroundZoom is { } sampled && sampled.Window == window.Value && sampled.Zoomed
+               && DateTime.UtcNow - sampled.At < TimeSpan.FromSeconds(1);
+        headerDrag = (window, start.Value, wasMaximized);
+        headerDragIsResize = !StartedOnTitleBar(start.Value);
+        if (ClickTrace.On)
+            ClickTrace.Write($"header drag start hwnd={window.Value:X} rect={start.Value.Left},{start.Value.Top},{start.Value.Right},{start.Value.Bottom} maximized={headerDrag.Value.WasMaximized} resize={headerDragIsResize}");
+        if (!headerDragWatchWired)
+        {
+            headerDragWatch.Tick += (_, _) => AimHeaderDrag();
+            headerDragWatchWired = true;
+        }
+        headerDragWatch.Start();
+    }
+
+    public void OnWindowDragEnded(WindowHandle window)
+    {
+        if (headerDrag is not { } drag || drag.Window != window) return;
+        headerDragWatch.Stop();
+        // The row from the last tick, not a fresh look (see headerAimScreen), unless the cursor has left the
+        // bar since: a release off the bar is an ordinary move.
+        var target = PointerOnBar() ? headerAim : null;
+        var screen = target is null ? null : headerAimScreen;
+        DisarmHeaderAim();
+        headerDrag = null;
+        if (ClickTrace.On)
+            ClickTrace.Write($"header drag end hwnd={window.Value:X} resize={headerDragIsResize} onBar={PointerOnBar()} row={target?.Label ?? "none"} screen={screen?.ToString() ?? "none"}");
+        // Ended off the bar: the hold it kept starts its countdown again. Ended on the bar: still held,
+        // like a pointer resting on it, until it leaves.
+        if (!PointerOnBar()) ReleaseHeldRows();
+        if (target is null) return;
+
+        _ = FinishHeaderDrop(window, drag.Start, drag.WasMaximized, target, screen);
+    }
+
+    // Back to where it was first, while the window is still on this desktop and its show state may
+    // change; then to the other workspace.
+    //
+    // TWICE, a third of a second apart, because Snap gets there too. The bar sits at a screen edge, so a
+    // drop on it is a drop at the edge, and Windows snaps the window to half the screen on release. It does
+    // not wait for us, and it can land after the first put-back, so the window is put back again once Snap
+    // has had its turn. Only then is it moved to the other workspace, re-maximized first if it was
+    // maximized, so it maximizes on the screen it was on.
+    async Task FinishHeaderDrop(WindowHandle window, WindowRect start, bool wasMaximized, HeaderDropTarget target, int? screen)
+    {
+        manager.PutWindowBack(window, start)
+            .TapError(error => ClickTrace.Write($"header drop: could not put the window back: {error}"));
+        await Task.Delay(350);
+        manager.PutWindowBack(window, start)
+            .TapError(error => ClickTrace.Write($"header drop: could not put the window back after snap: {error}"));
+        if (wasMaximized) NativeMethods.ShowWindowAsync(window.Value, NativeMethods.SW_MAXIMIZE);
+        if (ClickTrace.On) ClickTrace.Write($"header drop hwnd={window.Value:X} row={target.Label} screen={screen?.ToString() ?? "none"}");
+        target.Drop(window, screen);
+    }
+
+    // Lights the row under the cursor, if this is a move rather than a resize and the cursor is on the bar.
+    // The resize check runs only DURING the drag (see headerDragIsResize).
+    void AimHeaderDrag()
+    {
+        // A rebuild mid-drag (any window event causes one) replaces the rows, and new rows have no layout
+        // until a pass runs; looking at them before that finds nothing under the cursor.
+        if (headerDropTargets.Any(t => !t.Container.IsArrangeValid)) UpdateLayout();
+
+        var target = headerDrag is not null && !headerDragIsResize && PointerOnBar()
+            ? headerDropTargets.FirstOrDefault(t => t.Container.IsVisible && Contains(t.Container, CursorIn(t.Container)))
+            : null;
+
+        if (!ReferenceEquals(target, headerAim))
+        {
+            DisarmHeaderAim();
+            if (ClickTrace.On && target is not null) ClickTrace.Write($"header drag over row={target.Label}");
+        }
+        if (target is null) return;
+
+        headerAim = target;
+        var at = CursorIn(target.Container);
+        var screen = AimedMonitor(target.GroupKey, target.Container, at);
+        headerAimScreen = screen;
+        ArmAim(target.GroupKey, target.Container, at);
+        target.Container.Background = screen is null ? DropHighlight : target.Idle;
+        ShowReadout(screen is { } s ? $"→ move to {target.Label}, screen {s}" : $"→ move to {target.Label}");
+    }
+
+    void DisarmHeaderAim()
+    {
+        if (headerAim is not { } aimed) return;
+        aimed.Container.Background = aimed.Idle;
+        ClearAim(aimed.GroupKey);
+        ClearInfo();
+        headerAim = null;
+    }
+
+    // Whether the drag began with the cursor on the window's TITLE BAR rather than its border: in the top
+    // band of the window, below the resize edge and clear of the side edges. Physical pixels, like the
+    // rectangle. The band is generous (100 px) because title bars vary a lot: a browser's tab strip or a
+    // PWA's custom title bar is taller than a classic caption, and at 150% everything is half again as tall.
+    // The edges are 8 px, the size of a resize border at that scale. A maximized window's rectangle starts a
+    // few pixels above the screen (its border is off screen), so the cursor at the very top still counts.
+    static bool StartedOnTitleBar(WindowRect start)
+    {
+        if (!NativeMethods.GetCursorPos(out var cursor)) return true; // cannot tell: do not refuse the drop
+        var fromTop = cursor.Y - start.Top;
+        return fromTop > 8 && fromTop < 100 && cursor.X > start.Left + 8 && cursor.X < start.Right - 8;
+    }
+
+    // The cursor in an element's own coordinates. PointFromScreen takes physical screen pixels, which is
+    // what GetCursorPos gives.
+    static Point CursorIn(FrameworkElement element) =>
+        NativeMethods.GetCursorPos(out var cursor) && PresentationSource.FromVisual(element) is not null
+            ? element.PointFromScreen(new Point(cursor.X, cursor.Y))
+            : new Point(double.NaN, double.NaN);
+
+    static bool Contains(FrameworkElement element, Point at) =>
+        at.X >= 0 && at.Y >= 0 && at.X < element.ActualWidth && at.Y < element.ActualHeight;
 
     // Whether the cursor is inside the bar's window, asked of Windows rather than of WPF's input state. Both
     // in physical pixels, so no DPI conversion is involved.

@@ -1,5 +1,6 @@
 ﻿using System.Drawing;
 using System.IO;
+using System.Reactive.Linq;
 using System.Windows;
 using System.Windows.Interop;
 using CSharpFunctionalExtensions;
@@ -923,6 +924,17 @@ public partial class App : Application
             // rather than inside the bar because the monitor is the composition root's to hand
             // out, and the bar has no business knowing what a WinEvent hook is.
             monitor.ForegroundChanged.Subscribe(_ => floatingBar.ReclaimTopmost());
+
+            // A window dragged by its own title bar, for dropping it on a workspace row (Petre: "can i drag
+            // and drop the current window, with its header, to the workspace?"). The start and end of the
+            // drag, handed to the bar for the same reason as above: the monitor is this root's to hand out.
+            // The hooks run out of context, on this thread, so no marshalling is needed.
+            monitor.Events
+                .Where(e => e.Kind is WindowEventKind.MoveStarted)
+                .Subscribe(e => floatingBar.OnWindowDragStarted(e.Window.Handle));
+            monitor.Events
+                .Where(e => e.Kind is WindowEventKind.Moved)
+                .Subscribe(e => floatingBar.OnWindowDragEnded(e.Window.Handle));
 
             // ...and a 1s timer, because the event alone is not enough. Petre: "taskbar makes
             // its way over the floating window if i click the taskbar twice, so maybe you could

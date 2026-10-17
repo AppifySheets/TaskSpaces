@@ -68,6 +68,8 @@ public static class NativeMethods
     // every animating window on the desktop; this fires once per gesture. Adjacent to
     // FOREGROUND in the SYSTEM range, so the two share one hook.
     public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
+    // Inside the FOREGROUND..MOVESIZEEND range the monitor already hooks, so it costs no new hook.
+    public const uint EVENT_SYSTEM_MOVESIZESTART = 0x000A;
     // A window went down or came back up. Petre: "the icon doesn't always dim when it's
     // minimized, or doesn't always brighten up when it's un-minimized" -- nothing else tells us:
     // minimizing fires no HIDE, changes no title, and usually changes no foreground either.
